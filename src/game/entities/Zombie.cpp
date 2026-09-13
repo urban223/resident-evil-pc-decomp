@@ -2769,6 +2769,43 @@ static void zombie_vomiting(void)
 }
 
 // ---------------------------------------------------------------------------
+// CUSTOM (not in the original): fire the vomit attack on demand.
+//
+// zombie_vomiting is the real thing - animation 5, the type-0x20 spew as a
+// projectile with its own splash test against the player, and Snd_em(7), the
+// retch - and it recovers to standing by itself. It is action_behavior 6, so
+// the obvious trigger is to write that and let the state machine dispatch it.
+//
+// That is not reliable. action_behavior is only dispatched at the END of
+// zombie_chase_player, and that function bails into zombie_attack first
+// whenever the player is inside its 700..1500 cone - which is exactly when the
+// player is watching. So the behaviour is armed for the frames that follow AND
+// its first sub-state is run here and now: the spew and the sound land even if
+// the chase logic steals the zombie back on the next frame.
+//
+// ENTITY is swapped for the duration because zombie_vomiting, Snd_em and
+// Effect_CreateBillboard all read it - the same save/restore
+// enemy_hit_reaction_zombie does for the head-explosion cues.
+//
+// Called from weapon_update_status_effects (WeaponDamage.cpp) while the acid
+// pistol's poison is ticking.
+// ---------------------------------------------------------------------------
+void zombie_trigger_vomit_attack(Entity* zombie)
+{
+    Entity* saved = ENTITY;
+    ENTITY = zombie;
+
+    zombie->state              = 1;   // zombie_state_check
+    zombie->ignore_player_flag = 1;   // do not re-pick a behaviour
+    zombie->action_behavior    = 6;   // zombie_vomiting
+    zombie->action_state       = 0;   // its sub-state 0: spawn, sound, animation
+
+    zombie_vomiting();
+
+    ENTITY = saved;
+}
+
+// ---------------------------------------------------------------------------
 // update_zombie_action @ 0x004342f0
 //
 // FOURTEEN BYTES of real code. The whole function is:

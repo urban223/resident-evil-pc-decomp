@@ -12,6 +12,29 @@
 extern int g_scaled_down_dist;  // holds weapon_id - 1 during hit detection
 extern unsigned int g_entity_bkp;   // 0x00be0df4 - shared scratch (health snapshot)
 
+// CUSTOM (not in the original): lets a caller aim with one weapon and hurt with
+// another. Target selection still uses the id passed to apply_weapon_damage -
+// its range, its hit-detection callback and its line-of-sight gate - while
+// damage, knockback, hit state and the post-hit effect come from this override.
+// Callers clear it again straight after the call.
+//
+// ITEM_GRENADE_PISTOL needs the split. Passing ITEM_BAZOOKA_EXPLOSIVE directly
+// also swapped in the grenade launcher's TARGETING, which follows completely
+// different rules: weapon_hit_detect_projectile is a 360-degree radial test
+// around g_playerPosScratch (where the real launcher parks its projectile
+// first - this item never spawns one, so it measured from stale scratch), and
+// the line-of-sight gate below only runs for weaponAdj < 5. Net effect was
+// enemies taking hits behind the player's back and through walls.
+unsigned int g_weaponDamageIdOverride = 0;
+
+// CUSTOM (not in the original): when non-zero, the enemy this shot hits comes
+// away with this WEAPON_STATUS_* effect. The two custom pistols set it - neither
+// hits hard, the hit lands with the handgun's own damage and reaction, and the
+// kill comes from the effect ticking afterwards in
+// weapon_update_status_effects.
+unsigned int g_weaponStatusEffect = 0;
+
+
 // ---- Forward declarations (post-hit callbacks + reactions, defined at the end) ----
 static void weapon_post_hit_knife(Entity* enemy);      // 0x0043c290
 static void weapon_post_hit_reaction(Entity* enemy);   // 0x0043c350
@@ -97,6 +120,613 @@ typedef struct {
 
 extern WeaponHitRecordFirstRun       g_weaponHitRecordsFirstRun[200];
 extern WeaponHitRecordSecondRun  g_weaponHitRecordsSecondRun[200];
+
+// CUSTOM: status effects. RE1 has no damage-over-time of any kind: the
+// flamethrower and the GL's flame/acid rounds just deal a big lump of damage
+// and spawn a billboard, and nothing on the enemy remembers it was ever hit by
+// them. hit_state carries the weapon in bits 3-6 (weapon_id << 3), and
+// Zombie.cpp reads only knife (0x08) and handgun (0x10) out of it. So this is
+// new machinery, not a flag flipped on an existing system.
+//
+// State lives here, not on Entity - the struct is ROM-shaped and has no spare
+// byte. Enemies are addressed by their slot in g_EnemiesList, and because a
+// slot is reused by whatever enemy loads into it next, each effect also records
+// the entity's death_event_id and stops the moment the occupant no longer
+// matches. That is what keeps an enemy set alight in one room from igniting a
+// stranger in the next.
+#define STATUS_SLOTS  30   // == the g_EnemiesList size
+
+// Per-kind tuning, indexed by WEAPON_STATUS_*. `record` is the weaponAdj whose
+// hit record supplies the billboard type/data, the offset that puts it at the
+// right height for each enemy type, and the hit state used on death - 8 is the
+// GL flame round, 7 the GL acid round, so each status borrows the visuals and
+// the death the engine already has for that damage type.
+typedef struct {
+    unsigned char tickFrames;    // frames between ticks
+    unsigned char ticks;         // how many ticks the effect lasts
+    unsigned char damage;        // health lost per tick
+    unsigned char cryTicks;      // cry out every Nth tick
+    unsigned char cryLoud;       // enemy sound slot, alternated with cryQuiet
+    unsigned char cryQuiet;
+    unsigned char record;        // weaponAdj of the hit record to borrow
+    unsigned char vomit;         // 1 = drive the enemy's OWN vomit behaviour
+                                 // instead of the flinch (zombies only)
+    unsigned char hold;          // 1 = hold the enemy completely still while it
+                                 // lasts, and no flinch (see the freeze notes)
+} StatusDef;
+
+static const StatusDef g_statusDefs[4] = {
+    {  0,  0, 0, 0, 0, 0, 0, 0, 0 },   // [0] WEAPON_STATUS_NONE
+    // FIRE: 4 damage every ~0.5 s for ~8 s = 64 total. Kills a weak zombie
+    // (health is rolled 20..99), wounds a strong one.
+    { 15, 16, 4, 3, 4, 9, 8, 0, 0 },   // [1] WEAPON_STATUS_FIRE
+    // ACID: slower and weaker - 3 damage every ~0.7 s for ~13 s = 60 total.
+    // Corroding should not feel like burning.
+    { 20, 20, 3, 3, 7, 9, 7, 1, 0 },   // [2] WEAPON_STATUS_ACID
+    // FREEZE: no damage at all - it is crowd control, and the payoff is the
+    // shatter. ~6 s held still, a puff of white mist twice a second. The cry
+    // fields are unused (a frozen enemy makes no sound), and it borrows the GL
+    // acid record only so a shatter has a hit state to credit.
+    { 15, 12, 0, 4, 0, 0, 7, 0, 1 },   // [3] WEAPON_STATUS_FREEZE
+};
+
+// The frost. Two billboards per puff, because no single sheet is blue-white.
+//
+// An effect's colour is g_EffectColorRecords[colorIdx].table + tint*3, where
+// colorIdx comes from the sprite's V band and tint is depthGroup >> 3
+// (EffectSystem.cpp). Type 9, the SMOKE sheet, sits in band [64,176) of page 0,
+// which resolves to colour record 1:
+//
+//   tint 0 = (0xff,0xff,0xff)  white
+//   tint 1 = (0xb2,0xb2,0xb2)  GREY   <- the first version used this
+//   tint 2 = (0xff,0xcc,0x66)  warm yellow
+//   tint 3 = (0xcc,0xcc,0x33)  yellow-green
+//
+// Record 1 has no blue at all, which is why the mist came out grey. So the
+// smoke drops to tint 0 for a clean white body, and the blue is layered on top
+// from a second sheet.
+//
+// Picking that second sheet is constrained: across every weapon-FX band there
+// are exactly TWO blue rows in the whole colour table.
+//
+//   record 7 row 0 = (0xb2,0xb2,0xff)  type 0xb,  page 1, band [123,147)
+//   record 3 tint 1 = (0x99,0x99,0xff) type 0x11, page 0, band [240,256)
+//
+// The first attempt used type 0xb. Wrong sheet twice over: 0xb is the sparkle
+// the item pickups use and it TRAVELS - it shot off the zombie like a flare.
+//
+// And the smoke sheet cannot be made blue at all. Resolving every room's blend
+// slot for real (the slot is g_RoomEffectSpriteTable[(stage*32+room)*4 + sheet],
+// NOT slot 0) shows type 9 landing on only two records across the whole game:
+//
+//   colorIdx 1, 32 rooms:  white / GREY / warm yellow / yellow-green
+//   colorIdx 5, 34 rooms:  white / white / white
+//
+// There is no blue row in either. That is why the mist stayed grey however the
+// tint was set. Type 0x11, the muzzle bloom, does have one - colorIdx 3, rows
+// (0xff,0x99,0x99) and (0x99,0x99,0xff) - and it holds its position, but it
+// resolves to that record in 60 rooms and to the blood record in 31, so it
+// cannot be relied on either.
+//
+// So the blue does not come from a billboard at all: the ENEMY ITSELF is tinted
+// icy blue for as long as the freeze lasts, which is what the GL acid round
+// already does to a corpse (weapon_post_hit_sparks). The smoke stays as white
+// vapour on top of it.
+#define STATUS_MIST_TYPE   9      // smoke, tint 0 -> white body
+#define STATUS_MIST_DATA   0
+#define STATUS_CHILL_TYPE  0x11   // muzzle bloom, tint 1 -> blue where the room allows
+#define STATUS_CHILL_DATA  8
+
+// Per-vertex colour multipliers, 0x80 = 1.0 (JointSetColorTint scales by 1/128).
+// Packed 0x00BBGGRR.
+#define STATUS_TINT_FROZEN   0x00FF8860u   // r 0.75, g 1.06, b 1.99 - icy blue
+#define STATUS_TINT_NEUTRAL  0x00808080u   // 1.0, 1.0, 1.0
+#define STATUS_TINT_SHARD    0x00FFC090u   // r 1.13, g 1.50, b 1.99 - lit ice
+
+// A frozen enemy has to stay shootable, and by default it does not.
+//
+// apply_weapon_damage will only consider a candidate whose `hit_state == 0`,
+// and hit_state is written by the very shot that froze it. Normally the enemy's
+// own update clears it a frame later - but a frozen enemy's update is exactly
+// what we are skipping, so it would stay non-zero forever and every later shot
+// would find no target at all. That is why the Beretta did nothing to a frozen
+// zombie.
+//
+// The same loop also requires `candidate->status_flags & player->flags & 0xE0`.
+// Those upper bits are recomputed by the enemy each frame (zombie_state_check
+// starts with `status_flags &= 0x1F`), so a frozen enemy keeps whatever it had
+// at the moment it froze, which may not match where the player is aiming now.
+// Forcing all three makes the test depend only on the player, and the enemy's
+// first update after thawing masks them off again.
+#define ENTITY_STATUS_AIM_BITS  0xE0
+
+static void status_keep_targetable(Entity* enemy)
+{
+    enemy->hit_state = 0;
+    enemy->status_flags |= ENTITY_STATUS_AIM_BITS;
+}
+
+// Repaint every joint of an enemy. The loop is the one weapon_post_hit_sparks
+// uses for its acid tint, ENTITY swap included - JointApplyColorTint reads the
+// current entity when the room has a mirror.
+static void status_tint_enemy(Entity* enemy, unsigned int packed)
+{
+    JointStruct* joints = enemy->jointsStructs;
+    if (joints == NULL) return;
+    Entity* saved = ENTITY;
+    ENTITY = enemy;
+    for (int i = enemy->jointCount; i != 0; i--) {
+        JointApplyColorTint(joints + (i - 1), (int)packed, 0x1010, (void*)0x3030);
+    }
+    ENTITY = saved;
+}
+
+// The shatter burst.
+//
+// The first attempt used effect type 8 - the GLASS sheet, which by name is the
+// closest thing the game has to ice - anchored to each severed joint's world
+// matrix. Nothing appeared. Type 8 IS registered (no "[effect] ... not loaded"
+// line in crash.log), its sheet slot resolves (g_effectSpriteSheetSlot[8] = 6,
+// SRV 9), and its band V of 99 lands on an all-white colour record in every
+// room, so neither loading nor colour is the reason. The one thing the glass
+// sheet is spawned with anywhere in the shipped game is
+// effect_behavior_charge's (8, 1), the weapon charge-up ring - a behaviour that
+// captures the player's weapon and re-enters itself through its own header
+// phase, i.e. a sprite authored to be driven by that behaviour and not to be
+// dropped loose into the world. Rather than keep reverse-engineering an
+// animation the game itself only uses one way, the burst is built from the two
+// sprites proven to draw in exactly this context, from exactly this anchor:
+//
+//   type 9    the smoke sheet at tint 0 - its WHITE ramp
+//   type 0x11 the muzzle bloom at tint 1 - a hard blue-white flash that,
+//             unlike the item sparkle (0xb), holds the position it spawns at
+//
+// Scattered over a body-sized volume with a different yaw on each one, a dozen
+// of those read as a spray of ice fragments catching the light; the pieces of
+// the model itself, flung by the severed-limb step below, are the shards.
+#define STATUS_SHARD_TYPE  STATUS_CHILL_TYPE
+#define STATUS_SHARD_DATA  STATUS_CHILL_DATA
+
+// ---- the vomit -------------------------------------------------------------
+//
+// The zombie already knows how to be sick: zombie_vomiting (0x00436520) is
+// entry 6 of zombie_action_tbl. It plays animation 5, spawns effect type 0x20
+// at (500, -2500, 0) off the entity matrix, plays Snd_em(7) - the retch - and
+// then recovers to standing on its own. That is the whole performance in the
+// user's reference video, animation and spew together.
+//
+// Two earlier attempts got the wrong thing, both worth recording:
+//   1. Copying zombie_attack_vomit's billboard verbatim, Effect_CreateBillboard
+//      (0, 0, ...) off the mouth joint. Type 0 is the shared GORE sheet, so
+//      that is a blood splat.
+//   2. Re-tinting it. depthGroup packs the sub-animation in its low 3 bits and
+//      a tint index in depthGroup >> 3; type 0 resolves to colour record 4,
+//      whose rows are red / olive / brown / white, so depthGroup 8 does turn it
+//      olive. But it was still a blood SPLAT, just a green one - the shape was
+//      never going to be right, because the real spew is a different sprite
+//      entirely (type 0x20, a room sprite, which draws in its own authored
+//      colours with no tint applied at all).
+//
+// Rather than reproduce the effect, drive the behaviour and let the zombie do
+// all of it. update_zombie_action dispatches action_behavior, and it is reached
+// from zombie_chase_player / zombie_pushed_back, which skip re-picking a
+// behaviour when ignore_player_flag is set. So the whole trigger is four bytes.
+//
+// Caveat worth knowing: that spew is a projectile with a 600-unit splash test
+// against the player (see the note in zombie_vomiting). A poisoned zombie that
+// is sick next to Jill can hurt her - the game's own rule, not an addition.
+#define ZOMBIE_STATE_DIE_         3
+#define ZOMBIE_STATE_ATTACK_      5
+#define ZOMBIE_FLAG_LAYING_DOWN_  0x02
+#define ZOMBIE_FLAG_SCD_          0x80
+
+// Zombie.cpp - runs the zombie's own vomit attack (zombie_vomiting, 0x00436520)
+// on demand: animation 5, the type-0x20 spew as a projectile, and Snd_em(7).
+extern void zombie_trigger_vomit_attack(Entity* zombie);
+
+// 0x00473ef0 (CmdFunctions.cpp). This file already externs it further down, for
+// the post-hit callbacks, but the shatter below sits above that point.
+extern void Flg_on(int baseAddr, unsigned int bitIndex);
+
+// Not while it is on the floor, being puppeted by a room script, dying, or
+// already holding the player.
+static int status_zombie_can_retch(Entity* enemy)
+{
+    if ((enemy->behavior_flags & (ZOMBIE_FLAG_LAYING_DOWN_ | ZOMBIE_FLAG_SCD_)) != 0) {
+        return 0;
+    }
+    return enemy->state != ZOMBIE_STATE_DIE_ && enemy->state != ZOMBIE_STATE_ATTACK_;
+}
+
+static unsigned char g_statusKind[STATUS_SLOTS];    // WEAPON_STATUS_*, 0 = clean
+static unsigned char g_statusTicks[STATUS_SLOTS];   // ticks left
+static unsigned char g_statusDelay[STATUS_SLOTS];   // frames until the next tick
+static unsigned char g_statusTag[STATUS_SLOTS];     // death_event_id of the afflicted enemy
+
+static const StatusDef* status_def(unsigned char kind)
+{
+    return &g_statusDefs[kind <= WEAPON_STATUS_FREEZE ? kind : 0];
+}
+
+// ---- the freeze -------------------------------------------------------------
+//
+// Held completely still, for any enemy type. There is no per-entity "asleep"
+// bit to borrow: status_flags bit 0 is the only flag update_entities tests, and
+// it also gates the DRAW loop (GameLoop.cpp), object push-out and auto-aim
+// targeting - clearing it makes the enemy invisible, not frozen. So the freeze
+// is a query, asked at the one type-agnostic dispatch point there is, the call
+// to enemies_update_functions_tbl in update_entities (EntityCommon.cpp).
+//
+// Skipping that call is enough for a real freeze: an enemy only translates
+// through Add_speedXZ and only advances an animation frame through Joint_move,
+// and both are reached exclusively from inside a state handler. Rendering,
+// joint matrices and the room's collision push all sit outside it, so the enemy
+// stays on screen, keeps its pose, and can still be walked into and shot.
+int weapon_status_entity_frozen(Entity* enemy)
+{
+    int slot = (int)(enemy - g_EnemiesList);
+    if (slot < 0 || slot >= STATUS_SLOTS) return 0;
+    return g_statusTicks[slot] != 0
+        && g_statusKind[slot] == WEAPON_STATUS_FREEZE
+        && enemy->death_event_id == g_statusTag[slot];
+}
+
+// The borrowed hit record for this enemy type.
+static WeaponHitRecordFirstRun* status_record(Entity* enemy, unsigned char kind)
+{
+    return &g_weaponHitRecordsFirstRun[status_def(kind)->record
+                                       + (unsigned int)enemy->id * 10];
+}
+
+static short status_billboard_rot(Entity* enemy)
+{
+    return (short)(g_playerEntityPointer.directionAngle - enemy->angle + 0x800);
+}
+
+// There is deliberately no per-tick effect for the freeze. It used to spawn a
+// vapour puff (type 9) with two blue blooms (type 0x11) around the chest every
+// other tick; the smoke sheet has no blue row in any room - proven by resolving
+// the blend slot for all 66 of them - so what actually hung around the enemy was
+// grey. The blue tint on the model, plus the enemy standing perfectly still,
+// already say "frozen" without it.
+
+static void status_spawn_billboard(Entity* enemy, unsigned char kind)
+{
+    WeaponHitRecordFirstRun* rec = status_record(enemy, kind);
+    g_playerPosScratch.x = (int)rec->kx;
+    g_playerPosScratch.y = (int)rec->ky;
+    g_playerPosScratch.z = (int)rec->kz;
+    Effect_CreateBillboard(rec->type, rec->data, status_billboard_rot(enemy),
+                           &enemy->scaMatrixData.localMatrix, &g_playerPosScratch, 0);
+}
+
+static int status_enemy_is_zombie(Entity* enemy)
+{
+    return enemy->id == ENEMY_ZOMBIE
+        || enemy->id == ENEMY_ZOMBIE_NAKED
+        || enemy->id == ENEMY_ZOMBIE_VARIANT;
+}
+
+// Snd_em is positional and reads the CURRENT entity for its sound bank, its
+// group (the high nibble of +0x161) and its pan, so ENTITY has to point at the
+// afflicted enemy for the duration of the call - exactly what
+// enemy_hit_reaction_zombie does for the head-explosion sound. Left on the
+// player, the cry would come out of the player's bank at the player's position.
+//
+// The slot numbers in g_statusDefs are just that - slots. An enemy's bank is
+// per-room (g_RoomSndData, SoundTables.cpp) and Snd_em offsets the id by the
+// enemy's group nibble, and nothing in any bank was recorded for burning or
+// corroding. A zombie's three voice slots are 5 (z_unaruA, the death moan),
+// 4 (z_osou, the lunge roar - its loudest cry) and 9 (z_unaruB, played when a
+// hit floors it); slot 7 is z_haki, the retch from the vomit attack.
+static void status_cry(Entity* enemy, unsigned char sndId)
+{
+    Entity* savedEntity = ENTITY;
+    ENTITY = enemy;
+    Snd_em(sndId);
+    ENTITY = savedEntity;
+}
+
+// Apply a status to an enemy, or refresh one already running on it. A second
+// hit restarts the clock rather than stacking.
+static void weapon_apply_status(Entity* enemy, unsigned char kind)
+{
+    if (enemy == NULL || kind == WEAPON_STATUS_NONE) return;
+    int slot = (int)(enemy - g_EnemiesList);
+    if (slot < 0 || slot >= STATUS_SLOTS) return;
+    if (enemy->id >= NPC_ENTITIES_IDS) return;     // NPCs take no damage, so no status either
+
+    const StatusDef* def = status_def(kind);
+    g_statusKind[slot]  = kind;
+    g_statusTicks[slot] = def->ticks;
+    g_statusDelay[slot] = def->tickFrames;
+    g_statusTag[slot]   = enemy->death_event_id;
+
+    if (def->hold) {
+        status_tint_enemy(enemy, STATUS_TINT_FROZEN);   // the tint IS the status
+        status_keep_targetable(enemy);                  // and no cry - it is frozen
+    } else {
+        status_spawn_billboard(enemy, kind);       // the hit reads as fire/acid, not blood
+        status_cry(enemy, def->cryLoud);           // catching it is the loud one
+    }
+}
+
+// ---- the shatter ------------------------------------------------------------
+//
+// Anything that hits a frozen enemy destroys it outright instead of wounding
+// it. Called from apply_weapon_damage once a target has been found, before the
+// hit record is even read, so none of the normal damage happens.
+//
+// The kill itself is the engine's own instant kill: health -300 and the room's
+// death-event flag, exactly what enemy_hit_reaction_zombie does when a magnum
+// takes a head off. Making an enemy simply VANISH is not safe - clearing
+// status_flags bit 0 would need g_enemy_count decremented with it, and that
+// field doubles as the spawn slot index for cmd_enemy_set - so the body coming
+// apart is what stands in for it.
+//
+// The dismemberment is the engine's own severed-limb mechanism, the one
+// short_push_back uses when a shot takes an arm off:
+//
+//   joint->flags |= 0x0C   bit 2 puts the joint on render_entity's ballistic
+//                          step (the piece flies off under its own momentum);
+//                          bit 3 makes rotate_entity recompute its world matrix
+//                          once and then set 0x40, which stops it inheriting
+//                          the parent's transform ever again
+//   next joint |= 0x10     the piece below it stops being rotated too
+//
+// Applied to every joint but the root, the whole model comes apart at once.
+// Joints are a flat array of 0x7C-byte structs, jointCount of them.
+#define JOINT_STRIDE      0x7C
+#define JOINT_WORLD_OFF   0x44   // the joint's world MATRIX (layout note only -
+                                 // see status_spawn_shards for why nothing is
+                                 // anchored to it)
+#define JOINT_FLAG_SEVER  0x0C
+#define JOINT_FLAG_UNROT  0x10
+
+// Severing alone is not a shatter: every piece flies the IDENTICAL arc, so the
+// body drops as one heap. render_entity rewrites the launch velocity from
+// scratch on every frame before the ballistic step -
+//
+//     pJoint->m[0][2] = -0x14;  pJoint->m[1][1] = 0;  pJoint->m[1][0] = 200;
+//     FUN_004896c0(pJoint, -35, -100, 1);            (TmdRenderer.cpp:829)
+//
+// which is joint->rotation = (-20, 200, 0) for all of them, and the step then
+// rotates that one vector by the entity's yaw. Nothing about the joint feeds
+// into it, so nothing about the joint changes where it goes.
+//
+// Two fields DO survive that rewrite and do change the flight:
+//
+//   field_02 (+0x02)  the frame counter the step multiplies gravity by
+//                     (vy = field_02 * -35 + rotation.y). Seeding it per piece
+//                     gives each one its own apex - 0 sails up, 6 is already
+//                     falling on the first frame.
+//   world.t           the step ADDS its per-frame delta to it, so an offset
+//                     written here is carried for the whole flight.
+//
+// Fanning both spreads the pieces into a burst instead of a pile.
+static void status_shatter_dismember(Entity* enemy)
+{
+    char* base = (char*)enemy->jointsStructs;
+    if (base == NULL) return;
+    const int n = (int)enemy->jointCount;
+
+    static const short kFanX[8] = {  520, -520,  300, -300,  620, -620,  140, -140 };
+    static const short kFanZ[8] = {  260,  260, -540, -540, -180, -180,  480, -480 };
+    static const unsigned char kFanT[8] = { 0, 2, 1, 4, 3, 6, 2, 5 };
+
+    int piece = 0;
+    for (int j = 1; j < n; j++) {
+        JointStruct* joint = (JointStruct*)(base + j * JOINT_STRIDE);
+        if ((joint->flags & 0x04) != 0) continue;       // already off
+        joint->flags |= JOINT_FLAG_SEVER;
+        if (j + 1 < n) {
+            ((JointStruct*)(base + (j + 1) * JOINT_STRIDE))->flags |= JOINT_FLAG_UNROT;
+        }
+        const int f = piece & 7;
+        joint->field_02 = kFanT[f];      // its own apex
+        joint->pad_03   = 0;             // has not touched the floor yet
+        joint->world.t[0] += (int)kFanX[f];
+        joint->world.t[2] += (int)kFanZ[f];
+        piece++;
+    }
+}
+
+// The visible burst. Anchored to the entity's own local matrix with explicit
+// offsets - the anchoring style every working effect in this file uses, and the
+// reason it is not hung off the joints: the joints were severed one line above,
+// and render_entity's ballistic step (FUN_004896c0) then uses each severed
+// joint's world matrix as its own scratch, spinning it with MulMatrix and
+// rewriting world.t every frame. An effect anchored there is riding a matrix
+// that something else owns.
+//
+// Twelve of these plus the three mist puffs turned the whole kill into a wall
+// of white fog that hid the pieces - which are the shards. Six, spread wide and
+// kept low, is the glint around them rather than a replacement for them.
+static void status_spawn_shards(Entity* enemy)
+{
+    static const short kShardX[6] = {  480, -480,  240, -240,  600, -600 };
+    static const short kShardY[6] = { -500, -900, -1500, -1800, -2100, -700 };
+    static const short kShardZ[6] = {  260, -260,  420, -420, -160,  160 };
+
+    const short baseRot = status_billboard_rot(enemy);
+
+    for (int i = 0; i < 6; i++) {
+        g_playerPosScratch.x = (int)kShardX[i];
+        g_playerPosScratch.y = (int)kShardY[i];
+        g_playerPosScratch.z = (int)kShardZ[i];
+        // Its own facing, so the flat billboards do not stack into one shape;
+        // 0x400 is 1/16 of a turn.
+        Effect_CreateBillboard(STATUS_SHARD_TYPE, STATUS_SHARD_DATA,
+                               (short)(baseRot + (short)(i * 0x400)),
+                               &enemy->scaMatrixData.localMatrix,
+                               &g_playerPosScratch, 0);
+    }
+}
+
+static void weapon_shatter_enemy(Entity* enemy)
+{
+    int slot = (int)(enemy - g_EnemiesList);
+    if (slot >= 0 && slot < STATUS_SLOTS) {
+        g_statusKind[slot] = WEAPON_STATUS_NONE;
+        g_statusTicks[slot] = 0;
+    }
+    // The pieces keep - and brighten - the ice, which is the whole point of
+    // dismembering: flesh-coloured chunks read as a body coming apart, lit blue
+    // ones read as the shards. (The thaw paths below still go back to neutral;
+    // this enemy is never thawing.)
+    status_tint_enemy(enemy, STATUS_TINT_SHARD);
+
+    status_shatter_dismember(enemy);
+
+    // Frost where the body was, so the pieces leave a cloud behind, and then
+    // the shards themselves.
+    static const short kShatterY[3] = { -600, -1500, -2400 };
+    const short rot = status_billboard_rot(enemy);
+    for (int i = 0; i < 3; i++) {
+        g_playerPosScratch.x = 0;
+        g_playerPosScratch.y = kShatterY[i];
+        g_playerPosScratch.z = 0;
+        Effect_CreateBillboard(STATUS_MIST_TYPE, STATUS_MIST_DATA, rot,
+                               &enemy->scaMatrixData.localMatrix, &g_playerPosScratch, 0);
+    }
+    status_spawn_shards(enemy);
+
+    Entity* saved = ENTITY;
+    ENTITY = enemy;
+    Flg_on((int)g_EnemiesFlags, enemy->death_event_id);   // the room's kill flag
+    Snd_em(6);                                            // the limb/head break cue
+    ENTITY = saved;
+
+    unsigned char hitState = status_record(enemy, WEAPON_STATUS_FREEZE)->hit;
+    hitState |= (unsigned char)((status_def(WEAPON_STATUS_FREEZE)->record + 1) << 3);
+    enemy->hit_state          = hitState;
+    enemy->health             = (short)0xfed4;   // -300, the engine's own instant kill
+    enemy->state              = 3;               // dead
+    enemy->ignore_player_flag = 0;
+    enemy->action_behavior    = 0;
+    enemy->action_state       = 0;
+}
+
+// Called from RoomInit when a room is torn down. The per-frame tick would drop
+// these anyway the moment it saw status_flags cleared, but a room change can
+// complete without a gameplay frame in between, and death_event_id is not
+// guaranteed unique across rooms - so wipe the table outright at the one place
+// that definitely runs.
+void weapon_clear_status_effects(void)
+{
+    for (int slot = 0; slot < STATUS_SLOTS; slot++) {
+        g_statusKind[slot] = WEAPON_STATUS_NONE;
+        g_statusTicks[slot] = 0;
+    }
+}
+
+// Called once per frame from update_player_anim (PlayerAnimations.cpp).
+void weapon_update_status_effects(void)
+{
+    for (int slot = 0; slot < STATUS_SLOTS; slot++) {
+        if (g_statusTicks[slot] == 0) continue;
+
+        Entity* enemy = &g_EnemiesList[slot];
+        unsigned char kind = g_statusKind[slot];
+
+        // Gone, replaced, or already dead - in every case stop. Health below
+        // zero is the engine's own "dead" test (see the end of
+        // apply_weapon_damage), and it also covers an afflicted enemy finished
+        // off with a bullet.
+        if (enemy->status_flags == 0
+            || enemy->death_event_id != g_statusTag[slot]
+            || enemy->id >= NPC_ENTITIES_IDS
+            || enemy->health < 0) {
+            // A frozen enemy that died or left must not keep the blue, unless
+            // the slot has already been taken over by somebody else.
+            if (kind == WEAPON_STATUS_FREEZE
+                && enemy->status_flags != 0
+                && enemy->death_event_id == g_statusTag[slot]) {
+                status_tint_enemy(enemy, STATUS_TINT_NEUTRAL);
+            }
+            g_statusKind[slot] = WEAPON_STATUS_NONE;
+            g_statusTicks[slot] = 0;
+            continue;
+        }
+
+        const StatusDef* def = status_def(kind);
+        if (--g_statusDelay[slot] != 0) continue;
+        g_statusDelay[slot] = def->tickFrames;
+        g_statusTicks[slot]--;
+
+        // ---- freeze: no damage, no flinch, no effect - just stillness ------
+        // update_entities is already skipping this enemy's whole update (see
+        // weapon_status_entity_frozen), so all this has to do is hold the enemy
+        // targetable while the clock runs down and drop the tint at the end.
+        if (def->hold) {
+            if (g_statusTicks[slot] == 0) {
+                status_tint_enemy(enemy, STATUS_TINT_NEUTRAL);   // thawed
+            } else {
+                status_keep_targetable(enemy);
+            }
+            continue;
+        }
+
+        enemy->health = (short)(enemy->health - def->damage);
+
+        const int fatal = (enemy->health < 0);
+
+        // ---- acid on a standing zombie: fire its vomit attack ---------------
+        // Not every tick - zombie_vomiting runs an animation plus a 20..51
+        // frame recovery, so re-entering it twice a second would leave the
+        // zombie stuck on its first frame. It goes on the same cadence as the
+        // cries, roughly every two seconds. The attack brings its own spew and
+        // its own retch, so no cry and no flinch are added on those ticks - only
+        // the acid billboard, which is what tells the player the status is still
+        // running.
+        if (!fatal && def->vomit && status_enemy_is_zombie(enemy)
+            && (g_statusTicks[slot] % def->cryTicks) == 0
+            && status_zombie_can_retch(enemy)) {
+            status_spawn_billboard(enemy, kind);
+            zombie_trigger_vomit_attack(enemy);
+            continue;
+        }
+
+        status_spawn_billboard(enemy, kind);
+
+        // Otherwise the tick hands the enemy the same state apply_weapon_damage
+        // hands it after a shot, so the effect reads as real damage: the enemy
+        // flinches on each tick and dies out of the flinch when health runs
+        // out. The credited weapon is the borrowed round, which is what makes
+        // it play the fire/acid reaction and the matching death.
+        //
+        // A tick every def->tickFrames therefore re-enters the damage animation
+        // before it finishes - that jerking is deliberate, and it is also why an
+        // afflicted enemy barely advances. Widen tickFrames to give it room to
+        // move between flinches.
+        unsigned char hitState = status_record(enemy, kind)->hit;
+        if ((g_playerEntityPointer.flags & 0xE0) != 0x20) {
+            hitState = (unsigned char)(hitState + (g_playerEntityPointer.flags >> 5));
+        }
+        hitState |= (unsigned char)((def->record + 1) << 3);
+        enemy->hit_state = hitState;
+        enemy->state = 2;                  // damaged
+        enemy->ignore_player_flag = 0;
+        enemy->action_behavior = 0;
+        enemy->action_state = 0;
+
+        if (fatal) {
+            g_statusKind[slot] = WEAPON_STATUS_NONE;
+            g_statusTicks[slot] = 0;
+            enemy->state = 3;              // dead - same handoff, different state
+            continue;                      // the death animation plays its own moan
+        }
+
+        // Not on every tick: twice a second would be a stutter, not a cry. The
+        // two sounds alternate, so after the loud one at the moment of the hit
+        // the effect runs quiet, loud, quiet, loud ... rather than repeating one
+        // sample.
+        if ((g_statusTicks[slot] % def->cryTicks) == 0) {
+            status_cry(enemy, ((g_statusTicks[slot] / def->cryTicks) & 1)
+                                  ? def->cryQuiet : def->cryLoud);
+        }
+    }
+}
 
 // ============================================================================
 // checkEntityInRangeCone @ 0x0043d590
@@ -360,6 +990,25 @@ unsigned char apply_weapon_damage(unsigned int weapon_id)
         return 0;
     }
 
+    // CUSTOM: everything above this point - range, hit detection, line of sight -
+    // has already used the weapon the shot was AIMED with. From here on the
+    // override (if any) decides what the hit actually does.
+    if (g_weaponDamageIdOverride != 0) {
+        weapon_id = g_weaponDamageIdOverride;
+        weaponAdj = (unsigned char)(weapon_id - 1);
+    }
+
+    // CUSTOM: a frozen enemy SHATTERS when anything other than the freeze
+    // pistol hits it. Checked before the hit record is even read, so none of
+    // the normal damage, knockback or reaction happens - the hit is spent
+    // destroying it. A second freeze shot falls through and just re-freezes.
+    if (g_weaponStatusEffect != WEAPON_STATUS_FREEZE
+        && enemy->id < NPC_ENTITIES_IDS
+        && weapon_status_entity_frozen(enemy)) {
+        weapon_shatter_enemy(enemy);
+        return 1;
+    }
+
     unsigned char enemyType = enemy->id;
     if (enemyType >= NPC_ENTITIES_IDS) return enemy->id;   // 0x14+ NPC ids: no damage (matches the original, returns the enemy id)
 
@@ -399,6 +1048,13 @@ unsigned char apply_weapon_damage(unsigned int weapon_id)
     typedef void (*postHitFn)(Entity* ent);
     postHitFn postHit = (postHitFn)PTR_post_hit_callbacks[weaponAdj];
     postHit(enemy);
+
+    // CUSTOM: the custom pistols leave a status effect on their target. Done
+    // here rather than at the call site because this is the only place that
+    // knows WHICH enemy was hit, and the pointer must not outlive the call.
+    if (g_weaponStatusEffect != WEAPON_STATUS_NONE) {
+        weapon_apply_status(enemy, (unsigned char)g_weaponStatusEffect);
+    }
 
     enemy->state = 3;
     enemy->ignore_player_flag = 0;

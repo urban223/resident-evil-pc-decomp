@@ -473,7 +473,7 @@ static constexpr auto s_idjp_4C931D = STR_JP(u8"バッテリーはまだ生き�
 static constexpr auto s_idjp_4C932D = STR_JP(u8"イングラム Mー11\\nベレッタとおなじ9mm弾を使用する");
 static constexpr auto s_idjp_4C934E = STR_JP(u8"フルオートで射撃できる\\nライトウェイトマシンガンだ");
 
-unsigned char* g_ItemDescriptionsJpn[79] = {
+unsigned char* g_ItemDescriptionsJpn[82] = {
     (unsigned char*)s_idjp_4C8E68.bytes,      // [  0] この装備だけで調査を / 進めていくのはむずかしいだろう
     (unsigned char*)s_idjp_4C8E89.bytes,      // [  1] ベレッタM92FSオートマチック / 9mmパラベラム弾を撃ち出す自動銃だ
     (unsigned char*)s_idjp_4C8EB4.bytes,      // [  2] レミントンM870 / ひろいレンジを攻撃できる銃だ
@@ -553,5 +553,19 @@ unsigned char* g_ItemDescriptionsJpn[79] = {
     (unsigned char*)s_idjp_4C931D.bytes,      // [ 76] バッテリーはまだ生きている
     (unsigned char*)s_idjp_4C932D.bytes,      // [ 77] イングラム Mー11 / ベレッタとおなじ9mm弾を使用する
     (unsigned char*)s_idjp_4C934E.bytes,      // [ 78] フルオートで射撃できる / ライトウェイトマシンガンだ
+    // CUSTOM - ITEM_GRENADE_PISTOL - kept in sync with the +1 entry appended
+    // to g_ItemDescriptions (Globals.cpp), since set_item_description_message
+    // (RoomInit.cpp) bounds-checks both tables against g_ItemDescriptions's
+    // size. No Japanese text was written for this mod item - reuse the
+    // existing generic "nothing particularly noteworthy" filler used
+    // elsewhere in this table for items without a unique description. This
+    // row is unreachable in the USA/PC build this mod targets (JPN table is
+    // only read when GetAssetVersion() selects the Biohazard asset tree).
+    (unsigned char*)s_idjp_4C920E.bytes,      // [ 79] 特に気になる所はない
+    // CUSTOM - ITEM_ACID_PISTOL - the second appended entry, same filler and
+    // the same reason as [79] above.
+    (unsigned char*)s_idjp_4C920E.bytes,      // [ 80] 特に気になる所はない
+    // CUSTOM - ITEM_FREEZE_PISTOL - the third.
+    (unsigned char*)s_idjp_4C920E.bytes,      // [ 81] 特に気になる所はない
 };
 

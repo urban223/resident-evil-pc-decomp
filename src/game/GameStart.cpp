@@ -90,6 +90,12 @@ void SetInitialItems(void)
         // jill items
         ITEM_KNIFE,             0,
         ITEM_BERETTA,          15,
+        // CUSTOM ADDITION: not in the original game. Qty is cosmetic - the
+        // special-weapon band (ITEM_GRENADE_PISTOL > ITEM_NON_INFINITE_MAX)
+        // self-refills to 4 in weapon_autoaim_check (PlayerAnimations.cpp).
+        ITEM_GRENADE_PISTOL,    4,
+        ITEM_ACID_PISTOL,       4,
+        ITEM_FREEZE_PISTOL,     4,
         ITEM_FIRST_AID_SPRAY,   1,
         ITEM_NONE,              0
     };
@@ -191,8 +197,24 @@ void LoadHeldItemsImages(void) // 0x00451640
         g_ItemSlotsPointer = savedSlotPointer;
         g_ItemSlotIndices[index] = totalItems;
         unsigned char itemId = ((unsigned char*)savedSlotPointer)[index * 2];
-        unsigned char imageType = g_ItemImageLookupTable[itemId * 4];
-        LoadItemImage(imageType - 1, (int)index, (int)g_ItemsImageBuffer);
+        // CUSTOM: neither custom pistol has an entry of its own in the
+        // original's ROM-dumped g_ItemImageLookupTable (ids 0x71/0x72 are past
+        // every real item in it - and its 459-byte length means a 4-byte row
+        // read at 0x72 would run one byte off the end, so this branch is a
+        // bounds guard as much as an icon choice). Each has its own
+        // hand-authored icon - load that directly instead of indexing the
+        // lookup table/atlas. LoadItemImage's item_id*1200 offset is applied
+        // to whichever buffer pointer is passed, so item_id=0 with our buffer
+        // as img_buffer resolves straight to its start.
+        if (ITEM_IS_CUSTOM_PISTOL(itemId)) {
+            unsigned char* icon = g_GrenadePistolIconData;
+            if (itemId == ITEM_ACID_PISTOL)        icon = g_AcidPistolIconData;
+            else if (itemId == ITEM_FREEZE_PISTOL) icon = g_FreezePistolIconData;
+            LoadItemImage(0, (int)index, (int)icon);
+        } else {
+            unsigned char imageType = g_ItemImageLookupTable[itemId * 4];
+            LoadItemImage(imageType - 1, (int)index, (int)g_ItemsImageBuffer);
+        }
         savedSlotPointer = g_ItemSlotsPointer;
     }
     g_ItemSlotsPointer = savedSlotPointer;

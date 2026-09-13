@@ -1749,6 +1749,8 @@ unsigned int entity_ballistic_step(short fwdStep, short vy0, short gravity, shor
 //   BillboardSetColor                @ 0x00456710 - PlayerAnimations.cpp
 // ---------------------------------------------------------------------------
 
+extern int weapon_status_entity_frozen(Entity* enemy);   // CUSTOM - WeaponDamage.cpp
+
 // (0x0048f0f0) - Update all enemy entities per-frame
 // Iterates through g_EnemiesList, calls the per-type update function from
 // enemies_update_functions_tbl for each active entity, and - in a room whose
@@ -1772,10 +1774,27 @@ void update_entities(void)
 
         // 0x0048f114-0x0048f12b: Only update active entities (status_flags bit 0)
         if ((ENTITY->status_flags & 0x01) != 0) {
-            // 0x0048f12b: Call per-type update function from dispatch table
-            void* updateFunc = enemies_update_functions_tbl[ENTITY->id];
-            if (updateFunc != NULL) {
-                ((void(*)())updateFunc)();
+            // CUSTOM: the freeze pistol. This dispatch is the ONE place every
+            // enemy type passes through, so it is the only place a freeze can
+            // be type-agnostic - each type keeps its own state table with its
+            // own no-op slot, or none at all.
+            //
+            // Skipping the call is a real freeze: an enemy only translates
+            // through Add_speedXZ and only advances an animation frame through
+            // Joint_move, and both are reached exclusively from inside a state
+            // handler. Everything that keeps the enemy present - the draw loop
+            // in GameLoop, the joint matrices, room collision - lives outside
+            // this call, so a frozen enemy stays on screen in its pose and can
+            // still be walked into and shot. (status_flags bit 0, the only flag
+            // this loop already tests, is no use for a freeze: the same bit
+            // gates the draw loop and auto-aim targeting, so clearing it would
+            // make the enemy vanish rather than stand still.)
+            if (!weapon_status_entity_frozen(ENTITY)) {
+                // 0x0048f12b: Call per-type update function from dispatch table
+                void* updateFunc = enemies_update_functions_tbl[ENTITY->id];
+                if (updateFunc != NULL) {
+                    ((void(*)())updateFunc)();
+                }
             }
 
             // 0x0048f131-0x0048f197: the mirror pass. Bit 0 of g_main_state_flags

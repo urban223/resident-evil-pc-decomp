@@ -9,6 +9,7 @@
 
 // Forward declarations for helpers defined in other files
 extern void SetupCharacterData(void);
+extern void weapon_clear_status_effects(void);   // CUSTOM - WeaponDamage.cpp
 extern void LoadSoundBank(int, void*);
 extern void load_character_sfx(unsigned char);
 
@@ -456,6 +457,7 @@ void room_set(void)
     // 0x00477bc8: Reset enemy count and model state
     i = 0;
     g_enemy_count = 0;
+    weapon_clear_status_effects();    // CUSTOM: no enemy carries fire or acid across a room
     g_omodelCount = 0;
     g_LastEnemyModelId = 0xff;
     g_TextureBankID = 0x06;

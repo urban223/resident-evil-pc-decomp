@@ -1130,6 +1130,27 @@ void ApplyShakeAndRebuildSprites() {
 // its category is returned instead (e.g. "MANSION KEY").
 unsigned char* message_item_name_lookup(unsigned char itemId)
 {
+    // CUSTOM: neither custom pistol (0x71, 0x72) has an entry of its own in
+    // g_ItemNamePointers[128]/g_ItemNamePointersJpn[128]. That table is a
+    // clean 128-slot array, so itemId-1 doesn't run off the end of it, but the
+    // original ROM never used an id past ITEM_MINIMI (0x70) - slot 0x70 holds
+    // whatever unrelated leftover string happened to sit there (observed
+    // in-game as the name "CRANK"), and 0x71 is no better. Both now have their
+    // own names (MenuData.cpp) - return them directly rather than aliasing to
+    // ITEM_BERETTA and indexing the table. Weapons are always shown by their
+    // real name regardless of the "examined" flag logic below (see
+    // g_ItemImageLookupTable's flag byte), so skipping straight past it here
+    // matches how every other weapon behaves.
+    if (itemId == ITEM_GRENADE_PISTOL) {
+        return (unsigned char*)g_GrenadePistolNamePtr;
+    }
+    if (itemId == ITEM_ACID_PISTOL) {
+        return (unsigned char*)g_AcidPistolNamePtr;
+    }
+    if (itemId == ITEM_FREEZE_PISTOL) {
+        return (unsigned char*)g_FreezePistolNamePtr;
+    }
+
     // The Japanese release has its own pair of tables (0x004cd388/0x004cd548,
     // read by its message_item_name_lookup at 0x00491440) holding the names in
     // FONT.TIM's encoding. The USA strings would still draw - the two fonts

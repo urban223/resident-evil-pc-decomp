@@ -248,6 +248,22 @@ static const char g_weaponPathTable[][0xe][16] = {
     }
 };
 
+// CUSTOM: the two custom pistols' in-hand models. They cannot live in the table
+// above - that is indexed by weapon id and only has rows 0..0xd, while their ids
+// are 0x71/0x72. Each file is a copy of Jill's Beretta w12.emw with only the
+// weapon TMD swapped, so all of the arm/hand animation data in it (and
+// therefore every pose) is unchanged. Note w20.emw is a REAL game file; the
+// free names picked here are w1f and w2f.
+static const char g_grenadePistolWeaponPath[] = "players/w1f.emw";
+static const char g_acidPistolWeaponPath[]    = "players/w2f.emw";
+static const char g_freezePistolWeaponPath[]  = "players/w3f.emw";
+
+// CUSTOM: which custom pistol's .emw is currently sitting in g_animationBuffer,
+// or 0 for anything else. menu_update_equipped_weapon compares against this to
+// decide whether the in-hand model has to be reloaded - it cannot use
+// equippedWeaponId for that, because all three pistols alias to ITEM_BERETTA.
+unsigned char g_loadedCustomPistol = 0;
+
 // TMD texture header struct — defined in TmdAnimation.cpp, declared here for extern visibility
 #pragma pack(push, 1)
 struct TmdTextureHeader {
@@ -573,13 +589,50 @@ void LoadEquippedWeaponAnimation(unsigned char weapon_id, unsigned char param_2,
 {
     JointStruct* joint = &g_playerEntity.jointsStructs[param_2];
 
-    if (weapon_id > 0x6e) {
+    // CUSTOM: ITEM_GRENADE_PISTOL keeps the Beretta's ANIMATION set (its own
+    // model file carries Beretta animation data verbatim) but now has its own
+    // weapon mesh, so only the file path differs.
+    //
+    // Detecting it takes two tests, because this function is reached by two
+    // routes carrying different ids. SetupCharacterData passes the raw
+    // inventory id, so 0x71 arrives intact. menu_update_equipped_weapon,
+    // however, deliberately aliases equippedWeaponId to ITEM_BERETTA at the
+    // point it is derived (that alias is what makes the aim/fire state machine
+    // work at all - see the comment there), so on that route the id is already
+    // 2 by the time we see it and the item is indistinguishable from a real
+    // Beretta. The real id is recovered from the equipped inventory slot, the
+    // same way PlayerAnimations.cpp recovers it for the damage type. Reading
+    // it here rather than caching a flag keeps the two from drifting apart -
+    // equippedWeaponId is assigned from eight different places.
+    unsigned char customPistol = ITEM_IS_CUSTOM_PISTOL(weapon_id) ? (unsigned char)weapon_id : 0;
+    if (customPistol == 0 && weapon_id == ITEM_BERETTA && g_EquippedItemId != 0) {
+        unsigned char slotId =
+            ((unsigned char*)g_ItemSlotsPointer)[(g_EquippedItemId - 1) * 2];
+        if (ITEM_IS_CUSTOM_PISTOL(slotId)) {
+            customPistol = slotId;
+        }
+    }
+
+    if (customPistol != 0) {
+        weapon_id = ITEM_BERETTA;
+    } else if (weapon_id > 0x6e) {
         weapon_id = 0xd - (weapon_id == 0x6f);
     }
 
-    sprintf(FILE_PATH, "%s%s",
-            GAME_DATA_ROOT,
-            g_weaponPathTable[g_playerEntity.id & 3][weapon_id]);
+    const char* weaponPath;
+    if (customPistol == ITEM_GRENADE_PISTOL) {
+        weaponPath = g_grenadePistolWeaponPath;
+    } else if (customPistol == ITEM_ACID_PISTOL) {
+        weaponPath = g_acidPistolWeaponPath;
+    } else if (customPistol == ITEM_FREEZE_PISTOL) {
+        weaponPath = g_freezePistolWeaponPath;
+    } else {
+        weaponPath = g_weaponPathTable[g_playerEntity.id & 3][weapon_id];
+    }
+
+    g_loadedCustomPistol = customPistol;
+
+    sprintf(FILE_PATH, "%s%s", GAME_DATA_ROOT, weaponPath);
     SetSpriteBufferFlag();
 
     unsigned int fileSize = LoadFile(FILE_PATH, (void*)anim_buffer, 32);
@@ -655,6 +708,21 @@ void SetupCharacterData(void)
         // this is faithfull to original code
         // itembox slots length is 48 slots, the character item slots is expected to be after the itembox slots array
         g_playerEntity.equippedWeaponId = g_itemboxSlots[g_EquippedItemId + 47].Id;
+        // CUSTOM: this is the OTHER place equippedWeaponId gets derived from
+        // the real inventory slot (menu_update_equipped_weapon, MainMenu.cpp,
+        // is the normal one) - reached when a saved game resumes with
+        // ITEM_GRENADE_PISTOL already equipped. LoadEquippedWeaponAnimation
+        // below aliases its own local weapon_id copy to ITEM_BERETTA already,
+        // but that doesn't reach the global equippedWeaponId field, which the
+        // whole aim/fire/raise state machine in PlayerAnimations.cpp branches
+        // on directly. Alias it here too so those checks see an ordinary
+        // Beretta instead of trying to play the Ingram/Minimi-only special-
+        // weapon animation set against the Beretta's model (which aborts the
+        // raise motion partway through - see menu_update_equipped_weapon for
+        // the full explanation).
+        if (ITEM_IS_CUSTOM_PISTOL(g_playerEntity.equippedWeaponId)) {
+            g_playerEntity.equippedWeaponId = ITEM_BERETTA;
+        }
     }
     LoadEquippedWeaponAnimation(
         g_playerEntity.equippedWeaponId, 0xe, (unsigned int)g_animationBuffer, (unsigned int)&g_animObjectBuffer);

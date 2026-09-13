@@ -308,6 +308,21 @@ static constexpr auto s_itemBotanyBook      = STR("BOTANY BOOK\x07");        // 
 static constexpr auto s_itemIngram          = STR("INGRAM\x07");             // +0x3b6
 static constexpr auto s_itemMinimi          = STR("MINIMI\x07");             // +0x3bd
 
+// CUSTOM: ITEM_GRENADE_PISTOL's own display name. Not part of the original
+// 128-entry g_ItemNamePointers table (that item id doesn't exist in the ROM
+// data) - message_item_name_lookup (Rendering.cpp) returns this directly
+// instead of indexing the table, so it needs no slot/alias there.
+static constexpr auto s_itemFlarePistol = STR("FLARE PISTOL\x07");
+extern const unsigned char* const g_GrenadePistolNamePtr = (const unsigned char*)s_itemFlarePistol.bytes;
+
+// CUSTOM: ITEM_ACID_PISTOL's display name, same arrangement.
+static constexpr auto s_itemAcidPistol = STR("ACID PISTOL\x07");
+extern const unsigned char* const g_AcidPistolNamePtr = (const unsigned char*)s_itemAcidPistol.bytes;
+
+// CUSTOM: ITEM_FREEZE_PISTOL's display name, same arrangement.
+static constexpr auto s_itemFreezePistol = STR("FREEZE PISTOL\x07");
+extern const unsigned char* const g_FreezePistolNamePtr = (const unsigned char*)s_itemFreezePistol.bytes;
+
 // PTR_DAT_004bf0a0: item name pointers, indexed by (itemId - 1)
 extern const unsigned char* g_ItemNamePointers[128] = {
     (unsigned char*)s_itemCombatKnife.bytes,     // [ 0] COMBAT KNIFE (+0x000)
@@ -549,6 +564,27 @@ extern const unsigned char g_ItemModelFileNames[75][8] = {
 // Special model file names for items 0x6F (ING) / 0x70 (MINI) (0x004BD5A0)
 extern const unsigned char g_ItemModelFileNameING[8] = "ING";
 extern const unsigned char g_ItemModelFileNameMINI[8] = "MINI";
+
+// CUSTOM: ITEM_GRENADE_PISTOL's (0x71) own item-examine-screen 3D model
+// filename, following the same out-of-table pattern as ING/MINI above -
+// its id is past the end of the fixed 75-entry g_ItemModelFileNames table,
+// so menu_load_item_model (MainMenu.cpp) matches it by an explicit id check
+// instead of an index into that table. Resolves to item_m2/IFLR.ivm: a
+// custom TMD+TIM asset derived from Beretta's item_m2/i00v.ivm (barrel/frame
+// vertices compressed and radially thickened for a stubbier "signal pistol"
+// silhouette, grip left untouched; palette recolored from gunmetal grey to
+// a warm orange/brass to match the inventory icon) - never overwrites the
+// original i00v.ivm.
+extern const unsigned char g_GrenadePistolModelFileName[8] = "IFLR";
+
+// CUSTOM: ITEM_ACID_PISTOL's (0x72) examine model, item_m2/IACD.ivm. Same mesh
+// as IFLR.ivm - same generator, same contour pass, same size budget - with a
+// light-green palette and ACID moulded into the barrel band instead of FLARE.
+extern const unsigned char g_AcidPistolModelFileName[8] = "IACD";
+
+// CUSTOM: ITEM_FREEZE_PISTOL's (0x73) examine model, item_m2/IFRZ.ivm - the
+// same mesh again with a light-blue palette and FREEZE on the barrel band.
+extern const unsigned char g_FreezePistolModelFileName[8] = "IFRZ";
 
 // PTR_DAT_004bd768: item combine tables, indexed by item image type (byte 1 of
 // g_ItemImageLookupTable). Each table: count byte + 4-byte records

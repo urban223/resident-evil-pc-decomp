@@ -244,6 +244,40 @@ static_assert(sizeof(ScaMatrixData) == 0x50, "ScaMatrixData size mismatch");
 #define ITEM_INGRAM             0x6F    // Jill's exclusive sub machinegun
 #define ITEM_MINIMI             0x70    // Chris' exclusive machinegun
 
+// CUSTOM ADDITION (not in the original game): two hand-authored signal-pistol
+// variants. Both live in the same "bonus weapon" id band as ITEM_INGRAM /
+// ITEM_MINIMI above ITEM_NON_INFINITE_MAX, which is what gives them
+// self-refilling ammo (weapon_autoaim_check, PlayerAnimations.cpp) with no new
+// ammo item needed, and both have their model AND animation aliased to
+// ITEM_BERETTA (menu_update_equipped_weapon / SetupCharacterData) so the whole
+// aim/fire state machine works unchanged.
+//
+// Neither uses a WeaponDamage.cpp slot of its own. Each lands as an ordinary
+// handgun hit and then applies a status effect that does the real killing:
+//   FLARE  PISTOL - sets the target on fire
+//   ACID   PISTOL - corrodes it, and the enemy retches
+//   FREEZE PISTOL - holds it still in a white mist; any OTHER weapon that
+//                   hits it while it is frozen shatters it outright
+// See weapon_update_status_effects in WeaponDamage.cpp.
+#define ITEM_GRENADE_PISTOL     0x71    // FLARE PISTOL (kept its original name)
+#define ITEM_ACID_PISTOL        0x72    // ACID PISTOL
+#define ITEM_FREEZE_PISTOL      0x73    // FREEZE PISTOL
+
+// True for either of the two above. Most of the engine only needs to know that
+// an item is one of ours - it cannot tell them apart from equippedWeaponId,
+// which is aliased to ITEM_BERETTA for both.
+#define ITEM_IS_CUSTOM_PISTOL(id) \
+    ((id) == ITEM_GRENADE_PISTOL || (id) == ITEM_ACID_PISTOL || \
+     (id) == ITEM_FREEZE_PISTOL)
+
+// CUSTOM: the status effects those pistols leave on what they hit. Set in
+// g_weaponStatusEffect before apply_weapon_damage; ticked by
+// weapon_update_status_effects (both in WeaponDamage.cpp).
+#define WEAPON_STATUS_NONE      0
+#define WEAPON_STATUS_FIRE      1
+#define WEAPON_STATUS_ACID      2
+#define WEAPON_STATUS_FREEZE    3
+
 
 // ============================================================================
 // Maps

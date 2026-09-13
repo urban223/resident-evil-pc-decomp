@@ -1850,6 +1850,25 @@ static void player_update_shadow_sprite(int posPtr, int sprPtr, int height, int 
 }
 
 // ----------------------------------------------------------------------------
+// CUSTOM: which of the two custom pistols is actually equipped, if either.
+// Returns the raw item id (ITEM_GRENADE_PISTOL / ITEM_ACID_PISTOL) or 0.
+//
+// equippedWeaponId is aliased to ITEM_BERETTA for both (see
+// menu_update_equipped_weapon / SetupCharacterData), so the only way to tell
+// them apart from a real handgun - or from each other - is to look at the raw
+// item id in the equipped inventory slot. g_EquippedItemId is 1-based; 0 means
+// nothing is equipped.
+// ----------------------------------------------------------------------------
+static unsigned char player_custom_pistol_equipped(void)
+{
+    if (g_EquippedItemId == 0) {
+        return 0;
+    }
+    unsigned char id = ((unsigned char*)g_ItemSlotsPointer)[(g_EquippedItemId - 1) * 2];
+    return ITEM_IS_CUSTOM_PISTOL(id) ? id : 0;
+}
+
+// ----------------------------------------------------------------------------
 // The ejected magazine - FUN_00429d50 (0x00429d50) plus the three-state table
 // at 0x004ba950.
 //
@@ -1962,6 +1981,17 @@ static void player_update_detached_joint(void)   // 0x00429d50
 
     JointStruct* clip = &joints[0xf];
     if (clip->velZ == 0) return;
+
+    // CUSTOM: both custom pistols are break-action signal pistols - they eject
+    // nothing when fired. Switching the detached joint back off here also
+    // suppresses the shell hitting the floor (Play3DSnd(2, 0x15) in state 1) and
+    // the draw below, and it catches a shell that was already in flight when the
+    // player swapped to one of them.
+    if (player_custom_pistol_equipped() != 0) {
+        clip->velZ = 0;
+        clip->rotDeltaX = 0;
+        return;
+    }
 
     // 0x00429d7a: the caller integrates; the state routines only set velocities.
     clip->world.t[1] += (int)clip->velX;
@@ -3909,6 +3939,9 @@ static void player_ctrl_frame1(void)
 // ============================================================================
 
 extern unsigned char apply_weapon_damage(unsigned int weapon_id);   // 0x0043c020
+extern unsigned int g_weaponDamageIdOverride;
+extern unsigned int g_weaponStatusEffect;             // WeaponDamage.cpp - status the hit enemy gets
+extern void weapon_update_status_effects(void);       // WeaponDamage.cpp - per-frame burn/acid tick
 extern int  get_item_slot(unsigned char itemId);                    // 0x004516a0
 extern int  rand(void);
 extern int  turn_toward_target(VECTOR* target_pos, short angle_step);          // 0x00489960
@@ -4664,7 +4697,37 @@ static void player_behavior_14_autoaim_fire(void)
     // ---- damage + fire sounds
     if (g_weaponFireData[weaponIdx].fireFrame == g_playerEntity.animation_frame_id) {
         if (weaponIdx < 6) {
-            apply_weapon_damage(g_weaponFireData[weaponIdx].weaponId);
+            unsigned int dmgWeaponId = g_weaponFireData[weaponIdx].weaponId;
+            // CUSTOM: ITEM_GRENADE_PISTOL is aliased to ITEM_BERETTA in
+            // equippedWeaponId (menu_update_equipped_weapon / SetupCharacterData)
+            // so weaponIdx above is 0 (Beretta's slot) and this whole function
+            // plays the Beretta's own working raise/fire animation. Recover the
+            // real inventory item here to give the shot its own identity.
+            //
+            // Neither pistol hits hard. Each lands as an ordinary handgun shot
+            // and leaves a status effect - fire or acid - and that is what
+            // kills, ticking in weapon_update_status_effects. An earlier
+            // version of the flare gun passed
+            // ITEM_BAZOOKA_EXPLOSIVE here, which tore a zombie apart in one shot
+            // AND - because that argument also picks the TARGETING - handed this
+            // item the grenade launcher's aiming rules: a 360-degree radial test
+            // around a scratch position the launcher fills with its projectile
+            // (this item spawns none, so it read stale scratch) and no
+            // line-of-sight gate at all, since that gate only runs for
+            // weaponAdj < 5. Auto-aim hit enemies standing behind the player.
+            // Everything the shot does now goes through the two globals below,
+            // which are read after a target has been found, so the handgun's
+            // forward cone, range and line-of-sight check still do the aiming.
+            unsigned char customPistol = player_custom_pistol_equipped();
+            if (customPistol != 0) {
+                g_weaponDamageIdOverride = ITEM_BERETTA;
+                g_weaponStatusEffect = (customPistol == ITEM_GRENADE_PISTOL) ? WEAPON_STATUS_FIRE
+                                     : (customPistol == ITEM_ACID_PISTOL)    ? WEAPON_STATUS_ACID
+                                                                             : WEAPON_STATUS_FREEZE;
+            }
+            apply_weapon_damage(dmgWeaponId);
+            g_weaponDamageIdOverride = 0;
+            g_weaponStatusEffect = 0;
         }
         Play3DSnd(1, g_weaponFireData[weaponIdx].sfx1, 0,
                   (int)&g_playerEntity.scaMatrixData.localMatrix.t);
@@ -4672,8 +4735,17 @@ static void player_behavior_14_autoaim_fire(void)
                   (int)&g_playerEntity.scaMatrixData.localMatrix.t);
     }
 
-    // ---- big muzzle flash
-    if (g_weaponMuzzleFlash[weaponIdx].b0 == g_playerEntity.animation_frame_id) {
+    // ---- ejected shell case (g_weaponMuzzleFlash - see the note in Globals.cpp:
+    // the table is the CASE, not a flash. It is the only spawn that tags the
+    // effect with animHeader[3] = weaponIdx, which is exactly the tag
+    // effect_behavior_gravity_impact tests before playing Play3DSnd(1, 10) when
+    // the effect lands - the tink of brass on the floor. Both revolvers have
+    // b0 = 99 here, i.e. never, which is what makes the identification certain.)
+    //
+    // CUSTOM: the flare gun is a break-action signal pistol - it ejects nothing
+    // when fired, so skip the case and, with it, its landing sound.
+    if (g_weaponMuzzleFlash[weaponIdx].b0 == g_playerEntity.animation_frame_id
+        && player_custom_pistol_equipped() == 0) {
         g_playerPosScratch.x = g_weaponMuzzleFlash[weaponIdx].x;
         int yOff = (1 - weaponIdx) * (g_playerEntity.id & 1) * 300;
         g_playerPosScratch.z = g_weaponMuzzleFlash[weaponIdx].z;
@@ -5203,7 +5275,10 @@ static void fire_weapon_fx(void)
     switch (g_playerEntity.equippedWeaponId) {
     case ITEM_BERETTA: {   // 0x00458ff0
         if (frame == 0xa && g_playerEntity.unk_bf == 1) {
-            if (fire_ammo_volley_gate() != 0) {
+            // CUSTOM: skip the shell eject for the custom pistols (see
+            // player_custom_pistol_equipped) - the volley gate still has to run so
+            // the frame-0x11 ammo top-up below stays once-per-trigger.
+            if (fire_ammo_volley_gate() != 0 && player_custom_pistol_equipped() == 0) {
                 fire_reset_joint15_recoil();
             }
         }
@@ -6605,6 +6680,12 @@ void update_player_anim(void)
     }
 
     player_update_detached_joint();
+
+    // CUSTOM: burning and corroding enemies (the two custom pistols). Ticked
+    // here because this is the per-frame gameplay update - it stops while the
+    // inventory or a message is up, which is what we want, and it never runs
+    // outside a loaded room.
+    weapon_update_status_effects();
 }
 
 // ============================================================================

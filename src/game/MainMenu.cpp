@@ -718,6 +718,8 @@ static void menu_restore_game_state(void)
     StMask(0, 2);
 }
 
+extern unsigned char g_loadedCustomPistol;   // CUSTOM - EntityModelLoader.cpp
+
 // (0x00463ec0) - Update equipped weapon based on menu selection
 void menu_update_equipped_weapon(void)
 {
@@ -729,9 +731,34 @@ void menu_update_equipped_weapon(void)
     } else {
         unsigned char* slotPtr = (unsigned char*)g_ItemSlotsPointer;
         unsigned char itemId = slotPtr[(g_EquippedItemId - 1) * 2];
-        if (g_playerEntity.equippedWeaponId != itemId) {
-            g_playerEntity.equippedWeaponId = itemId;
-            LoadSoundBank(itemId, g_TimImageBuffer__bitmap);
+        // CUSTOM: ITEM_GRENADE_PISTOL has no model/animation of its own - it
+        // reuses the Beretta's (LoadEquippedWeaponAnimation). The entire aim/
+        // fire/raise state machine in PlayerAnimations.cpp branches on
+        // equippedWeaponId to decide which animation data a weapon >0x6e
+        // should play, assuming the Ingram/Minimi full-auto pose set that
+        // only THEIR model files actually contain - the Beretta's model
+        // doesn't have those clips, so playing them against it made the
+        // raise motion abort partway through and skip the fire state
+        // entirely. Aliasing here, at the single point equippedWeaponId is
+        // derived from the inventory, makes every one of those checks
+        // (and effect/sound-bank code elsewhere that also reads
+        // equippedWeaponId) treat it as an ordinary Beretta automatically.
+        // The real item id lives on in g_EquippedItemId's inventory slot for
+        // ammo/display, and PlayerAnimations.cpp recovers it at the fire-
+        // frame damage call to apply grenade/explosive damage instead of
+        // the Beretta's own.
+        unsigned char equipId = ITEM_IS_CUSTOM_PISTOL(itemId) ? ITEM_BERETTA : itemId;
+        if (g_playerEntity.equippedWeaponId != equipId) {
+            g_playerEntity.equippedWeaponId = equipId;
+            LoadSoundBank(equipId, g_TimImageBuffer__bitmap);
+            DAT_00ae9f1e = 0xFF;
+        } else if ((ITEM_IS_CUSTOM_PISTOL(itemId) ? itemId : 0) != g_loadedCustomPistol) {
+            // CUSTOM: swapping one custom pistol for another leaves equipId at
+            // ITEM_BERETTA, so the test above sees no change and the in-hand
+            // model is never reloaded - every pistol kept whichever .emw was
+            // loaded last, which is why the flare and the acid pistol both
+            // turned up blue after the freeze pistol had been held. Ask the
+            // loader what is actually in the buffer instead.
             DAT_00ae9f1e = 0xFF;
         }
     }
@@ -794,7 +821,15 @@ static void menu_draw_inventory(void)
         // row 0 (the first slot's sprite). DAT_00d21ccf is not a real global.
         g_TextureDesc.texV = g_ItemSlotIndices[g_EquippedItemId - 1] << 5;
         pbVar2 = (unsigned char*)ITEM_SLOTS + (g_EquippedItemId * 2 - 2);
-        if (*pbVar2 < 0x6f) {
+        // CUSTOM: the >= 0x6f branch below draws from a static bonus-weapon
+        // icon strip that only has real rows for ITEM_INGRAM/ITEM_MINIMI
+        // (texV = itemId*0x1e-2, i.e. two hand-placed rows in that texture).
+        // Neither custom pistol (0x71, 0x72) has a row there - that formula
+        // would read far past the strip and sample garbage/blank texture data.
+        // Route them through the normal per-slot dynamic icon buffer instead,
+        // same as any ordinary item (LoadHeldItemsImages fills that buffer
+        // from each one's own hand-authored icon).
+        if (*pbVar2 < 0x6f || ITEM_IS_CUSTOM_PISTOL(*pbVar2)) {
             uVar11 = 8;
             uVar10 = 1;
         } else {
@@ -838,7 +873,11 @@ static void menu_draw_inventory(void)
         g_TextureDesc.screenX = *(short*)((int)g_inventorySlotsPos + (unsigned int)local_2 * 2);
         g_TextureDesc.texV = g_ItemSlotIndices[uVar7] << 5;
         pbVar2 = (unsigned char*)ITEM_SLOTS + uVar7 * 2;
-        if (*pbVar2 < 0x6f) {
+        // CUSTOM: see the equipped-slot icon draw above - neither custom
+        // pistol has a row of its own in the static bonus-weapon icon strip,
+        // so route them through the normal dynamic icon buffer instead of the
+        // itemId*0x1e-2 formula that only has real data for Ingram/Minimi.
+        if (*pbVar2 < 0x6f || ITEM_IS_CUSTOM_PISTOL(*pbVar2)) {
             uVar11 = 8;
             uVar10 = 1;
         } else {
@@ -2279,6 +2318,22 @@ static void menu_load_item_model(void)
         return;
     }
     SUBMENU_STATE_ID = g_bItemMenuSelectedItemId;
+    // CUSTOM: ITEM_GRENADE_PISTOL (id 0x71) falls into the "else" branch
+    // below exactly like Ingram/Minimi (id >= ITEM_INGRAM), leaving
+    // DAT_00ae9f1e/bVar2 at 0. That used to matter because the filename was
+    // then looked up as g_ItemModelFileNames[0] - an EMPTY name - since this
+    // item has no row of its own in that fixed 75-entry table (its id is
+    // well past the end of it). LoadFile on "item_m2/.ivm" left
+    // g_itemModelTmdBase NULL, and the async model parser (FUN_004841f0)
+    // dereferenced that pointer unconditionally a few frames later - an
+    // access violation reading offset 8 of a null pointer, reproduced by
+    // simply pressing CHECK on this item.
+    //
+    // It now has its own dedicated item_m2/IFLR.ivm (see
+    // g_GrenadePistolModelFileName, matched by name below) instead of being
+    // aliased to ITEM_BERETTA's model, so no id substitution is needed here
+    // any more - g_bItemMenuSelectedItemId is used directly, exactly like
+    // Ingram/Minimi.
     if (g_bItemMenuSelectedItemId < ITEM_INGRAM) {
         bVar2 = g_ItemImageLookupTable[(unsigned int)g_bItemMenuSelectedItemId * 4];
         if (((short)(char)DAT_00ae9f1e & 0xff7f) ==
@@ -2301,6 +2356,15 @@ static void menu_load_item_model(void)
         pcVar6 = (char*)g_ItemModelFileNameING;
     } else if (g_bItemMenuSelectedItemId == ITEM_MINIMI) {
         pcVar6 = (char*)g_ItemModelFileNameMINI;
+    } else if (g_bItemMenuSelectedItemId == ITEM_GRENADE_PISTOL) {
+        // CUSTOM: dedicated model - see g_GrenadePistolModelFileName.
+        pcVar6 = (char*)g_GrenadePistolModelFileName;
+    } else if (g_bItemMenuSelectedItemId == ITEM_ACID_PISTOL) {
+        // CUSTOM: dedicated model - see g_AcidPistolModelFileName.
+        pcVar6 = (char*)g_AcidPistolModelFileName;
+    } else if (g_bItemMenuSelectedItemId == ITEM_FREEZE_PISTOL) {
+        // CUSTOM: dedicated model - see g_FreezePistolModelFileName.
+        pcVar6 = (char*)g_FreezePistolModelFileName;
     } else {
         pcVar6 = (char*)g_ItemModelFileNames + (char)DAT_00ae9f1e * 8;
     }
@@ -6154,6 +6218,17 @@ static void FUN_0044e660(void)
         if (g_bItemMenuSelectedItemId != ITEM_INGRAM) {
             if (g_bItemMenuSelectedItemId == ITEM_MINIMI) {
                 set_item_description_message(0x4e, 0);
+                return;
+            }
+            if (ITEM_IS_CUSTOM_PISTOL(g_bItemMenuSelectedItemId)) {
+                // CUSTOM: no original description slot exists for any of the
+                // custom pistols - each has its own text in the three entries
+                // appended to g_ItemDescriptions (indices 79, 80 and 81, see
+                // Globals.cpp) rather than reusing the grenade launcher's.
+                int descIdx = 79;
+                if (g_bItemMenuSelectedItemId == ITEM_ACID_PISTOL)        descIdx = 80;
+                else if (g_bItemMenuSelectedItemId == ITEM_FREEZE_PISTOL) descIdx = 81;
+                set_item_description_message(descIdx, 0);
                 return;
             }
             set_item_description_message(g_bItemMenuSelectedItemId - 1, 0);
