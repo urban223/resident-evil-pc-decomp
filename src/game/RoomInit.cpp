@@ -6,6 +6,7 @@
 #include "SpriteRenderer.h"
 #include "../system/AssetPath.h"
 #include <cstdio>
+#include "UiSkin.h"   // CUSTOM: the status-screen skin owns this text
 
 // Forward declarations for helpers defined in other files
 extern void SetupCharacterData(void);
@@ -147,6 +148,16 @@ unsigned int set_item_description_message(unsigned short descIndex, unsigned sho
     g_lastScanCodeOrMsgID = (DWORD)descIndex;
     g_MessagePtr = descriptions[descIndex];
     g_MessageScreenY = 0xba - (short)g_ScreenOffsetY;
+
+    // CUSTOM: the Space GUI status screen prints this same text itself, in its
+    // info card and in its own font (UiSkin.cpp), so the original line would be
+    // a second copy across the middle of the screen. The message machine still
+    // runs untouched - the viewer's flow, the button that dismisses it and the
+    // flags it sets all depend on that - only its line is parked below the
+    // visible area so nothing is drawn twice.
+    if (UiSkin_Enabled()) {
+        g_MessageScreenY = 400;
+    }
 
     return 0;
 }

@@ -175,6 +175,8 @@
     <ClCompile Include="src\game\entities\Zombie.cpp" />
     <ClCompile Include="src\game\WeaponDamage.cpp" />
     <ClCompile Include="src\game\Achievements.cpp" />
+    <ClCompile Include="src\game\UiAtlas.cpp" />
+    <ClCompile Include="src\game\UiSkin.cpp" />
     <ClCompile Include="src\game\Rendering.cpp" />
     <ClCompile Include="src\game\JpnTextTables.cpp" />
     <ClCompile Include="src\game\PrintText.cpp" />
@@ -196,6 +198,8 @@
   <ItemGroup>
     <ClInclude Include="src\Globals.h" />
     <ClInclude Include="src\game\Achievements.h" />
+    <ClInclude Include="src\game\UiAtlas.h" />
+    <ClInclude Include="src\game\UiSkin.h" />
     <ClInclude Include="src\game\AchievementAtlasData.h" />
     <ClInclude Include="src\marni\MarniSystem.h" />
     <ClInclude Include="src\marni\MarniDX.h" />

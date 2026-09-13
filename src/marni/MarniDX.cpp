@@ -1396,6 +1396,44 @@ void MarniDX::DrawLine(float x0, float y0, float x1, float y1,
     };
     DrawQuadInternal(p, verts, MARNI_NULL_HANDLE,
                      MARNI_SAMPLER_POINT, MARNI_BLEND_ALPHA);
+
+    // Round caps, once the line is thicker than a pixel.
+    //
+    // A polyline arrives here one segment at a time, so the quad above meets
+    // its neighbour with a flat end: on the outside of every direction change
+    // a wedge of pixels belongs to neither quad, which is what turns a thick
+    // EKG trace into a chain of notches. A cap that follows the half-disc
+    // around each endpoint fills that wedge whatever the angle - the same
+    // thing a round join does - and unlike a square cap it barely protrudes,
+    // so a sharp peak does not grow a barb. Two triangles approximate the half
+    // disc closely enough at these widths, and this costs no sprite-queue
+    // entries: it is extra geometry inside one draw, not another primitive.
+    if (thickness > 1.0f && len >= 0.001f) {
+        const float ux = dx / len, uy = dy / len;
+        const float k = 0.70710678f;          // the 45-degree shoulder
+        for (int end = 0; end < 2; end++) {
+            const float px = (end == 0) ? x0 : x1;
+            const float py = (end == 0) ? y0 : y1;
+            const float sx = ((end == 0) ? -ux : ux) * hw;   // outward
+            const float sy = ((end == 0) ? -uy : uy) * hw;
+
+            const float Ax = px + ox,               Ay = py + oy;
+            const float Bx = px + (ox + sx) * k,    By = py + (oy + sy) * k;
+            const float Cx = px + (-ox + sx) * k,   Cy = py + (-oy + sy) * k;
+            const float Dx = px - ox,               Dy = py - oy;
+
+            QuadVertex cap[6] = {
+                { Ax, Ay, 0.0f, 0.0f, r, g, b, a },
+                { Bx, By, 1.0f, 0.0f, r, g, b, a },
+                { Dx, Dy, 0.0f, 1.0f, r, g, b, a },
+                { Dx, Dy, 0.0f, 1.0f, r, g, b, a },
+                { Bx, By, 1.0f, 0.0f, r, g, b, a },
+                { Cx, Cy, 1.0f, 1.0f, r, g, b, a },
+            };
+            DrawQuadInternal(p, cap, MARNI_NULL_HANDLE,
+                             MARNI_SAMPLER_POINT, MARNI_BLEND_ALPHA);
+        }
+    }
 }
 
 // ============================================================================

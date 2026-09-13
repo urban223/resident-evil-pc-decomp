@@ -216,3 +216,9 @@ void TexturePage_LoadImage(void* imageData, short param2, short param3);
 void delete_texture_set_secondary(int slotIndex);
 
 void Display_SetParams(int param1, int param2);
+
+// CUSTOM (port-only): width, in game pixels, for line primitives submitted
+// from here on; 0 restores the original 1-backbuffer-pixel hairline. Returns
+// the previous value so a caller can put it back. Used by the status-screen
+// skin for the EKG trace (src/game/UiSkin.cpp).
+float SpriteRenderer_SetLineWidth(float w);

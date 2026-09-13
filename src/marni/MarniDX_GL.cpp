@@ -645,6 +645,45 @@ void MarniDX::DrawLine(float x0, float y0, float x1, float y1,
                   MARNI_SAMPLER_POINT, MARNI_BLEND_ALPHA,
                   false, false, false);
     }
+
+    // Round caps - see the note in MarniDX.cpp's DrawLine. A polyline arrives
+    // one segment at a time, and a flat end leaves a wedge of missing pixels on
+    // the outside of every direction change once the line is thicker than a
+    // pixel. Two triangles per end approximate the half disc a round join
+    // would draw.
+    if (thickness > 1.0f) {
+        const float hw = thickness * 0.5f;
+        const float ux = dx / len, uy = dy / len;
+        const float k = 0.70710678f;
+        for (int end = 0; end < 2; end++) {
+            const float px = (end == 0) ? x0 : x1;
+            const float py = (end == 0) ? y0 : y1;
+            const float ox = ((end == 0) ? -ux : ux) * hw;
+            const float oy = ((end == 0) ? -uy : uy) * hw;
+
+            const float Ax = px + nx,              Ay = py + ny;
+            const float Bx = px + (nx + ox) * k,   By = py + (ny + oy) * k;
+            const float Cx = px + (-nx + ox) * k,  Cy = py + (-ny + oy) * k;
+            const float Dx = px - nx,              Dy = py - ny;
+
+            const float capv[6 * 8] = {
+                Ax, Ay, 0.0f, 0.0f, r, g, b, a,
+                Bx, By, 1.0f, 0.0f, r, g, b, a,
+                Dx, Dy, 0.0f, 1.0f, r, g, b, a,
+                Dx, Dy, 0.0f, 1.0f, r, g, b, a,
+                Bx, By, 1.0f, 0.0f, r, g, b, a,
+                Cx, Cy, 1.0f, 1.0f, r, g, b, a,
+            };
+            const float* capx = ExpandBatch(capv, 6, false, false);
+            if (capx != nullptr) {
+                DrawBatch(m_pImpl, capx, 6,
+                          (m_pImpl != nullptr) ? m_pImpl->whiteHandle
+                                               : MARNI_NULL_HANDLE,
+                          MARNI_SAMPLER_POINT, MARNI_BLEND_ALPHA,
+                          false, false, false);
+            }
+        }
+    }
 }
 
 void MarniDX::DrawTriangles(const float* verts, int triCount, MarniHandle tex,

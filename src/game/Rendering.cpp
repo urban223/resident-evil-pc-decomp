@@ -8,6 +8,7 @@
 #include "../system/AssetPath.h"
 #include "SpriteRenderer.h"
 #include "Achievements.h"
+#include "UiSkin.h"
 #include "TmdRenderer.h"
 #include <cstdlib>
 #include <cstdio>
@@ -23,11 +24,14 @@ extern void rearrange_item_slots(void);
 // Pending sprite queue (filled by AddTintSprite / draw_rect / OT_InsertPrimitive,
 // rendered by FrameRateGovernor)
 // ============================================================================
-// 512: the F1 debug menu's flag editor pages a 32-byte bank as 16 rows of
+// 1024: the F1 debug menu's flag editor pages a 32-byte bank as 16 rows of
 // per-glyph text sprites (~390 sprites with hints) - at the original 300 the queue
 // overflowed, silently dropping the bottom rows AND the background quad that
 // OT_InsertPrimitive adds at present time, which blacked the whole screen.
-#define MAX_PENDING_SPRITES 512
+// The status-screen skin then pushed the ceiling again: its plates, cells,
+// indicators and text come to ~540 quads on their own, so 512 was no longer
+// enough to hold the skin and the engine's own menu sprites together.
+#define MAX_PENDING_SPRITES 1024
 
 // Pending sprites at or above this depth are scene elements drawn BEFORE the
 // 3D TMD pass (room backgrounds, window fills); below it they are overlays that
@@ -43,6 +47,11 @@ struct PendingSprite {
     MarniHandle tex;
     BOOL valid;
     unsigned int depth;   // OT depth sort value (lower = closer = on top)
+    // Port-only. The game's own 2D is point-sampled on purpose (that is the
+    // PS1 look), but the port-added UI skin draws a high-resolution atlas
+    // scaled to the window and wants LINEAR. Every producer but that one
+    // leaves this at MARNI_SAMPLER_POINT.
+    MarniSampler sampler;
 };
 static PendingSprite g_pendingSprites[MAX_PENDING_SPRITES];
 static int g_pendingSpriteCount = 0;
@@ -171,10 +180,54 @@ int AddTintSprite(TextureDesc* texture, unsigned short brightness)
     spr->color = color;
     spr->tex = texHandle;
     spr->valid = TRUE;
+    spr->sampler = MARNI_SAMPLER_POINT;
     spr->depth = (unsigned int)brightness * 16 + 0x1C2;  // OT depth: higher=further behind
 
     g_pendingSpriteCount++;
     return 1;
+}
+
+// ============================================================================
+// PendingSprite_Push - CUSTOM (port-only)
+//
+// Queue an arbitrary textured quad in the pending list. The port-added UI
+// (src/game/UiSkin.cpp) needs its plates to sort against the game's own
+// sprites rather than being painted over them: item icons land at
+// depth*16 + 500, i.e. 644-676, so a plate at ~700 ends up behind them while
+// a mark below 644 ends up in front. Coordinates are backbuffer pixels, which
+// is what this queue holds; colour is 0xAARRGGBB.
+//
+// Sampling is LINEAR by default - the atlas's panels and TTF-baked fonts are
+// high-resolution art scaled to the window. The Ex form asks for POINT, which
+// is what the hand-plotted 10x10 marks want: filtering a ten-texel icon up to
+// forty screen pixels smears it, and the outermost column blends away into the
+// bleed, which reads as a stretched icon with an edge missing.
+// ============================================================================
+int PendingSprite_PushEx(float x, float y, float w, float h,
+                         float u0, float v0, float u1, float v1,
+                         DWORD color, MarniHandle tex, unsigned int depth,
+                         int pointSample)
+{
+    if (g_pendingSpriteCount >= MAX_PENDING_SPRITES) return 0;
+    if (tex == MARNI_NULL_HANDLE) return 0;
+
+    PendingSprite* spr = &g_pendingSprites[g_pendingSpriteCount];
+    spr->x = x;   spr->y = y;   spr->w = w;   spr->h = h;
+    spr->u0 = u0; spr->v0 = v0; spr->u1 = u1; spr->v1 = v1;
+    spr->color = color;
+    spr->tex = tex;
+    spr->valid = TRUE;
+    spr->sampler = pointSample ? MARNI_SAMPLER_POINT : MARNI_SAMPLER_LINEAR;
+    spr->depth = depth;
+    g_pendingSpriteCount++;
+    return 1;
+}
+
+int PendingSprite_Push(float x, float y, float w, float h,
+                       float u0, float v0, float u1, float v1,
+                       DWORD color, MarniHandle tex, unsigned int depth)
+{
+    return PendingSprite_PushEx(x, y, w, h, u0, v0, u1, v1, color, tex, depth, 0);
 }
 
 // ============================================================================
@@ -295,6 +348,7 @@ void draw_rect(RectDrawDesc* rect, int blend, int flags)
     spr->color = color;
     spr->tex = srv;
     spr->valid = TRUE;
+    spr->sampler = MARNI_SAMPLER_POINT;
     // Depth: higher value = further back (drawn first).
     // In original OT: flags==0 → blend+450, else → blend*16+500
     spr->depth = (flags == 0) ? ((unsigned int)blend + 450) : ((unsigned int)blend * 16 + 500);
@@ -332,6 +386,7 @@ void QueueTexturedSprite(float gameX, float gameY, float gameW, float gameH,
     spr->color = 0xFFFFFFFF;
     spr->tex = tex;
     spr->valid = TRUE;
+    spr->sampler = MARNI_SAMPLER_POINT;
     spr->depth = depth;
 
     g_pendingSpriteCount++;
@@ -393,15 +448,28 @@ void FrameRateGovernor(void)
 
             FUN_0040a8f0(NULL);
 
-            // Sort pending sprites by depth (descending: high depth first = behind, low depth last = on top)
-            for (int i = 0; i < g_pendingSpriteCount - 1; i++) {
-                for (int j = i + 1; j < g_pendingSpriteCount; j++) {
-                    if (g_pendingSprites[i].depth < g_pendingSprites[j].depth) {
-                        PendingSprite tmp = g_pendingSprites[i];
-                        g_pendingSprites[i] = g_pendingSprites[j];
-                        g_pendingSprites[j] = tmp;
-                    }
+            // Sort pending sprites by depth (descending: high depth first =
+            // behind, low depth last = on top).
+            //
+            // This MUST be stable. The selection-swap version that used to be
+            // here compared every pair and swapped on strictly-deeper, which
+            // leaves sprites of EQUAL depth in whatever order the swaps happen
+            // to produce - so two quads at the same depth could come out in
+            // either order from one frame to the next. The port-added UI draws
+            // several things per depth band on purpose (a plate, its border and
+            // its contents all at 700), and the whole design assumes the later
+            // push wins, the way the PS1 ordering table behaves for a bucket.
+            // An insertion sort that shifts only while the sorted prefix is
+            // strictly shallower keeps insertion order within a depth, and on
+            // an already mostly-ordered list it is faster than the old O(n^2).
+            for (int i = 1; i < g_pendingSpriteCount; i++) {
+                PendingSprite cur = g_pendingSprites[i];
+                int j = i - 1;
+                while (j >= 0 && g_pendingSprites[j].depth < cur.depth) {
+                    g_pendingSprites[j + 1] = g_pendingSprites[j];
+                    j--;
                 }
+                g_pendingSprites[j + 1] = cur;
             }
 
             // Command-buffer sprites with depthSort >= 0x10000 are background
@@ -429,13 +497,14 @@ void FrameRateGovernor(void)
             // parts (820-964) and everything nearer still draw on top.
             for (int i = 0; i < g_pendingSpriteCount; i++) {
                 if (g_pendingSprites[i].valid && g_pendingSprites[i].depth >= PENDING_SCENE_DEPTH) {
-                    MarniDrawSprite(
+                    MarniDrawSpriteEx(
                         g_pendingSprites[i].x, g_pendingSprites[i].y,
                         g_pendingSprites[i].w, g_pendingSprites[i].h,
                         g_pendingSprites[i].u0, g_pendingSprites[i].v0,
                         g_pendingSprites[i].u1, g_pendingSprites[i].v1,
                         g_pendingSprites[i].color,
-                        g_pendingSprites[i].tex);
+                        g_pendingSprites[i].tex,
+                        g_pendingSprites[i].sampler, MARNI_BLEND_ALPHA);
                 }
             }
 
@@ -482,13 +551,14 @@ void FrameRateGovernor(void)
                 if (d >= PENDING_SCENE_DEPTH || d < 500) continue;
                 FlushSpriteCommandsRange(d, spriteCursor);
                 spriteCursor = d;
-                MarniDrawSprite(
+                MarniDrawSpriteEx(
                     g_pendingSprites[i].x, g_pendingSprites[i].y,
                     g_pendingSprites[i].w, g_pendingSprites[i].h,
                     g_pendingSprites[i].u0, g_pendingSprites[i].v0,
                     g_pendingSprites[i].u1, g_pendingSprites[i].v1,
                     g_pendingSprites[i].color,
-                    g_pendingSprites[i].tex);
+                    g_pendingSprites[i].tex,
+                    g_pendingSprites[i].sampler, MARNI_BLEND_ALPHA);
             }
             FlushSpriteCommandsRange(0, spriteCursor);
             // Both range flushes above drew; clear the queue now (the original
@@ -502,13 +572,14 @@ void FrameRateGovernor(void)
             // 500-PENDING_SCENE_DEPTH band already drew, interleaved, above).
             for (int i = 0; i < g_pendingSpriteCount; i++) {
                 if (g_pendingSprites[i].valid && g_pendingSprites[i].depth < 500) {
-                    MarniDrawSprite(
+                    MarniDrawSpriteEx(
                         g_pendingSprites[i].x, g_pendingSprites[i].y,
                         g_pendingSprites[i].w, g_pendingSprites[i].h,
                         g_pendingSprites[i].u0, g_pendingSprites[i].v0,
                         g_pendingSprites[i].u1, g_pendingSprites[i].v1,
                         g_pendingSprites[i].color,
-                        g_pendingSprites[i].tex);
+                        g_pendingSprites[i].tex,
+                        g_pendingSprites[i].sampler, MARNI_BLEND_ALPHA);
                 }
             }
 
@@ -590,7 +661,13 @@ void OT_InsertPrimitive(void* prim, unsigned int depth)
     // so don't drop the bg while it is open - its flag editor can set this
     // very bit (g_main_state_flags is flag bank 5), which blacked the screen.
     // g_debugMenuOpen stays 0 while debug features are disabled.
-    if ((g_main_state_flags & MSF_SCREEN_STANDALONE) != 0 && g_debugMenuOpen == 0) {
+    //
+    // CUSTOM: the Space GUI status screen is the same case. It is a
+    // holographic panel over the room, not an opaque screen of its own, so it
+    // wants the frozen background too - it lays its own scrim over it at depth
+    // 1000 to keep the item icons readable (UiSkin.cpp).
+    if ((g_main_state_flags & MSF_SCREEN_STANDALONE) != 0
+        && g_debugMenuOpen == 0 && !UiSkin_RoomVisible()) {
         return;
     }
     if (g_pendingSpriteCount >= MAX_PENDING_SPRITES) return;
@@ -630,6 +707,7 @@ void OT_InsertPrimitive(void* prim, unsigned int depth)
     g_pendingSprites[0].color = 0xFFFFFFFF;
     g_pendingSprites[0].tex = g_displayImageSRV;
     g_pendingSprites[0].valid = TRUE;
+    g_pendingSprites[0].sampler = MARNI_SAMPLER_POINT;
     g_pendingSprites[0].depth = 0xFFF;  // background (far, drawn first)
     g_pendingSpriteCount++;
 }

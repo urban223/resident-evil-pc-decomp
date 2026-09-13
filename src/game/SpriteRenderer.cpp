@@ -136,7 +136,16 @@ void FlushSpriteCommandsRange(unsigned int minDepth, unsigned int maxDepth,
             int ca = (int)(alpha * 255.0f);
             if (ca > 255) ca = 255; if (ca < 0) ca = 0;
             DWORD color = ((DWORD)ca << 24) | ((DWORD)cr << 16) | ((DWORD)cg << 8) | (DWORD)cb;
-            MarniDrawLine(sx0, sy0, sx1, sy1, 1.0f, color);
+            // CUSTOM (port-only): variantAlpha carries a line width in GAME
+            // pixels, 0 meaning the original hairline. Scaling it here rather
+            // than at submit time keeps the width honest at every window size,
+            // the way the rest of the 2D is scaled.
+            float lineW = 1.0f;
+            if (cmd->variantAlpha > 0.0f) {
+                lineW = cmd->variantAlpha * scaleY;
+                if (lineW < 1.0f) lineW = 1.0f;
+            }
+            MarniDrawLine(sx0, sy0, sx1, sy1, lineW, color);
             continue;
         }
         if (cmd->type == 12) {
@@ -453,6 +462,19 @@ int draw_texture(TextureDesc* texture, unsigned short depth) {
 // Coordinates are in PS1 game space (with screen offset applied by the
 // caller, matching how draw_texture handles screenX/screenY).
 // ============================================================================
+// CUSTOM (port-only): width in game pixels for the next line primitives, 0 =
+// the original hairline. The status-screen skin draws the EKG thick (its block
+// is a high-resolution panel, and a 1px trace inside it looks like a scratch);
+// every other caller leaves this at 0 and is unaffected.
+static float s_lineWidth = 0.0f;
+
+float SpriteRenderer_SetLineWidth(float w)
+{
+    const float prev = s_lineWidth;
+    s_lineWidth = (w > 0.0f) ? w : 0.0f;
+    return prev;
+}
+
 int SubmitLine(short x0, short y0, short x1, short y1, unsigned short depth,
                float r, float g, float b, float alpha)
 {
@@ -471,7 +493,7 @@ int SubmitLine(short x0, short y0, short x1, short y1, unsigned short depth,
     cmd->r = r;
     cmd->g = g;
     cmd->b = b;
-    cmd->variantAlpha = 0.0f;
+    cmd->variantAlpha = s_lineWidth;
     cmd->extraFlags = 0;
     cmd->u0 = 0;
     cmd->v0 = 0;

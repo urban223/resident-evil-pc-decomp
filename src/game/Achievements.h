@@ -36,6 +36,13 @@ void Achievements_Unlock(int id);
 // target and an unlock toast when it is reached.
 void Achievements_AddProgress(int id, int amount);
 
+// --- queries ----------------------------------------------------------------
+// The status screen shows the profile's point total and how many of the
+// achievements are unlocked; both read the same file the toasts do.
+int Achievements_Points(void);
+int Achievements_UnlockedCount(void);
+int Achievements_Total(void);
+
 // --- game-event hooks -------------------------------------------------------
 void Achievements_OnEnemyKilled(void);   // WeaponDamage.cpp
 void Achievements_OnGameSaved(void);     // SaveLoadScreen.cpp

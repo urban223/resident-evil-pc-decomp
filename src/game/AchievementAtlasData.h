@@ -68,6 +68,17 @@ static const AchvRect g_achvIcons[ACHV_ICON_COUNT] = {
     { 264, 227, 64, 64 },  // Warning
 };
 
+// Shapes for the status-screen skin (src/game/UiSkin.cpp).
+static const AchvRect g_achvMarkDiamond = { 330, 227, 14, 14 };
+static const AchvRect g_achvMarkRing = { 346, 227, 14, 14 };
+static const AchvRect g_achvMarkTriangle = { 362, 227, 12, 10 };
+static const AchvRect g_achvMarkFalloff = { 376, 227, 64, 4 };
+static const AchvRect g_achvMarkCross = { 442, 227, 16, 16 };
+static const AchvRect g_achvMarkIconuse = { 460, 227, 10, 10 };
+static const AchvRect g_achvMarkIconequip = { 472, 227, 10, 10 };
+static const AchvRect g_achvMarkIconcheck = { 484, 227, 10, 10 };
+static const AchvRect g_achvMarkIconcombine = { 496, 227, 10, 10 };
+
 #define ACHV_TITLE_ASCENT 28
 #define ACHV_TITLE_LINE   39
 #define ACHV_BODY_ASCENT  20

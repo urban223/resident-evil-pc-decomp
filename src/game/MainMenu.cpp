@@ -22,6 +22,8 @@
 #include "../marni/Marni3DObject.h"
 #include "TmdRenderer.h"     // TMD slot regions - see the slot-region note there
 #include "SpriteRenderer.h"  // g_SubpixelOffsetX/Y (item viewer OT quad records)
+#include "UiSkin.h"          // CUSTOM: the Space GUI status screen
+#include "Achievements.h"    // CUSTOM: its POINTS field and pip row
 #include <math.h>
 #include <cstdio>
 #include <cstring>
@@ -99,6 +101,9 @@ static unsigned char  DAT_00ae9f2a;       // 0x00ae9f2a
 // Health bar animation state (0=init, 1=scrolling in, 2=init out, 3=scrolling out)
 static unsigned char  DAT_00ae9f2e;       // 0x00ae9f2e
 
+// CUSTOM: presented-frame counter for the Space GUI skin's animations.
+static int g_menuSkinFrame;
+
 // Health status (0=danger, 1=caution, 2-3=good, 4=poisoned)
 static unsigned char  DAT_00ae9f2f;       // 0x00ae9f2f
 
@@ -166,6 +171,467 @@ static short item_name_left(void)
 
 // g_ItemSlotsPointer is void* in the port; all slot access is byte-based.
 #define ITEM_SLOTS  ((unsigned char*)g_ItemSlotsPointer)
+
+// ============================================================================
+// CUSTOM (port-only): state for the Space GUI status screen (UiSkin.cpp).
+//
+// The skin never reads this file's statics itself - everything it draws comes
+// through UiSkinState - so this is the one place that knows both sides.
+// ============================================================================
+
+// Item names live in the font's own encoding (PrintText.h's encodeChar), and
+// the skin draws with a TTF-baked ASCII font, so they have to come back the
+// other way. This is that function inverted; 0x07 ends the string and the
+// 0xf8..0xfa escapes introduce a button glyph that has no ASCII spelling.
+static char skin_decode_char(unsigned char b)
+{
+    if (b == 0x00) return ' ';
+    if (b >= 0x0C && b <= 0x15) return (char)('0' + (b - 0x0C));
+    if (b >= 0x1D && b <= 0x36) return (char)('A' + (b - 0x1D));
+    if (b >= 0x3D && b <= 0x56) return (char)('a' + (b - 0x3D));
+    switch (b) {
+    case 0x16: return ':';
+    case 0x17: return ';';
+    case 0x18: return ',';
+    case 0x19: return '"';
+    case 0x1A: return '!';
+    case 0x1B: return '?';
+    case 0x37: return '(';
+    case 0x38: return '/';
+    case 0x39: return ')';
+    case 0x3A: return '\'';
+    case 0x3B: return '-';
+    case 0x79: return '.';
+    default:   return ' ';
+    }
+}
+
+// The examine text. RE1 does have one per item - g_ItemDescriptions (0x004c6160
+// in the original), two lines, read by set_item_description_message when the
+// item viewer is open - and it is stored in the same font encoding as the
+// names, with 0x02 for the line break, 0x01 for the terminator and the message
+// stream's own tags in between.
+//
+// Only the tags that can actually appear in this table are handled: 0x05 and
+// 0x06 take an operand byte, and neither is used by any stock description.
+static void skin_item_desc(unsigned char itemId, char* l1, int c1,
+                           char* l2, int c2)
+{
+    l1[0] = '\0';
+    l2[0] = '\0';
+    if (itemId == ITEM_NONE) return;
+
+    // The item viewer remaps these two the same way (FUN_0044e660): neither
+    // has an entry of its own, and the bonus weapons borrow 0x4d/0x4e.
+    int idx = (int)itemId - 1;
+    if (itemId == ITEM_INGRAM)      idx = 0x4d;
+    else if (itemId == ITEM_MINIMI) idx = 0x4e;
+    if (idx < 0 || idx >= (int)(sizeof(g_ItemDescriptions) / sizeof(g_ItemDescriptions[0]))) return;
+
+    const unsigned char* p = g_ItemDescriptions[idx];
+    if (p == NULL) return;
+
+    char* out = l1;
+    int cap = c1, n = 0, line = 0;
+    for (; *p != 0x01; p++) {
+        const unsigned char b = *p;
+        if (b == 0x02) {                       // line break
+            out[n] = '\0';
+            if (line == 1) break;
+            line = 1; out = l2; cap = c2; n = 0;
+            continue;
+        }
+        if (b == 0x05 || b == 0x06) { p++; continue; }   // tag + operand
+        if (b == 0x78) {                       // opening double quote
+            if (n < cap - 1) out[n++] = '"';
+            continue;
+        }
+        if (b >= 0xF8) { p++; continue; }
+        if (n < cap - 1) out[n++] = skin_decode_char(b);
+    }
+    out[n] = '\0';
+
+    // trailing spaces are padding in a few of the stock strings
+    for (int i = 0; i < 2; i++) {
+        char* t = i ? l2 : l1;
+        int len = (int)strlen(t);
+        while (len > 0 && t[len - 1] == ' ') t[--len] = '\0';
+    }
+}
+
+static void skin_item_name(unsigned char itemId, char* out, int cap)
+{
+    out[0] = '\0';
+    if (itemId == ITEM_NONE || cap < 2) return;
+    const unsigned char* p = message_item_name_lookup(itemId);
+    if (p == NULL) return;
+    int n = 0;
+    while (*p != 0x07 && *p != 0x01 && n < cap - 1) {
+        if (*p >= 0xF8) { p += 2; continue; }   // button glyph: no ASCII form
+        out[n++] = skin_decode_char(*p);
+        p++;
+    }
+    while (n > 0 && out[n - 1] == ' ') n--;     // the table pads some names
+    out[n] = '\0';
+}
+
+// RE1 has no item-type field of its own; the id ranges in Types.h are the
+// classification the game actually uses, so the chip reads off those.
+static const char* skin_item_type(unsigned char itemId)
+{
+    if (itemId == ITEM_NONE) return NULL;
+    if (ITEM_IS_CUSTOM_PISTOL(itemId)) return "HANDGUN";
+    if (itemId >= ITEM_KNIFE       && itemId <= ITEM_ROCKET_LAUNCHER) return "WEAPON";
+    if (itemId >= ITEM_CLIP        && itemId <= ITEM_FLAME_ROUNDS)    return "AMMUNITION";
+    if (itemId >= ITEM_EMPTY_BOTTLE&& itemId <= ITEM_VJOLT)           return "CHEMICAL";
+    if (itemId >= ITEM_BROKEN_SHOTGUN && itemId <= ITEM_SUN_CREST)    return "QUEST ITEM";
+    if (itemId >= ITEM_INK_RIBBONS && itemId <= ITEM_OIL)             return "UTILITY";
+    if (itemId >= ITEM_SWORD_KEY   && itemId <= ITEM_DESK_KEY)        return "KEY";
+    if (itemId >= ITEM_RED_BOOK    && itemId <= ITEM_DOOM_BOOK1)      return "BOOK";
+    if (itemId >= ITEM_FIRST_AID_SPRAY && itemId <= ITEM_MIX_2GREEN_RED) return "RECOVERY";
+    if (itemId >  ITEM_NON_INFINITE_MAX) return "WEAPON";
+    return "ITEM";
+}
+
+// DAT_00ae9f2f is the game's own health state (0=danger 1=caution 2..3=fine
+// 4=poison) - the same value the EKG's colours come from.
+// The EKG colour table (MenuData.cpp) and the item description table
+// (Globals.cpp) - declared again here because the skin helpers sit above this
+// file's block of extern declarations.
+extern const unsigned char DAT_004b92c8[];
+extern unsigned char* g_ItemDescriptions[82];
+
+// DAT_00ae9f2f is the game's own health state: 0 danger, 1 caution (orange),
+// 2 caution (yellow), 3 fine, 4 poison - the quartile of remaining health,
+// with poison overriding it.
+//
+// The colour is NOT a palette of this screen's own: it is whatever the EKG is
+// drawing with right now (DAT_00ae9f30..32, loaded from DAT_004b92c8 in
+// menu_draw_health_bar), so the word and the trace under it always agree,
+// including in the poison case - there the game keeps the health colour and
+// only swaps the waveform, and the table's own entry 4 is black.
+//
+// Those globals are only refreshed when the sweep wraps, so they can still be
+// zero on the first frames after the menu opens; the table is the fallback.
+// Poison's own colour. The game has none: DAT_004b92c8's entry 4 is black and
+// menu_draw_health_bar loads the colour from the health quartile BEFORE the
+// poison override, so a poisoned-but-healthy player would get a calm green
+// trace under the word POISON. The original could live with that because its
+// status strip is a separate graphic with its own poison row; here the word
+// and the trace are one reading, so poison gets a colour of its own and the
+// trace is tinted to match.
+#define SKIN_POISON_R 0xA8
+#define SKIN_POISON_G 0x46
+#define SKIN_POISON_B 0xDC
+
+// The colour the condition block draws with - the word and the EKG line both
+// ask for it, so they can never disagree.
+static void skin_condition_rgb(unsigned char* r, unsigned char* g, unsigned char* b)
+{
+    if (DAT_00ae9f2f == 4) {
+        *r = SKIN_POISON_R; *g = SKIN_POISON_G; *b = SKIN_POISON_B;
+        return;
+    }
+
+    unsigned char cr = DAT_00ae9f30, cg = DAT_00ae9f31, cb = DAT_00ae9f32;
+    // Those globals are only refreshed when the sweep wraps, so they can still
+    // be zero on the first frames after the menu opens; the table is then read
+    // directly, the way menu_draw_health_bar will read it a moment later.
+    if ((cr | cg | cb) == 0) {
+        const unsigned int i = (DAT_00ae9f2f < 4) ? DAT_00ae9f2f : 3;
+        cr = DAT_004b92c8[i * 3];
+        cg = DAT_004b92c8[i * 3 + 1];
+        cb = DAT_004b92c8[i * 3 + 2];
+    }
+    *r = cr; *g = cg; *b = cb;
+}
+
+static const char* skin_condition(unsigned char state, unsigned int* color)
+{
+    unsigned char cr, cg, cb;
+    skin_condition_rgb(&cr, &cg, &cb);
+
+    // The EKG's greens and reds are fully saturated, which reads as raw next
+    // to the skin's own palette, so the word is lifted toward white a little -
+    // the hue stays the game's, the text just stops glowing.
+    const unsigned int r = (cr * 3u + 255u) >> 2;
+    const unsigned int g = (cg * 3u + 255u) >> 2;
+    const unsigned int b = (cb * 3u + 255u) >> 2;
+    *color = 0xFF000000u | (r << 16) | (g << 8) | b;
+
+    switch (state) {
+    case 0:  return "DANGER";
+    case 1:  return "CAUTION";
+    case 2:  return "CAUTION";
+    case 4:  return "POISON";
+    default: return "FINE";
+    }
+}
+
+// The cursor byte indexes g_inventorySlotsPos in 2-byte units: 0,2,4,6 are the
+// four top tabs and anything from 8 up is an item slot, slot = (v >> 1) - 4.
+static int skin_cursor_slot(void)
+{
+    if ((DAT_00ae9f23 & 0xf8) == 0) return -1;
+    return (DAT_00ae9f23 >> 1) - 4;
+}
+
+// CUSTOM: the game's own EKG, moved into the skin's condition block.
+//
+// menu_draw_health_bar builds a real trace out of the wave tables at
+// PTR_DAT_004b9278 and submits it as line primitives whose coordinates are the
+// ORIGINAL screen's EKG box: x 0x54..0x83, and y around the 0xa2 baseline with
+// the heal sweep reaching 0xb0. The skin puts that box somewhere else and at a
+// different size, so every line is mapped on the way out and the struct is put
+// back afterwards - the caller reads X0/X1 again for the gradient and for its
+// own walk, and those have to stay in the original units.
+// The horizontal span is the trace's own, 0x54..0x83. The vertical one is
+// NOT the full 0x92..0xb0 the heal sweep uses: mapping that range would squash
+// every beat into the top third of the block. It is the wave tables' own range
+// instead, plus a pixel of slack above so the tallest beat stops short of the
+// band's top edge rather than flattening against it; the heal sweep clamps.
+//
+// PTR_DAT_004b9278 holds the waves in groups of four per health state - the
+// variant is picked at random each sweep - and the amplitudes run the opposite
+// way to what the names suggest: FINE is the STRONG beat (waves 12..15, 17px
+// around the 0xa2 baseline) and DANGER the weak, nearly flat one (waves 0..3,
+// 6px), because a dying heart is what the trace is describing. Poison (16..19,
+// 20px) is the widest. Across all five states the range is 147..167, so the
+// window below covers every wave at one fixed scale - no state-dependent gain,
+// which would make the trace jump the moment health crossed a quartile.
+#define SKIN_EKG_SRC_X0 0x54
+#define SKIN_EKG_SRC_X1 0x83
+#define SKIN_EKG_SRC_Y0 0x91
+#define SKIN_EKG_SRC_Y1 0xa8
+
+static void skin_ekg_map(short* x, short* y)
+{
+    short bx, by, bw, bh;
+    UiSkin_EkgRect(&bx, &by, &bw, &bh);
+
+    int vx = (int)*x - SKIN_EKG_SRC_X0;
+    int vy = (int)*y - SKIN_EKG_SRC_Y0;
+    const int sw = SKIN_EKG_SRC_X1 - SKIN_EKG_SRC_X0;
+    const int sh = SKIN_EKG_SRC_Y1 - SKIN_EKG_SRC_Y0;
+
+    vx = bx + (vx * (int)bw) / sw;
+    vy = by + (vy * (int)bh) / sh;
+
+    if (vx < bx) vx = bx;
+    if (vx > bx + bw) vx = bx + bw;
+    if (vy < by) vy = by;
+    if (vy > by + bh) vy = by + bh;
+
+    *x = (short)vx;
+    *y = (short)vy;
+}
+
+// One submit for both EKG lines: `gradient` picks the two-colour variant that
+// FUN_00438800 uses for the fading tail.
+static int skin_ekg_line(unsigned char* line, int depth, int gradient)
+{
+    if (!UiSkin_Enabled()) {
+        return gradient ? FUN_00470e60(line, depth) : FUN_00470c60(line, depth);
+    }
+
+    const short ox0 = *(short*)(line + 4);
+    const short oy0 = *(short*)(line + 6);
+    const short ox1 = *(short*)(line + 8);
+    const short oy1 = *(short*)(line + 10);
+
+    short x0 = ox0, y0 = oy0, x1 = ox1, y1 = oy1;
+    skin_ekg_map(&x0, &y0);
+    skin_ekg_map(&x1, &y1);
+    *(short*)(line + 4) = x0;
+    *(short*)(line + 6) = y0;
+    *(short*)(line + 8) = x1;
+    *(short*)(line + 10) = y1;
+
+    // Poison is the one state whose colour the game does not set (see
+    // skin_condition_rgb), so the line is tinted here - and only here, so the
+    // gradient FUN_00438800 computes from bytes 0xC..0xE stays on the game's
+    // own values and keeps stepping the tail exactly as it did.
+    const unsigned char or_ = line[0xC], og = line[0xD], ob = line[0xE];
+    if (DAT_00ae9f2f == 4) {
+        line[0xC] = SKIN_POISON_R;
+        line[0xD] = SKIN_POISON_G;
+        line[0xE] = SKIN_POISON_B;
+    }
+
+    // RE2 Remake's gauge draws its trace as a real stroke, not a hairline, and
+    // in a panel this size a one-backbuffer-pixel line reads as a scratch. Two
+    // game pixels is the same weight relative to the block that RE1's own 1px
+    // line had relative to its smaller box.
+    const float prevW = SpriteRenderer_SetLineWidth(2.0f);
+    const int r = gradient ? FUN_00470e60(line, depth) : FUN_00470c60(line, depth);
+    SpriteRenderer_SetLineWidth(prevW);
+
+    line[0xC] = or_;
+    line[0xD] = og;
+    line[0xE] = ob;
+    *(short*)(line + 4) = ox0;
+    *(short*)(line + 6) = oy0;
+    *(short*)(line + 8) = ox1;
+    *(short*)(line + 10) = oy1;
+    return r;
+}
+
+// CUSTOM: cursor movement for the skin's four-column grid.
+//
+// The original grid is two columns, so its own navigation moves one slot with
+// left/right (cursor ^= 2) and two with up/down (cursor +/- 4). With four
+// columns that reads as "up jumps two to the side", so the skin replaces the
+// arithmetic while keeping the game's own cursor byte: slot = (c >> 1) - 4,
+// and 0..6 is still the top tab row.
+//
+// pad bits are the raw D-pad byte: 0x10 up, 0x20 right, 0x40 down, 0x80 left.
+static void skin_nav_grid(unsigned char* cursor, unsigned char pad, int allowTabs)
+{
+    const int cols = 4;
+    int n = (int)g_totalInventorySlots;
+    if (n < 1) n = 1;
+    int c = (int)*cursor;
+
+    if (allowTabs && (c & 0xf8) == 0) {
+        // On the tabs: left/right steps through all four, up/down drops into
+        // the column below the tab - four tabs over four columns, so the two
+        // rows line up.
+        if ((pad & 0xa0) != 0) {
+            int t = c >> 1;
+            t = (pad & 0x20) != 0 ? (t + 1) & 3 : (t + 3) & 3;
+            *cursor = (unsigned char)(t * 2);
+            return;
+        }
+        int col = c >> 1;
+        if (col >= n) col = n - 1;
+        int s = col;
+        if ((pad & 0x10) != 0) {           // up wraps to the bottom row
+            while (s + cols < n) s += cols;
+        }
+        *cursor = (unsigned char)((s + 4) * 2);
+        return;
+    }
+
+    int s = (c >> 1) - 4;
+    if (s < 0) s = 0;
+    if (s >= n) s = n - 1;
+    const int row = s / cols;
+    int col = s % cols;
+    // the last row can be short (Chris has six slots, so it holds two)
+    const int rowLen = ((row + 1) * cols <= n) ? cols : (n - row * cols);
+
+    if ((pad & 0xa0) != 0) {
+        col = ((pad & 0x20) != 0) ? (col + 1) % rowLen
+                                  : (col + rowLen - 1) % rowLen;
+        s = row * cols + col;
+    } else if ((pad & 0x40) != 0) {        // down
+        if (s + cols < n) s += cols;
+        else if (allowTabs) { *cursor = (unsigned char)(col * 2); return; }
+        else s = col;
+    } else if ((pad & 0x10) != 0) {        // up
+        if (s - cols >= 0) s -= cols;
+        else if (allowTabs) { *cursor = (unsigned char)(col * 2); return; }
+        else { s = col; while (s + cols < n) s += cols; }
+    }
+    *cursor = (unsigned char)((s + 4) * 2);
+}
+
+static void menu_draw_skin_status(void)
+{
+    UiSkinState st;
+    memset(&st, 0, sizeof(st));
+
+    st.slotCount = g_totalInventorySlots;
+    st.heldCount = g_TotalHeldItems;
+    st.selected  = skin_cursor_slot();
+    st.equipped  = (g_EquippedItemId != 0) ? g_EquippedItemId - 1 : -1;
+    st.other     = -1;              // display only for now: nothing fills it
+    st.points    = Achievements_Points();
+    st.achvUnlocked = Achievements_UnlockedCount();
+    st.achvTotal    = Achievements_Total();
+
+    // Where the EKG is writing right now. DAT_00ae9f36 is the primary line's
+    // leading edge and runs 0x54..0x83 across the trace; the skin's sweep
+    // column reads it as a permille so it sits on the real head.
+    {
+        int head = (int)DAT_00ae9f36;
+        if (head < 0x54) head = 0x54;
+        if (head > 0x83) head = 0x83;
+        st.ekgHead = (head - 0x54) * 1000 / (0x83 - 0x54);
+    }
+    st.frame     = g_menuSkinFrame++;
+
+    // The room stays visible behind the skin only while the status screen is
+    // the thing on top. DAT_00ae9f20 == 2 means a submenu owns the screen -
+    // but that covers two different things: a TAB screen (map, file), which
+    // draws its own opaque background and must have the room dropped, and the
+    // item's own action menu, which is a small panel over this same screen.
+    // The cursor tells them apart: on a slot it is the item menu.
+    const int tabScreen = (DAT_00ae9f20 >= 2) && ((DAT_00ae9f23 & 0xf8) == 0);
+    UiSkin_SetRoomVisible(g_MainMenuState == 1 && !tabScreen);
+    st.tab       = ((DAT_00ae9f23 & 0xf8) == 0) ? (DAT_00ae9f23 >> 1) : -1;
+    st.radioOn   = (DAT_00ae9f1f != 0);
+
+    // g_playerEntity.id: bit 0 picks the portrait column, and Jill is the odd
+    // one - the same bit menu_draw_inventory feeds to texU.
+    const int jill = (g_playerEntity.id & 1) != 0;
+    st.characterName = jill ? "JILL" : "CHRIS";
+    st.affiliation   = "S.T.A.R.S.";
+    st.condition     = skin_condition(DAT_00ae9f2f, &st.conditionColor);
+    st.conditionLevel = DAT_00ae9f2f;
+
+    static char nameBuf[32];
+    static char desc1[96];
+    static char desc2[48];
+    nameBuf[0] = '\0';
+    desc1[0] = '\0';
+    desc2[0] = '\0';
+    if (st.selected >= 0 && st.selected < g_TotalHeldItems) {
+        const unsigned char itemId = ITEM_SLOTS[st.selected * 2];
+        skin_item_name(itemId, nameBuf, (int)sizeof(nameBuf));
+        st.itemName = (nameBuf[0] != '\0') ? nameBuf : NULL;
+        st.itemType = skin_item_type(itemId);
+        // The table stores every description as two lines because the
+        // original printed it 26 columns wide. The card is far wider, so the
+        // two halves are joined back into one string and the skin re-wraps it
+        // to the width it actually has.
+        skin_item_desc(itemId, desc1, (int)sizeof(desc1), desc2, (int)sizeof(desc2));
+        if (desc2[0] != '\0') {
+            const size_t n = strlen(desc1);
+            if (n > 0 && n + 1 < sizeof(desc1)) {
+                desc1[n] = ' ';
+                desc1[n + 1] = '\0';
+            }
+            strncat(desc1, desc2, sizeof(desc1) - strlen(desc1) - 1);
+        }
+        st.itemDesc = (desc1[0] != '\0') ? desc1 : NULL;
+        // DAT_00ae9f1e bit 7 is the item viewer's "model loaded" flag: while it
+        // is set the player is looking at the item, which is when the original
+        // put this same text on screen.
+        st.descLarge = ((DAT_00ae9f1e & 0x80) != 0);
+    }
+
+    // A menu message is up: g_menu_choice_id bit 7 is the message system's own
+    // "busy" flag, and g_MessageScreenY is pre-compensated for the screen
+    // offset that AddTintSprite adds back, so adding it here gives the line's
+    // game-space Y - the space the skin draws in.
+    if ((g_menu_choice_id & 0x80) != 0) {
+        const int y = (int)g_MessageScreenY + (int)g_ScreenOffsetY;
+        // The item viewer's description is parked off-screen (RoomInit.cpp) so
+        // the card can print it instead - that one needs no banner.
+        if (y > 0 && y < 232) st.msgY = y;
+    }
+
+    // The action menu. DAT_00ae9f20 == 2 means a submenu owns the screen, and
+    // it is the item's own only when the cursor is on a slot rather than a tab.
+    if (DAT_00ae9f20 == 2 && (DAT_00ae9f23 & 0xf8) != 0) {
+        st.actionOpen  = (int)(DAT_00ae9f27 & 0x7f);
+        st.actionIndex = (int)DAT_00ae9f24;
+        st.actionEquip = (DAT_00ae9f1c != 0);
+    }
+
+    UiSkin_DrawStatus(&st);
+}
 
 
 extern const char DAT_004c29a0[];
@@ -680,6 +1146,7 @@ LAB_00463a53:
 // (0x00463da0) - Menu exit: fade out, cleanup textures
 static void menu_exit_cleanup(void)
 {
+    UiSkin_SetRoomVisible(0);   // CUSTOM: the menu is closing
     FUN_004844b0();
     g_MainMenuState = 7;
     set_fading(2, 0xC00);
@@ -803,6 +1270,12 @@ static void menu_draw_inventory(void)
     g_TextureDesc.height = 0x1e;
     g_invDepthLayer = 10;
 
+    // CUSTOM: the Space GUI skin puts the equipped-weapon box somewhere else,
+    // so the icon the engine still owns is moved to where the skin drew it.
+    if (UiSkin_Enabled()) {
+        UiSkin_EquippedRect(&g_TextureDesc.screenX, &g_TextureDesc.screenY);
+    }
+
     if (g_EquippedItemId == 0) {
         uVar11 = 1;
         uVar10 = 10;
@@ -871,6 +1344,11 @@ static void menu_draw_inventory(void)
         g_TextureDesc.screenY = *(short*)((int)g_inventorySlotsPos + (unsigned int)(unsigned char)(local_2 - 1) * 2);
         local_2 = local_2 - 2;
         g_TextureDesc.screenX = *(short*)((int)g_inventorySlotsPos + (unsigned int)local_2 * 2);
+        // CUSTOM: same for the grid - the skin's cells are 4 columns wide and
+        // in a different place than the original two-column table.
+        if (UiSkin_Enabled()) {
+            UiSkin_SlotRect((int)uVar7, &g_TextureDesc.screenX, &g_TextureDesc.screenY);
+        }
         g_TextureDesc.texV = g_ItemSlotIndices[uVar7] << 5;
         pbVar2 = (unsigned char*)ITEM_SLOTS + uVar7 * 2;
         // CUSTOM: see the equipped-slot icon draw above - neither custom
@@ -903,11 +1381,15 @@ static void menu_draw_inventory(void)
     g_invDepthLayer = 10;
     g_TextureDesc.height = 30;
     g_TextureDesc.clutY = 0x1e0;
-    for (char cVar4 = g_totalInventorySlots - g_TotalHeldItems; cVar4 != 0; cVar4 = cVar4 - 1) {
-        g_TextureDesc.screenY = *(short*)((int)g_inventorySlotsPos + (unsigned int)(unsigned char)(bVar6 - 1) * 2);
-        bVar6 = bVar6 - 2;
-        g_TextureDesc.screenX = *(short*)((int)g_inventorySlotsPos + (unsigned int)bVar6 * 2);
-        display_texture(&g_TextureDesc, (unsigned short)g_invDepthLayer, 10, 1);
+    // CUSTOM: the skin draws its own empty cells, so the original tiles - which
+    // are the two-column frame art - are left out entirely when it is on.
+    if (!UiSkin_Enabled()) {
+        for (char cVar4 = g_totalInventorySlots - g_TotalHeldItems; cVar4 != 0; cVar4 = cVar4 - 1) {
+            g_TextureDesc.screenY = *(short*)((int)g_inventorySlotsPos + (unsigned int)(unsigned char)(bVar6 - 1) * 2);
+            bVar6 = bVar6 - 2;
+            g_TextureDesc.screenX = *(short*)((int)g_inventorySlotsPos + (unsigned int)bVar6 * 2);
+            display_texture(&g_TextureDesc, (unsigned short)g_invDepthLayer, 10, 1);
+        }
     }
 
     // 0x00464290: Draw character portrait
@@ -920,7 +1402,19 @@ static void menu_draw_inventory(void)
     g_TextureDesc.texU = (g_playerEntity.id & 1) << 5;
     g_TextureDesc.texV = (g_playerEntity.id & 2) << 4;
     bVar6 = 8;
+    if (UiSkin_Enabled()) {
+        UiSkin_PortraitRect(&g_TextureDesc.screenX, &g_TextureDesc.screenY);
+    }
     display_texture(&g_TextureDesc, 10, 9, 1);
+
+    // CUSTOM: everything below this point is the original chrome - the tab
+    // sprites, the five frame-part tables and the black masking rects behind
+    // the slots. The skin draws all of it, in its own geometry, so the whole
+    // tail is replaced rather than drawn twice.
+    if (UiSkin_Enabled()) {
+        menu_draw_skin_status();
+        return;
+    }
 
     // 0x00464310: Draw top options menu (Map, File, Radio, Exit)
     g_CurrentMenuFramesDataPtr = (unsigned short*)g_MainMenuTopOptionsPos;
@@ -1665,6 +2159,10 @@ move_case2:
         }
         if ((dpad_pressed_byte1() & 0x40) == 0) {
             if ((pad_held_byte1() & 0xf0) != 0) {
+                if (UiSkin_Enabled()) {
+                    // the move cursor never leaves the grid, so it wraps
+                    skin_nav_grid(&DAT_00ae9f25, pad_held_byte1(), 0);
+                } else {
                 if ((pad_held_byte1() & 0xa0) != 0) {
                     DAT_00ae9f25 = DAT_00ae9f25 ^ 2;
                 }
@@ -1681,6 +2179,7 @@ move_case2:
                         DAT_00ae9f25 = DAT_00ae9f25 & 2;
                         DAT_00ae9f25 = DAT_00ae9f25 | g_totalInventorySlots * 2 + 4;
                     }
+                }
                 }
                 DAT_00ae9f26 = 0;
                 play_sfx(3, 4, 0);
@@ -1764,6 +2263,13 @@ move_case3:
         FUN_00454fd0(bVar3, 0, item_name_left() - g_ScreenOffsetX, 0xba - g_ScreenOffsetY);
     }
 move_skip_name:
+    // CUSTOM: the move cursor's four arrow sprites are placed from
+    // g_inventorySlotsPos too. Item moving still works with the skin on - the
+    // arrows are just not drawn, since they would land on the original grid.
+    // Giving them the skin's geometry is on the list with the 4-column cursor
+    // navigation rewrite.
+    if (UiSkin_Enabled()) return 0;
+
     if ((DAT_00ae9f22 != 4) || (DAT_00ae9f29 != 0)) {
         // Draw the moving item cursor (4-part slide icon)
         // Original: switchD_0040149e::caseD_0 at 0x004014a5 - same draw.
@@ -1804,6 +2310,11 @@ move_skip_name:
 // (0x00420a70) - Draw the menu cursor (item slot or top tab)
 static void menu_draw_cursor(void)
 {
+    // CUSTOM: both cursor sprites are positioned from g_inventorySlotsPos, so
+    // with the skin on they would land on the original two-column grid. The
+    // skin draws the selected cell's brackets and the highlighted tab itself.
+    if (UiSkin_Enabled()) return;
+
     g_TextureDesc.flags = 0x01000040;
     g_TextureDesc.texturePage = 0x1c;
     g_TextureDesc.clutX = 0;
@@ -1852,6 +2363,13 @@ void FUN_00454fd0(int itemId, int mode, short x, short y)
     unsigned char modeB = (unsigned char)mode;
 
     if (item == 0) return;
+
+    // CUSTOM: mode 0 is the status screen's own item-name line, at the bottom
+    // left of the original layout. The Space GUI skin prints the name itself,
+    // in its info card and in its own font, so the original line is suppressed
+    // while the skin is on. Every other mode (the item box's 0x80, the file
+    // titles) is untouched.
+    if (UiSkin_Enabled() && (modeB & 0x80) == 0) return;
 
     if ((modeB & 0x80) == 0) {
         bVar3 = modeB >> 4;
@@ -2004,6 +2522,11 @@ static void menu_item_submenu(void)
 
     FUN_00454fd0(g_bItemMenuSelectedItemId, 0, item_name_left() - g_ScreenOffsetX, 0xba - g_ScreenOffsetY);
 submenu_default:
+    // CUSTOM: the skin draws this menu itself, beside the selected cell
+    // (UiSkin.cpp's action_menu), from the same counters - so the original
+    // sprite box, which is anchored to the old two-column grid, is skipped.
+    if (UiSkin_Enabled()) return;
+
     // Draw the item action submenu box with the selected option highlighted
     if ((DAT_00ae9f27 != 0) && ((DAT_00ae9f28 & 8) == 0)) {
         g_TextureDesc.flags = 0x01000040;
@@ -2090,6 +2613,9 @@ static void menu_handle_input(void)
     if ((dpad_pressed_byte1() & 0x40) == 0) {
         // Navigation with the D-pad (held for repeat)
         if ((pad_held_byte1() & 0xf0) != 0) {
+            if (UiSkin_Enabled()) {
+                skin_nav_grid(&DAT_00ae9f23, pad_held_byte1(), 1);
+            } else {
             if ((pad_held_byte1() & 0xa0) != 0) {
                 DAT_00ae9f23 = DAT_00ae9f23 ^ 2;
             }
@@ -2103,6 +2629,7 @@ static void menu_handle_input(void)
                 DAT_00ae9f23 = DAT_00ae9f23 + g_totalInventorySlots * 2 + 4;
             } else {
                 DAT_00ae9f23 = DAT_00ae9f23 - 4;
+            }
             }
             menu_update_selected_item();
             DAT_00ae9f18 = 0;
@@ -2505,7 +3032,12 @@ static void menu_draw_health_bar(void)
         case 3:
             g_TextureDesc.texV = 0;
 LAB_004382cb:
-            display_texture(&g_TextureDesc, 10, 0, 1);
+            // CUSTOM: the 32x8 FINE/CAUTION/DANGER strip sits at (100, 0xa8) in
+            // the original layout, on top of the skin's gutter, and the skin
+            // already prints the condition in its own font and colour. The
+            // status value (DAT_00ae9f2f) is still computed above - only the
+            // sprite is skipped.
+            if (!UiSkin_Enabled()) display_texture(&g_TextureDesc, 10, 0, 1);
             break;
         case 4:
             bVar2 = FUN_004387e0((unsigned char*)&DAT_004b92e0);
@@ -2541,7 +3073,7 @@ LAB_004382cb:
                        (short)(char)pcVar9[3] + (short)(char)pcVar9[2] + 0xa2;
             EKG_P_X1 = (short)(unsigned char)*pcVar9 + 0x54;
             if (sVar8 < EKG_P_X1) {
-                FUN_00470c60(g_EkgPrimaryLine, 10);
+                skin_ekg_line(g_EkgPrimaryLine, 10, 0);
                 if (*pcVar9 == 0) goto LAB_0043849d;
                 cVar6 = pcVar9[4];
                 pcVar9 = pcVar9 + 4;
@@ -2550,7 +3082,7 @@ LAB_004382cb:
                     EKG_P_X1 = (short)(unsigned char)*pcVar9 + 0x54;
                     EKG_P_Y0 = (short)(char)pcVar9[-2] + 0xa2;
                     EKG_P_Y1 = (short)(char)pcVar9[2] + 0xa2;
-                    FUN_00470c60(g_EkgPrimaryLine, 10);
+                    skin_ekg_line(g_EkgPrimaryLine, 10, 0);
                     cVar6 = pcVar9[4];
                     pcVar9 = pcVar9 + 4;
                 }
@@ -2560,7 +3092,7 @@ LAB_004382cb:
                            (short)(char)pcVar9[3] + (short)(char)pcVar9[2] + 0xa2;
             }
             EKG_P_X1 = sVar8;
-            FUN_00470c60(g_EkgPrimaryLine, 10);
+            skin_ekg_line(g_EkgPrimaryLine, 10, 0);
         }
 LAB_0043849d:
         // Draw secondary EKG line with gradient (FUN_00438800)
@@ -2664,7 +3196,7 @@ LAB_0043849d:
             }
             do {
                 EKG_P_Y1 = EKG_P_Y0;
-                FUN_00470c60(g_EkgPrimaryLine, 10);
+                skin_ekg_line(g_EkgPrimaryLine, 10, 0);
                 if (EKG_P_R != 0) {
                     EKG_P_R = EKG_P_R - 0x10;
                 }
@@ -6996,7 +7528,7 @@ void FUN_00438800(int a, int b, int c)
     line[0xF] = (unsigned char)(line[0xC] - delta * (char)a);   // DAT_00be1193
     line[0x10] = (unsigned char)(line[0xD] - delta * (char)b);  // DAT_00be1194
     line[0x11] = (unsigned char)(line[0xE] - delta * (char)c);  // DAT_00be1195
-    FUN_00470e60(line, 10);
+    skin_ekg_line(line, 10, 1);
     line[0xC] = line[0xF];
     line[0xD] = line[0x10];
     line[0xE] = line[0x11];

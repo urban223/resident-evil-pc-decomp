@@ -49,12 +49,13 @@ struct AchvDef {
     const char* sub;
     short       icon;
     short       target;
+    short       points;     // what the status screen's POINTS field totals
 };
 
 static const AchvDef s_defs[ACHV_COUNT] = {
-    { "FIRST BLOOD",      "Killed your first enemy",           ACHV_ICON_SKULL,  0  },
-    { "KEEPING A RECORD", "Saved the game for the first time", ACHV_ICON_PENCIL, 0  },
-    { "EXTERMINATOR",     "Kill 25 enemies",                   ACHV_ICON_MEDAL,  25 },
+    { "FIRST BLOOD",      "Killed your first enemy",           ACHV_ICON_SKULL,  0,  50  },
+    { "KEEPING A RECORD", "Saved the game for the first time", ACHV_ICON_PENCIL, 0,  50  },
+    { "EXTERMINATOR",     "Kill 25 enemies",                   ACHV_ICON_MEDAL,  25, 150 },
 };
 
 // ---------------------------------------------------------------------------
@@ -537,4 +538,31 @@ void Achievements_Draw(void)
         achv_draw_text(g_achvFontBody, def->sub, tx, py + 60.0f * k, k,
                        achv_fade(0xFF7ABAB8u, textAlpha));
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Read-only queries for the status screen's POINTS field and pip row.
+// ---------------------------------------------------------------------------
+int Achievements_Points(void)
+{
+    achv_profile_load();
+    int total = 0;
+    for (int i = 0; i < ACHV_COUNT; i++) {
+        if (s_unlocked[i]) total += s_defs[i].points;
+    }
+    return total;
+}
+
+int Achievements_UnlockedCount(void)
+{
+    achv_profile_load();
+    int n = 0;
+    for (int i = 0; i < ACHV_COUNT; i++) n += (s_unlocked[i] != 0);
+    return n;
+}
+
+int Achievements_Total(void)
+{
+    return ACHV_COUNT;
 }

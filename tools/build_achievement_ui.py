@@ -165,6 +165,127 @@ def build_slot():
     return out
 
 
+def skin_marks():
+    """Small shapes the status-screen skin needs beyond the toast's art.
+
+    The skin is mostly lines, rectangles and text, and those are drawn with the
+    atlas's white block and the baked fonts - no art required. Only these four
+    shapes cannot be built out of axis-aligned quads, so they get baked:
+    a filled diamond and a ring for the pip rows, a triangle for the selected
+    cell's side markers, a one-dimensional falloff used as the glint's tail and
+    as the soft edge of a glow, and the empty-slot cross.
+    """
+    out = []
+
+    d_sz = 14
+    dia = Image.new("RGBA", (d_sz, d_sz), (0, 0, 0, 0))
+    ImageDraw.Draw(dia).polygon(
+        [(d_sz // 2, 0), (d_sz - 1, d_sz // 2), (d_sz // 2, d_sz - 1), (0, d_sz // 2)],
+        fill=(255, 255, 255, 255))
+    out.append(("diamond", dia))
+
+    ring = Image.new("RGBA", (d_sz, d_sz), (0, 0, 0, 0))
+    ImageDraw.Draw(ring).ellipse([0, 0, d_sz - 1, d_sz - 1],
+                                 outline=(255, 255, 255, 255), width=2)
+    out.append(("ring", ring))
+
+    t_w, t_h = 12, 10
+    tri = Image.new("RGBA", (t_w, t_h), (0, 0, 0, 0))
+    ImageDraw.Draw(tri).polygon([(0, 0), (t_w - 1, 0), (t_w // 2, t_h - 1)],
+                                fill=(255, 255, 255, 255))
+    out.append(("triangle", tri))
+
+    # 64x4 horizontal falloff, opaque at the left edge, gone at the right
+    fall = Image.new("RGBA", (64, 4), (0, 0, 0, 0))
+    fp = fall.load()
+    for x in range(64):
+        a = int(255 * (1.0 - x / 63.0) ** 2)
+        for y in range(4):
+            fp[x, y] = (255, 255, 255, a)
+    out.append(("falloff", fall))
+
+    # the empty-slot X. Stepping a diagonal out of quads costs dozens of
+    # sprites per cell and there are ten empty cells on Jill's screen, so the
+    # cross is baked once and drawn as one quad.
+    c_sz = 16
+    cross = Image.new("RGBA", (c_sz, c_sz), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cross)
+    cd.line([(1, 1), (c_sz - 2, c_sz - 2)], fill=(255, 255, 255, 255), width=2)
+    cd.line([(c_sz - 2, 1), (1, c_sz - 2)], fill=(255, 255, 255, 255), width=2)
+    out.append(("cross", cross))
+
+    # The item action menu's row icons, 10x10. RE2 Remake puts a small glyph
+    # left of each option and it is most of what makes that menu read at a
+    # glance. At this size PIL's primitives blur into mush, so the four are
+    # hand-plotted pixel by pixel - the same way the game's own 8x14 font is.
+    def plot(rows):
+        im = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+        px = im.load()
+        for y, row in enumerate(rows):
+            for x, ch in enumerate(row):
+                if ch == "#":
+                    px[x, y] = (255, 255, 255, 255)
+        return im
+
+    # USE: an arrow coming down onto a surface - apply, consume.
+    out.append(("iconuse", plot([
+        "....##....",
+        "....##....",
+        "....##....",
+        "....##....",
+        ".########.",
+        "..######..",
+        "...####...",
+        "....##....",
+        "..........",
+        "##########",
+    ])))
+
+    # EQUIP: a crosshair\.
+    out.append(("iconequip", plot([
+        "....##....",
+        "..######..",
+        ".##....##.",
+        ".#......#.",
+        "##..##..##",
+        "##..##..##",
+        ".#......#.",
+        ".##....##.",
+        "..######..",
+        "....##....",
+    ])))
+
+    # CHECK: a magnifier\.
+    out.append(("iconcheck", plot([
+        ".####.....",
+        "##..##....",
+        "#....#....",
+        "#....#....",
+        "##..##....",
+        ".####.....",
+        "...###....",
+        "....###...",
+        ".....###..",
+        "......##..",
+    ])))
+
+    # COMBINE: two boxes overlapping - the two items becoming one\. A cog, the
+    # remake's glyph for this, has no readable form at ten pixels\.
+    out.append(("iconcombine", plot([
+        "#####.....",
+        "#...#.....",
+        "#...#.....",
+        "#...#.....",
+        "#########.",
+        "....#...#.",
+        "....#...#.",
+        "....#...#.",
+        "....#####.",
+        "..........",
+    ])))
+    return out
+
+
 def tint(img, rgba):
     """Multiply white art by a colour, keeping its alpha."""
     r, g, b, a = img.split()
@@ -268,6 +389,11 @@ def main():
         pos = packer.add(img)
         icon_rects.append((name, pos + (ICON_SIZE, ICON_SIZE)))
 
+    mark_rects = []
+    for name, im in skin_marks():
+        pos = packer.add(im, edge_bleed=True)
+        mark_rects.append((name, pos + im.size))
+
     packer.x = 0
     packer.y += packer.row_h + 3
     packer.row_h = 0
@@ -277,13 +403,26 @@ def main():
         gui("fonts", "SairaCondensed-SemiBold.ttf"), FONT_BODY_PX, packer)
 
     # --- write the texture ---
-    out_bin = os.path.join(root, "assets", "USA", "Data", "achvui.bin")
-    os.makedirs(os.path.dirname(out_bin), exist_ok=True)
-    with open(out_bin, "wb") as fp:
-        fp.write(b"AUI1")
-        fp.write(struct.pack("<II", ATLAS_W, ATLAS_H))
-        fp.write(atlas.tobytes("raw", "RGBA"))
-    print("wrote %s (%d bytes)" % (out_bin, os.path.getsize(out_bin)))
+    blob = b"AUI1" + struct.pack("<II", ATLAS_W, ATLAS_H) + atlas.tobytes("raw", "RGBA")
+
+    # assets/ is the source of truth, but config.ini's [Assets] Path is empty
+    # by default, which means the game reads its data tree from NEXT TO THE
+    # EXECUTABLE - bin/Debug/USA and bin/Release/USA, each its own copy. Baking
+    # only into assets/ leaves those two behind, and the symptom is silent:
+    # the header the build compiles in has the new rects while the atlas the
+    # game loads still has transparent pixels there, so the new art simply
+    # does not appear. Write every tree that exists.
+    targets = [os.path.join(root, "assets", "USA", "Data", "achvui.bin")]
+    for cfg in ("Debug", "Release"):
+        d = os.path.join(root, "bin", cfg, "USA", "Data")
+        if os.path.isdir(d):
+            targets.append(os.path.join(d, "achvui.bin"))
+
+    for out_bin in targets:
+        os.makedirs(os.path.dirname(out_bin), exist_ok=True)
+        with open(out_bin, "wb") as fp:
+            fp.write(blob)
+        print("wrote %s (%d bytes)" % (out_bin, os.path.getsize(out_bin)))
 
     # --- write the generated header ---
     def rect(r):
@@ -334,6 +473,11 @@ def main():
     for name, r in icon_rects:
         lines.append("    %s,  // %s" % (rect(r), name))
     lines.append("};")
+    lines.append("")
+    lines.append("// Shapes for the status-screen skin (src/game/UiSkin.cpp).")
+    for name, r in mark_rects:
+        lines.append("static const AchvRect g_achvMark%s = %s;"
+                     % (name.capitalize(), rect(r)))
     lines.append("")
     lines.append("#define ACHV_TITLE_ASCENT %d" % t_asc)
     lines.append("#define ACHV_TITLE_LINE   %d" % t_line)
