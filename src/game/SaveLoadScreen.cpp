@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include "../system/AssetPath.h"
+#include "Achievements.h"           // CUSTOM: first-save achievement
 
 extern void logos_state(void);
 extern void title_state(void);
@@ -1073,6 +1074,10 @@ void LoadSaveGameState(int mode, int flags, int useInkRibbon, int sfxBank, int c
             memcpy(fileBuffer + OFFSET_JOY_BACKUP, g_joyRemapBackupJoy, 0x80);
             memcpy(fileBuffer + OFFSET_KEY_BACKUP, g_joyRemapBackupKey, 0x80);
             FileWrite(g_saveFileName, fileBuffer, SAVE_FILE_SIZE);
+
+            // CUSTOM: the achievement hook. Here rather than at the typewriter
+            // check, because this is the point the save actually exists.
+            Achievements_OnGameSaved();
 
             // Build the save-animation reveal string:
             //   name + separator + count(2) + separator + location.

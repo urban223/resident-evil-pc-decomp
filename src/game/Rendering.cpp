@@ -7,6 +7,7 @@
 #include "../marni/PSXTexture.h"
 #include "../system/AssetPath.h"
 #include "SpriteRenderer.h"
+#include "Achievements.h"
 #include "TmdRenderer.h"
 #include <cstdlib>
 #include <cstdio>
@@ -510,6 +511,13 @@ void FrameRateGovernor(void)
                         g_pendingSprites[i].tex);
                 }
             }
+
+            // CUSTOM: the achievement toast. Last before the flip, so it sits
+            // on top of the fades, the pause menu and everything else - the
+            // whole point of a notification - and it ticks here so its clock is
+            // the presented-frame clock rather than the game's task rate.
+            Achievements_Tick();
+            Achievements_Draw();
 
             if (!g_DisablePad) {
                 MarniPresent();

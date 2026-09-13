@@ -135,6 +135,22 @@ void  MarniDrawSprite(float x, float y, float w, float h,
                       float u0, float v0, float u1, float v1,
                       DWORD color, MarniHandle tex);
 
+// As MarniDrawSprite, but with the sampler and blend mode chosen by the
+// caller. MarniDrawSprite is POINT/ALPHA on purpose - that is the PS1 look for
+// the game's own 2D art - while a port-only overlay drawn from a high-res
+// atlas (the achievement toast, src/game/Achievements.cpp) wants LINEAR, since
+// it is scaled to fit the window rather than blitted texel for texel.
+void  MarniDrawSpriteEx(float x, float y, float w, float h,
+                        float u0, float v0, float u1, float v1,
+                        DWORD color, MarniHandle tex,
+                        MarniSampler sampler, MarniBlend blend);
+
+// Real backbuffer dimensions in pixels (0,0 before the device exists).
+// MarniGetRenderScale answers "how do I scale game space", which is a
+// different question: anything sized against the WINDOW rather than against
+// the game's 320x240 logical space needs this instead.
+void  MarniGetBackBufferSize(DWORD* outWidth, DWORD* outHeight);
+
 // Draw perspective-correct textured triangles. verts: triCount*3 vertices,
 // each 10 floats { x, y (screen px, Y-down), z (NDC [0,1], used when
 // depthTest), w (view-space Z), u, v, r, g, b, a (0..1) }. Used for the

@@ -631,6 +631,26 @@ void MarniDrawSprite(float x, float y, float w, float h,
                              MARNI_BLEND_ALPHA);
 }
 
+void MarniDrawSpriteEx(float x, float y, float w, float h,
+                       float u0, float v0, float u1, float v1,
+                       DWORD color, MarniHandle tex,
+                       MarniSampler sampler, MarniBlend blend)
+{
+    CMarniDirect3D* pD3D = (CMarniDirect3D*)g_pMarniDirect3D;
+    if (!pD3D || !pD3D->m_isInitialized) return;
+    pD3D->m_pDX->DrawSprite(x, y, w, h, u0, v0, u1, v1,
+                            color, tex, sampler, blend);
+}
+
+void MarniGetBackBufferSize(DWORD* outWidth, DWORD* outHeight)
+{
+    DWORD bw = 0, bh = 0;
+    CMarniDirect3D* pD3D = (CMarniDirect3D*)g_pMarniDirect3D;
+    if (pD3D && pD3D->m_pDX) pD3D->m_pDX->GetBackBufferSize(&bw, &bh);
+    if (outWidth)  *outWidth  = bw;
+    if (outHeight) *outHeight = bh;
+}
+
 // Only the ground shadow / blood pool (AddFadePoly, type 12) draws through
 // here, and it stretches a 26x29 gradient over a quad several times that size.
 // Point sampling turned the soft blob into visible texel blocks with straight

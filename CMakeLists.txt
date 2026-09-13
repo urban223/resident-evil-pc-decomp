@@ -40,6 +40,7 @@ set(RE1_SOURCES
 
     src/video/VideoPlayback.cpp
 
+    src/game/Achievements.cpp
     src/game/CharacterSelectionScreen.cpp
     src/game/CmdFunctions.cpp
     src/game/CollisionDebug.cpp

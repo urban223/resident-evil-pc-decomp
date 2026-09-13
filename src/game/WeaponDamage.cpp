@@ -7,6 +7,7 @@
 #include "../Globals.h"
 #include <cstdlib>                   // rand() - MSVC got this via <windows.h>
 #include "entities/EntityCommon.h"   // ENEMY_* / NPC_* type ids
+#include "Achievements.h"             // CUSTOM: kill-count achievements
 
 // ---- Global scratch variable (set by apply_weapon_damage before hit detection) ----
 extern int g_scaled_down_dist;  // holds weapon_id - 1 during hit detection
@@ -597,6 +598,8 @@ static void weapon_shatter_enemy(Entity* enemy)
     Snd_em(6);                                            // the limb/head break cue
     ENTITY = saved;
 
+    Achievements_OnEnemyKilled();   // CUSTOM: a shattered enemy is a kill too
+
     unsigned char hitState = status_record(enemy, WEAPON_STATUS_FREEZE)->hit;
     hitState |= (unsigned char)((status_def(WEAPON_STATUS_FREEZE)->record + 1) << 3);
     enemy->hit_state          = hitState;
@@ -714,6 +717,7 @@ void weapon_update_status_effects(void)
             g_statusKind[slot] = WEAPON_STATUS_NONE;
             g_statusTicks[slot] = 0;
             enemy->state = 3;              // dead - same handoff, different state
+            Achievements_OnEnemyKilled();  // CUSTOM: burned/corroded to death
             continue;                      // the death animation plays its own moan
         }
 
@@ -1054,6 +1058,15 @@ unsigned char apply_weapon_damage(unsigned int weapon_id)
     // knows WHICH enemy was hit, and the pointer must not outlive the call.
     if (g_weaponStatusEffect != WEAPON_STATUS_NONE) {
         weapon_apply_status(enemy, (unsigned char)g_weaponStatusEffect);
+    }
+
+    // CUSTOM: the achievement hook. g_entity_bkp is the pre-shot health
+    // snapshot taken above, so "was >= 0, is now < 0" is exactly the shot that
+    // killed it - and it is read here, after the post-hit callback, because
+    // that callback is what turns a point-blank shotgun hit into an instant
+    // kill (enemy_hit_reaction_zombie writes health = -300 itself).
+    if ((short)g_entity_bkp >= 0 && enemy->health < 0) {
+        Achievements_OnEnemyKilled();
     }
 
     enemy->state = 3;
