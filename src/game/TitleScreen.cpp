@@ -100,7 +100,12 @@ void init_title_screen(void)
 
     g_roomCameraId = 0;
 
-    LoadFile(GAME_DATA_ROOT "data\\title.pix", g_TimImageBuffer__bitmap, 0x20);
+    // CUSTOM: titlebg.pix, not title.pix.  The stock file has the wordmark
+    // burnt into the eye, so the picture and the name are the same pixels and
+    // neither can be changed without the other.  tools/build_title_bg.py
+    // splits them: this file is the room on its own, and the wordmark comes
+    // back as a sprite in title_draw_logo().
+    LoadFile(GAME_DATA_ROOT "data\\titlebg.pix", g_TimImageBuffer__bitmap, 0x20);
     display_image(0, g_TimImageBuffer__bitmap, 320, 240);
 
     title_setup_texture_pages(0, 1);
@@ -499,6 +504,73 @@ static void title_extra_eye(int f)
 // what the screen says.
 #define TITLE_EXTRA_SND_TRIM  (-100)
 #define TITLE_EXTRA_BGM_TRIM  (-350)
+
+// ---------------------------------------------------------------------------
+// CUSTOM: the RESIDENT EVIL wordmark, drawn over the backdrop.
+//
+// It is the game's own lettering, cut out of the original title.pix by
+// tools/build_title_bg.py and written as 'RLG1' + w + h + RGBA - the same
+// shape as raideye.bin, and loaded the same way.  Nothing about it is
+// redrawn; the baker only separates the pixels that were already there from
+// the eye they were painted over.
+//
+// Drawing it as a sprite instead of leaving it in the picture is what lets
+// the backdrop change at all.  It also means the wordmark keeps its own
+// alpha, so it sits ON the room rather than being part of it.
+//
+// TITLE_LOGO_X/Y put it back where it was in title.pix, expressed in the
+// centre-relative space the rest of this screen is laid out in: the crop
+// started at 14,76 in a 320x240 picture whose centre is 160,120.
+// ---------------------------------------------------------------------------
+#define TITLE_LOGO_X  (-146.0f)
+#define TITLE_LOGO_Y  (-44.0f)
+#define TITLE_LOGO_D  1000u
+
+static MarniHandle s_titleLogo = MARNI_NULL_HANDLE;
+static int s_titleLogoW = 0, s_titleLogoH = 0;
+static int s_titleLogoTried = 0;
+
+static void title_load_logo(void)
+{
+    if (s_titleLogo != MARNI_NULL_HANDLE || s_titleLogoTried) return;
+    if (!IsGraphicsSystemReadyForOperation()) return;   // retry next frame
+    s_titleLogoTried = 1;
+
+    const size_t head = 12;
+    unsigned char* buf = (unsigned char*)malloc(head + 512 * 256 * 4);
+    if (buf == NULL) return;
+
+    const size_t read = LoadFile(GAME_DATA_ROOT "Data\\titlelogo.bin", buf, 0);
+    if (read > head
+        && buf[0] == 'R' && buf[1] == 'L' && buf[2] == 'G' && buf[3] == '1') {
+        const unsigned int w = *(unsigned int*)(buf + 4);
+        const unsigned int h = *(unsigned int*)(buf + 8);
+        if (w > 0 && h > 0 && w <= 512 && h <= 256
+            && read == head + (size_t)w * h * 4) {
+            // bpp 32 goes straight into an R8G8B8A8 texture, so the file's
+            // byte order IS the texture's - which is what the baker writes.
+            MarniCreateTexture((int)w, (int)h, 32, buf + head, &s_titleLogo);
+            s_titleLogoW = (int)w;
+            s_titleLogoH = (int)h;
+        }
+    }
+    free(buf);
+}
+
+// `a` is 0..255.  The screen's own fade runs as an overlay in front of
+// everything, so this is only the wordmark's own entrance, not the fade.
+static void title_draw_logo(int a)
+{
+    title_load_logo();
+    if (s_titleLogo == MARNI_NULL_HANDLE) return;
+    if (a <= 0) return;
+    if (a > 255) a = 255;
+
+    QueueTexturedSpriteTinted(TITLE_LOGO_X, TITLE_LOGO_Y,
+                              (float)s_titleLogoW, (float)s_titleLogoH,
+                              s_titleLogo, TITLE_LOGO_D,
+                              title_rgba(0xFFFFFFu, a));
+}
 
 extern int g_SfxVolume;
 
@@ -918,7 +990,7 @@ static void title_extra_grain(int f)
     float sx, sy;
     MarniGetRenderScale(&sx, &sy);
     UiAtlas_PushPixel(&win, 0.0f, 0.0f, 320.0f * sx, 240.0f * sy,
-                      title_rgba(0xFFFFFFu, 8), TITLE_EXTRA_D_GRAIN);
+                      title_rgba(0xFFFFFFu, 4), TITLE_EXTRA_D_GRAIN);
 }
 
 static void title_draw_extra_prompt(unsigned char brightness)
@@ -1217,6 +1289,17 @@ void update_title_options(void)
         title_draw_menu(0x80);
         return;
     }
+
+    // CUSTOM: the wordmark.  It used to be part of the backdrop and so was
+    // simply there; now it is a sprite and has to be asked for, every frame
+    // this screen is up.  This is the title-art phase only - the menu swaps
+    // the picture underneath for SEL_BACK and the name goes with it, exactly
+    // as it did before.
+    //
+    // Unconditional, and at full alpha: the screen's fades are an overlay in
+    // front of every sprite, so the wordmark comes up and goes down with the
+    // room behind it without needing to be told.
+    title_draw_logo(255);
 
     switch (g_titleOptionsFading) {
         case 0:
