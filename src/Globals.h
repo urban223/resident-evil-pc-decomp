@@ -1639,6 +1639,9 @@ void PrintFormattedText(short x, short y, unsigned char color, const unsigned ch
 void draw_rect(RectDrawDesc* rect, int blend, int flags);
 void QueueTexturedSprite(float gameX, float gameY, float gameW, float gameH,
                          MarniHandle tex, unsigned int depth);
+void QueueTexturedSpriteTinted(float gameX, float gameY, float gameW, float gameH,
+                               MarniHandle tex, unsigned int depth,
+                               unsigned int color);   // port-only: 0xAARRGGBB
 int  RebuildTextureSRV(int slotIndex, int clutIndex);
 int  GetTextureNumCLUTs(int slotIndex);
 

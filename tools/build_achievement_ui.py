@@ -31,7 +31,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 # --- atlas geometry ---------------------------------------------------------
 ATLAS_W = 512
-ATLAS_H = 512
+# 640, not 512: the two fonts fill the sheet to row 508 and the grain tile has
+# to live somewhere. Nothing hardcodes the size - the blob carries it in its
+# header and both loaders read ACHV_ATLAS_W/H from the generated header - so
+# the sheet grows by a row band rather than by a power of two.
+ATLAS_H = 640
 
 # The panel is baked at 2x its design size; the runtime draws the atlas at
 # (backbufferHeight / 480) * 0.5 pixels per atlas pixel, so 500x92 here is a
@@ -408,6 +412,126 @@ def title_words():
     return out
 
 
+def extra_words():
+    """RAID - the heading of the EXTRA screen.
+
+    Cut to look like the screen it sits on: the RESIDENT EVIL logo in title.pix
+    is a heavy CONDENSED GROTESQUE, not a serif - tall, tightly packed, flat
+    terminals, with a dark shadow offset down and right. Saira Condensed Black
+    (the pack's own family, already in this atlas as the toast font) is the
+    closest of anything to hand, tracked out to match the logo's own spacing.
+
+    The letters are baked white and the shadow BLACK, because the blit applies
+    a colour MULTIPLY: white takes whatever red the screen asks for and black
+    stays black, so one bake gives both the lettering and its shadow without a
+    second draw or a second rect.
+    """
+    font = ImageFont.truetype(
+        gui("fonts", "SairaCondensed-Black.ttf"), 62)
+    text, track, drop = "RAID", 3, 2
+
+    boxes = [font.getbbox(c) for c in text]
+    top = min(b[1] for b in boxes)
+    w = sum(b[2] - b[0] + track for b in boxes) - track
+    h = max(b[3] for b in boxes) - top + 1
+
+    def letters(fill):
+        im = Image.new("RGBA", (w + 8, h + 8), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        x = 4
+        for c, b in zip(text, boxes):
+            d.text((x - b[0], 4 - top), c, font=font, fill=fill)
+            x += b[2] - b[0] + track
+        return im
+
+    out = Image.new("RGBA", (w + 8, h + 8), (0, 0, 0, 0))
+    shadow = letters((0, 0, 0, 192))
+    out.alpha_composite(shadow, (drop, drop))
+    out.alpha_composite(letters((255, 255, 255, 255)))
+    # Trimmed to the ink on every side: the screen centres it on its own width,
+    # so a margin would put it off centre by half of itself.
+    return [("wordraid", out.crop(out.getbbox()))]
+
+def extra_marks():
+    """The flare that comes up behind RAID once it has settled.
+
+    Two pieces, both white with the shape carried in ALPHA so the blit can
+    colour and fade them freely: a round falloff for the light itself and a
+    horizontal streak for the anamorphic smear across it. Squared falloff, so
+    both reach zero at the edge - a soft light with a visible rectangular
+    border is worse than no light at all.
+    """
+    import math
+
+    R = 48
+    glow = Image.new("RGBA", (R * 2, R * 2), (255, 255, 255, 0))
+    gp = glow.load()
+    for y in range(R * 2):
+        for x in range(R * 2):
+            d = math.hypot(x - R + 0.5, y - R + 0.5) / R
+            if d >= 1.0:
+                continue
+            k = (1.0 - d) ** 2
+            gp[x, y] = (255, 255, 255, int(255 * k))
+
+    W, H = 128, 7
+    streak = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+    sp = streak.load()
+    for y in range(H):
+        # across the bar: a hard centre line with a quick falloff
+        v = 1.0 - abs(y - (H - 1) / 2.0) / ((H - 1) / 2.0 + 0.5)
+        v = v * v
+        for x in range(W):
+            u = 1.0 - abs(x - (W - 1) / 2.0) / ((W - 1) / 2.0)
+            sp[x, y] = (255, 255, 255, int(255 * v * u * u))
+
+    # Grain. One tile, and the screen draws a 160x120 WINDOW of it at a
+    # different offset every frame - so one quad's worth of atlas gives endless
+    # variation for a single draw call, instead of a stack of tiles or a
+    # thousand one-pixel quads. Drawn point-sampled and stretched 2x, which is
+    # what gives it the chunk of film grain rather than the fizz of noise.
+    grain = Image.new("RGBA", (168, 128), (255, 255, 255, 0))
+    np_ = grain.load()
+    seed = 0x5EED
+    for y in range(128):
+        for x in range(168):
+            # xorshift, so the tile is identical on every machine that bakes it
+            seed ^= (seed << 13) & 0xFFFFFFFF
+            seed ^= seed >> 17
+            seed ^= (seed << 5) & 0xFFFFFFFF
+            v = seed & 0xFF
+            # biased dark: grain should mostly sit near zero and spike
+            a = 0 if v < 150 else (v - 150) * 255 // 105
+            np_[x, y] = (255, 255, 255, a)
+
+    # The ghost arc: the ring a lens throws opposite a bright source. Named
+    # flarering because skin_marks() already bakes a "ring" - two marks of the
+    # same name would emit the same C symbol twice and the header would not
+    # compile. Baked as a
+    # ring rather than a disc, with the brightness falling away round the
+    # circumference so that what shows is an ARC and not a hoop - a complete
+    # circle reads as a drawn shape, a partial one as an artefact of a lens.
+    RR = 48
+    ring = Image.new("RGBA", (RR * 2, RR * 2), (255, 255, 255, 0))
+    rp = ring.load()
+    for y in range(RR * 2):
+        for x in range(RR * 2):
+            dx, dy = x - RR + 0.5, y - RR + 0.5
+            d = math.hypot(dx, dy) / RR
+            if d > 1.0:
+                continue
+            # a soft band at 0.84 of the radius
+            band = math.exp(-((d - 0.84) / 0.085) ** 2)
+            # and round the rim: brightest towards the lower left
+            ang = math.atan2(dy, dx)
+            lobe = 0.30 + 0.70 * max(0.0, math.cos(ang - 2.5)) ** 1.6
+            v = band * lobe
+            if v > 0.004:
+                rp[x, y] = (255, 255, 255, int(255 * min(1.0, v)))
+
+    return [("glow", glow), ("streak", streak), ("grain", grain), ("flarering", ring)]
+
+
 def tint(img, rgba):
     """Multiply white art by a colour, keeping its alpha."""
     r, g, b, a = img.split()
@@ -515,7 +639,8 @@ def main():
     for name, im in skin_marks():
         pos = packer.add(im, edge_bleed=True)
         mark_rects.append((name, pos + im.size))
-    for name, im in title_words() + native_title_words(root):
+    for name, im in (title_words() + native_title_words(root)
+                     + extra_words() + extra_marks()):
         pos = packer.add(im, edge_bleed=True)
         mark_rects.append((name, pos + im.size))
 

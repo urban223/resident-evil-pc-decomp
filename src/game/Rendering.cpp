@@ -361,8 +361,9 @@ void draw_rect(RectDrawDesc* rect, int blend, int flags)
 // Uses a specific SRV instead of the white fallback. Coordinates are in
 // game-space (320x240) and get scaled to actual screen resolution.
 // ============================================================================
-void QueueTexturedSprite(float gameX, float gameY, float gameW, float gameH,
-                         MarniHandle tex, unsigned int depth)
+void QueueTexturedSpriteTinted(float gameX, float gameY, float gameW, float gameH,
+                               MarniHandle tex, unsigned int depth,
+                               unsigned int color)
 {
     if (tex == MARNI_NULL_HANDLE) return;
     if (g_pendingSpriteCount >= MAX_PENDING_SPRITES) return;
@@ -383,13 +384,22 @@ void QueueTexturedSprite(float gameX, float gameY, float gameW, float gameH,
     spr->v0 = 0.0f;
     spr->u1 = 1.0f;
     spr->v1 = 1.0f;
-    spr->color = 0xFFFFFFFF;
+    spr->color = color;
     spr->tex = tex;
     spr->valid = TRUE;
     spr->sampler = MARNI_SAMPLER_POINT;
     spr->depth = depth;
 
     g_pendingSpriteCount++;
+}
+
+// CUSTOM (port-only): the original of this pair. Opaque white is the identity
+// tint, so this is the same call with nothing modulating it.
+void QueueTexturedSprite(float gameX, float gameY, float gameW, float gameH,
+                         MarniHandle tex, unsigned int depth)
+{
+    QueueTexturedSpriteTinted(gameX, gameY, gameW, gameH, tex, depth,
+                              0xFFFFFFFFu);
 }
 
 // ============================================================================
