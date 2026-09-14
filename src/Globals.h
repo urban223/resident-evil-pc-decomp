@@ -55,6 +55,7 @@ extern HANDLE        g_hMutex;                         // 0x00bcb2c8
 extern BOOL          g_bIsSoftwareRendering;           // 0x004bcb2c
 extern BOOL          g_isGameCursorHiddenFlag;         // 0x00be0e29
 extern BOOL          g_bHasFinalizedSettings;          // 0x004bcb78
+extern char          g_szExitMessage[256];              // port-only: exit dialog text ("" = no dialog)
 
 // Window/message-pump state flags
 extern BOOL          g_isPaused;                       // 0x004d46ac - SideWinder pause-button event (read+cleared by main_loop, injects START+bit8)

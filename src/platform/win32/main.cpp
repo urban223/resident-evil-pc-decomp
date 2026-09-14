@@ -17,6 +17,11 @@ static BOOL InitSoftwareRenderer(void);
 static BOOL CreateGameWindow(int nCmdShow);
 static int  RunMessageLoop(void);
 
+// The text the exit dialog shows, if any. Empty means a clean exit and no
+// dialog at all; an error path that wants the player to see something sets it
+// before tearing the window down.
+char g_szExitMessage[256] = "";
+
 // ============================================================================
 // LoadIniConfiguration - Read settings from config.ini
 //
@@ -565,8 +570,17 @@ int RunMessageLoop(void)
                     if (!g_isGameCursorHiddenFlag) {
                     ShowCursor(TRUE);
                 }
-                    // Show error message if applicable
-                    ShowMessageBox(NULL, "", "RESIDENT EVIL", MB_OK);
+                    // Show error message if applicable.
+                    //
+                    // The original passes a message buffer here, and this port
+                    // had it hardcoded to "" - so EVERY normal exit ended on an
+                    // empty RESIDENT EVIL dialog with nothing but an OK button.
+                    // Unnoticed while the only way out was the window's X, very
+                    // noticeable now that the title menu has a QUIT item. Show
+                    // the box only when something actually needs saying.
+                    if (g_szExitMessage[0] != '\0') {
+                        ShowMessageBox(NULL, g_szExitMessage, "RESIDENT EVIL", MB_OK);
+                    }
                 }
                 
                 if (g_bAccessibilityAnimations) {

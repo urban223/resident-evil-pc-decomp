@@ -286,6 +286,128 @@ def skin_marks():
     return out
 
 
+# A plain bold sans for the two title-menu words the game has no art for. The
+# original's own lettering is an ordinary grotesque; at an 11-pixel cap height
+# the difference between one and another is a pixel here or there.
+GUI_FALLBACK_SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+
+
+def _decode_tim4(path):
+    """Minimal 4bpp CLUT TIM reader - enough for the title text sheets."""
+    d = open(path, "rb").read()
+    off = 8                                    # magic + flags
+    csz, cx, cy, cw, ch = struct.unpack("<IHHHH", d[off:off + 12])
+    pal_raw = d[off + 12:off + 12 + cw * ch * 2]
+    off += csz
+    isz, ix, iy, iw, ih = struct.unpack("<IHHHH", d[off:off + 12])
+    off += 12
+    px = d[off:off + isz - 12]
+    pal = []
+    for i in range(cw * ch):
+        v = struct.unpack("<H", pal_raw[i * 2:i * 2 + 2])[0]
+        pal.append((((v & 31) << 3), (((v >> 5) & 31) << 3), (((v >> 10) & 31) << 3),
+                    0 if v == 0 else 255))
+    w, h = iw * 4, ih
+    im = Image.new("RGBA", (w, h))
+    o = im.load()
+    for y in range(h):
+        base = y * iw * 2
+        for x in range(0, w, 4):
+            unit = px[base + (x >> 1)] | (px[base + (x >> 1) + 1] << 8)
+            for k in range(4):
+                o[x + k, y] = pal[(unit >> (4 * k)) & 0xF]
+    return im
+
+
+def native_title_words(root):
+    """NEW GAME and LOAD GAME, lifted pixel for pixel out of the game's own art.
+
+    The sheet bakes both words into one 256-wide block per highlight state,
+    together with the copyright lines, so there is no way to place them
+    individually from the game's texture page. Cropping them into this atlas
+    instead gives the real pixels AND control over where each one goes - and it
+    puts all four menu words through a single draw path, which is what keeps
+    them looking like one menu. The two sheets (pad / no pad) differ only in
+    their top line, so either is a valid source for these.
+    """
+    sheet = os.path.join(root, "assets", "USA", "Data", "t_start.tim")
+    if not os.path.isfile(sheet):
+        return []
+    im = _decode_tim4(sheet)
+
+    def normalise(crop):
+        # The sheet inks these words in exactly two greys - 112 solid and 56
+        # for the antialiased edge - so the shape converts losslessly to white
+        # with the grey carried as alpha. That matters because the draw applies
+        # a colour MULTIPLY: left at 112 the words could only ever be dimmed,
+        # never lit, and the two baked ones beside them would not match.
+        out = Image.new("RGBA", crop.size, (0, 0, 0, 0))
+        src, dst = crop.load(), out.load()
+        for y in range(crop.size[1]):
+            for x in range(crop.size[0]):
+                r, g, b, a = src[x, y]
+                if a == 0:
+                    continue
+                dst[x, y] = (255, 255, 255, min(255, r * 255 // 112))
+        return out
+
+    return [
+        ("wordnew",  normalise(im.crop((77, 84, 182, 96)))),     # NEW GAME
+        ("wordload", normalise(im.crop((72, 194, 185, 206)))),   # LOAD GAME
+        # The copyright lines are baked into the same block as the menu words.
+        # Replacing that block with our own list would drop them, so they are
+        # lifted out too and drawn on their own, centred at the bottom.
+        ("wordcopy", normalise(im.crop((0, 131, 256, 152)))),
+    ]
+
+
+def title_words():
+    """The two title-menu options RE1 has no art for.
+
+    t_start.tim / t_press.tim carry only NEW GAME and LOAD GAME, and each is
+    baked into a 256-wide block together with the copyright lines - there is no
+    EXTRA and no QUIT anywhere in the game's data. These two are lettered to sit
+    beside the originals: Liberation Sans Bold at 15px gives the same 11-pixel
+    cap height, and the tracking is matched to the native word's own (105 px
+    across "NEW GAME"). They are drawn point-sampled at 1:1, like the sheet
+    they stand next to, so the two sources read as one typeface.
+    """
+    font = ImageFont.truetype(GUI_FALLBACK_SANS, 15)
+
+    # Everything is measured from the top of a flat capital. The native crops
+    # put the cap line on row 0, so matching that is what lines the four words
+    # up on one baseline even though their boxes differ in height.
+    cap_top = font.getbbox("X")[1]
+
+    out = []
+    for name, text, track in (("wordextra", "EXTRA", 4), ("wordquit", "QUIT", 4)):
+        boxes = [font.getbbox(c) for c in text]
+        w = sum(b[2] - b[0] + track for b in boxes) - track
+        # Tall enough for the lowest ink in the word: Q's tail drops below the
+        # baseline, and a box sized to the capitals simply cut it off - which is
+        # exactly how the letter came out looking wrong.
+        h = max(b[3] for b in boxes) - cap_top + 1
+        im = Image.new("RGBA", (w + 4, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        x = 2
+        for c, b in zip(text, boxes):
+            # One shared offset for every glyph, so each keeps its true vertical
+            # place: Q's overshoot above the cap line and its tail below stay as
+            # the typeface drew them.
+            d.text((x - b[0], -cap_top), c, font=font, fill=(255, 255, 255, 255))
+            x += b[2] - b[0] + track
+        # Trim horizontally to the ink. The menu draws all four words from one
+        # left x, and the native crops start their ink in column 0 - so any
+        # transparent margin here is a pure indent, which is exactly how EXTRA
+        # and QUIT ended up sitting a couple of pixels right of the other two.
+        # The rows are NOT trimmed: row 0 is the cap line, which is what keeps
+        # the baseline shared.
+        bx = im.getbbox()
+        im = im.crop((bx[0], 0, bx[2], h))
+        out.append((name, im))
+    return out
+
+
 def tint(img, rgba):
     """Multiply white art by a colour, keeping its alpha."""
     r, g, b, a = img.split()
@@ -391,6 +513,9 @@ def main():
 
     mark_rects = []
     for name, im in skin_marks():
+        pos = packer.add(im, edge_bleed=True)
+        mark_rects.append((name, pos + im.size))
+    for name, im in title_words() + native_title_words(root):
         pos = packer.add(im, edge_bleed=True)
         mark_rects.append((name, pos + im.size))
 
