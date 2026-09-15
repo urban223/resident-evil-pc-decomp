@@ -526,19 +526,18 @@ static void DebugRoom_DecodeDest(unsigned char dest, unsigned char curStage,
     }
 }
 
-void DebugRoomChange_ApplyPendingPlacement(void)
+// CUSTOM: the placement itself, split out of the debug-menu wrapper below so
+// that anything needing to stand the player in a freshly loaded room can use
+// it - it drops the player at the room's canonical door arrival, the point the
+// game itself uses when she walks in through that door.
+//
+// Everything it needs is in place as soon as room_set has run: the init SCD
+// has built the room action table and g_RdtPointer is the loaded room. So it
+// works both after room_transition_load and after init_room. (A room with no
+// doors at all falls through to the log line at the bottom and leaves the
+// player where she was - RAID mode states its own spawn for that reason.)
+void RoomPlace_AtFirstDoor(void)
 {
-    if (s_dbgRoomChangeArmed == 0) {
-        return;
-    }
-    s_dbgRoomChangeArmed = 0;
-
-    // Restore the stage-variant bit cleared by DebugRoomChange_Trigger.
-    if (s_dbgRestoreVariant != 0) {
-        Flg_on((int)g_ScenarioFlags, SCENARIO_FLAG_STAGE_VARIANT);
-        s_dbgRestoreVariant = 0;
-    }
-
     unsigned char* table = g_RoomActionTable;
     unsigned char* tail  = (unsigned char*)g_RoomActionTail;
     if (tail == NULL || tail < table) {
@@ -741,6 +740,25 @@ void DebugRoomChange_ApplyPendingPlacement(void)
     }
 
     dbg_printf("[debugmenu] room change: no door record in loaded room, player left at record entry\n");
+}
+
+// game_loop calls this right after room_transition_load. It acts only on
+// debug-menu transitions (s_dbgRoomChangeArmed), so it stays a no-op for
+// normal door transitions and while debug features are off.
+void DebugRoomChange_ApplyPendingPlacement(void)
+{
+    if (s_dbgRoomChangeArmed == 0) {
+        return;
+    }
+    s_dbgRoomChangeArmed = 0;
+
+    // Restore the stage-variant bit cleared by DebugRoomChange_Trigger.
+    if (s_dbgRestoreVariant != 0) {
+        Flg_on((int)g_ScenarioFlags, SCENARIO_FLAG_STAGE_VARIANT);
+        s_dbgRestoreVariant = 0;
+    }
+
+    RoomPlace_AtFirstDoor();
 }
 
 // ============================================================================

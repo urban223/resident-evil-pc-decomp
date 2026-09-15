@@ -552,6 +552,7 @@ int texture_viewer_overlay(void);                 // DebugScreens.cpp - per-fram
 extern int           g_debugMenuOpen;            // 1 while the F1 debug menu overlay is open
 int debug_menu_overlay(void);                     // DebugMenu.cpp - F1 overlay; 1 while open
 void DebugRoomChange_ApplyPendingPlacement(void); // DebugMenu.cpp - post room_transition_load placement
+void RoomPlace_AtFirstDoor(void);                 // DebugMenu.cpp - stand the player at the loaded room's door arrival
 extern int           g_debugLoadSlot;             // quick access load: selected slot index (0-7)
 void DebugQuick_SaveSlot(int slot);               // DebugSaveLoad.cpp - write a full save to savedat<slot+1>.dat
 void DebugQuick_LoadSlot(int slot);               // DebugSaveLoad.cpp - restore savedat<slot+1>.dat and arm the continue path
@@ -999,6 +1000,12 @@ extern unsigned char g_titleLoopFlag;                  // 0x00d22777
 extern unsigned char g_titleMode;                      // 0x00d22775
 extern unsigned char g_titleOptionsFading;             // 0x00d22776
 extern unsigned char g_titleSelectionId;               // 0x00d22774
+
+// CUSTOM: RAID mode. Non-zero from the moment the RAID screen starts a run
+// until the title screen is next entered, which is where it is cleared - so
+// a NEW GAME after a RAID run is an ordinary new game. GameStart.cpp reads it
+// to pick the room and to empty it.
+extern int           g_raidMode;
 extern short         g_titleDemoTime;                  // 0x00d22788
 extern short         g_titleTexturePageData[8];       // 0x00d22778 - per-selection tpage
 extern int           g_sceneRenderParam;               // 0x004d6300
@@ -1127,6 +1134,9 @@ extern int g_collPushDepthZLo;                         // 0x00be0df0 - push scra
 extern BOOL g_bShowCollisionDebug;
 extern int  g_iCollisionDebugY;   // world Y of the overlay plane (0 = room floor)
 void CollisionDebug_Draw(void);
+void RaidArena_Draw(void);                        // RaidArena.cpp - the RAID mode's 3D room
+void WeaponSlide_Update(void);                    // WeaponSlide.cpp - the Beretta's slide
+void display_image_drop(void);                    // Rendering.cpp - clear the background image with no replacement
 
 // --- Room boundary collision (RoomCollision.cpp) ---
 void          Room_SetupCollisionCallbacks(void);                      // 0x0047d140

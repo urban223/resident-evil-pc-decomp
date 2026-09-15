@@ -526,6 +526,30 @@ void FrameRateGovernor(void)
             // lying on the floor.
             CollisionDebug_Draw();
 
+            // CUSTOM: the RAID arena. That mode's room has no pre-rendered
+            // background - it is real geometry, drawn here, in the same slot
+            // and for the same reason the overlay above uses it: after the
+            // background sprites and BEFORE the models, so the characters
+            // depth-test against the room they are standing in. It
+            // early-returns when RAID mode is not running.
+            RaidArena_Draw();
+
+            // CUSTOM: cycle the Beretta's slide, in the last moment before the
+            // geometry is consumed.
+            //
+            // It lived in update_player_anim first, and did nothing: the only
+            // thing that writes a parsed TMD's vertex array is PSXObject_Store,
+            // and render_entity can re-run it for a model whose cached slot has
+            // been reclaimed - which restores every vertex, wiping the edit a
+            // few hundred instructions after it was made. The readout showed
+            // the array holding the displaced values and the screen showing
+            // none of it.
+            //
+            // Here there is no such window. render_entity has already parsed
+            // and queued everything for this frame, and FlushTmdObjects reads
+            // the array on the very next line.
+            WeaponSlide_Update();
+
             // Render queued 3D TMD objects (entities, options-menu character)
             FlushTmdObjects();
 
@@ -1091,6 +1115,22 @@ int SubmitEffectSprite_Ex(TextureDesc* texture, unsigned short fade, int slot,
 {
     return AddSpriteEx_Core(texture, fade, slot, pageCount, depthKey, false,
                             SPRITE_CLASS_EFFECT);
+}
+
+// CUSTOM: throw the displayed image away without putting another in its place.
+//
+// g_displayImageSRV is a global that OUTLIVES the screen that set it. The
+// background quad is self-gating on it being null (OT_InsertPrimitive), so a
+// room that never calls display_image does not draw a background - but it also
+// does not CLEAR one, and the last thing to have called display_image is the
+// title screen. Without this the RAID arena would be built in front of the
+// title art.
+void display_image_drop(void)
+{
+    if (g_displayImageSRV != MARNI_NULL_HANDLE) {
+        Marni_DX()->DestroyTexture(g_displayImageSRV);
+        g_displayImageSRV = MARNI_NULL_HANDLE;
+    }
 }
 
 // ============================================================================

@@ -4048,6 +4048,50 @@ static char weapon_fire_check(void)
 }
 
 // ============================================================================
+// CUSTOM: weapon_reload_available - would a reload right now do anything?
+//
+// The game ALREADY has a reload: pull the trigger on an empty gun while
+// carrying its ammo and behaviour 0x18 plays EMW motion 0x0E, with the
+// per-weapon effects in fire_weapon_fx (the beretta's magazine goes in on
+// frame 0x11) and the transfer in fire_consume_ammo_stack. What it does not
+// have is a way to ASK for it. That is all this adds - the same behaviour, on
+// a button, before the magazine is empty.
+//
+// So this function only answers the question the trigger answers implicitly.
+// It mirrors fire_consume_ammo_stack's own rules rather than inventing any:
+// the capacity is the AMMO item's (g_ItemMaxQty[(weaponId + 9) * 4], not the
+// weapon's), and the stack is whichever matching slot has rounds, because that
+// is the one the transfer will reach for.
+//
+// The weapon band is the original's: 0x00457fba gates behaviour 0x18 on
+// equippedWeaponId < 6, and the knife has no ammo at all.
+//
+// Bit 7 of the equipped slot's quantity is the volley gate (fire_ammo_volley_gate),
+// not part of the count, so it is masked out.
+// ============================================================================
+static int weapon_reload_available(void)
+{
+    if (g_EquippedItemId == 0) return 0;
+
+    const unsigned char wid = g_playerEntity.equippedWeaponId;
+    if (wid < ITEM_BERETTA || wid >= ITEM_FLAMETHROWER) return 0;
+
+    const unsigned char cap = g_ItemMaxQty[((unsigned int)wid + 9) * 4];
+    const unsigned char have = (unsigned char)
+        (((unsigned char*)g_ItemSlotsPointer)[g_EquippedItemId * 2 - 1] & 0x7f);
+    if (cap == 0 || have >= cap) return 0;
+
+    const unsigned char slots = (unsigned char)((4 - ((g_playerEntity.id & 3) != 1)) * 2);
+    for (unsigned char i = 0; i < slots; i++) {
+        if (((unsigned char*)g_ItemSlotsPointer)[i * 2] == (unsigned char)(wid + 9)
+            && ((unsigned char*)g_ItemSlotsPointer)[i * 2 + 1] != 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// ============================================================================
 // player_aim_cone_test @ 0x00496be0
 // Does the ray from the player through `delta` cross a sight-blocking room
 // boundary? Walks ALL quadrant lists (group[0]..group[4]) - unlike
@@ -4565,6 +4609,26 @@ static void player_behavior_13_gun_hold_input(void)
     // Aim button released -> holster.
     if ((g_PlayerDpadHeld & 0x100) == 0) {
         g_playerEntity.action_behavior = 0x17;
+        g_playerEntity.action_state = 0;
+        return;
+    }
+
+    // CUSTOM: AIM + CANCEL reloads on demand.
+    //
+    // Behaviour 0x18 IS the reload - motion, effects, sound and transfer - and
+    // the original reaches it only through an empty click. This is the same
+    // entry, taken deliberately instead of by running dry, which is how a
+    // modern shooter lets you top up before the fight rather than during it.
+    //
+    // The combination is free. While the weapon is up, the aim bit (0x100)
+    // holds this behaviour and the fire bit (0x40) leaves it; the run bit
+    // (0x200), which the cancel/run button drives, is read only by the walk and
+    // run behaviours, so nothing here can be shadowed by taking it.
+    //
+    // On the PRESS, not the hold: a reload is one event, and 0x18 would
+    // otherwise be re-entered every frame the button stayed down.
+    if ((g_PlayerDpadPressed & 0x200) != 0 && weapon_reload_available()) {
+        g_playerEntity.action_behavior = 0x18;
         g_playerEntity.action_state = 0;
         return;
     }
@@ -5242,12 +5306,30 @@ static void fire_consume_ammo_stack(void)
             bestQty = qty;
         }
     }
-    if (maxQty < bestQty) {
-        ((unsigned char*)g_ItemSlotsPointer)[g_EquippedItemId * 2 - 1] = maxQty;
-        ((unsigned char*)g_ItemSlotsPointer)[bestSlot * 2 + 1] = bestQty - maxQty;
+    // CUSTOM: take only the SHORTFALL, not a whole magazine's worth.
+    //
+    // The original writes maxQty into the weapon and maxQty out of the stack,
+    // which is exact while this is only ever reached on an empty gun - the one
+    // case the original can reach it in. On demand (AIM + CANCEL) it is
+    // reachable with rounds still in the weapon, and then the flat write throws
+    // those rounds away: reloading 10/15 from a stack of 60 would leave 15/15
+    // and 45, losing ten.
+    //
+    // With `have` at 0 this is arithmetically identical to the original, so the
+    // empty-click path is untouched.
+    const unsigned char have = (unsigned char)
+        (((unsigned char*)g_ItemSlotsPointer)[g_EquippedItemId * 2 - 1] & 0x7f);
+    const unsigned char need = (unsigned char)((have < maxQty) ? (maxQty - have) : 0);
+
+    if (need < bestQty) {
+        ((unsigned char*)g_ItemSlotsPointer)[g_EquippedItemId * 2 - 1] =
+            (unsigned char)(have + need);
+        ((unsigned char*)g_ItemSlotsPointer)[bestSlot * 2 + 1] =
+            (unsigned char)(bestQty - need);
         return;
     }
-    ((unsigned char*)g_ItemSlotsPointer)[g_EquippedItemId * 2 - 1] = bestQty;
+    ((unsigned char*)g_ItemSlotsPointer)[g_EquippedItemId * 2 - 1] =
+        (unsigned char)(have + bestQty);
     ((unsigned char*)g_ItemSlotsPointer)[bestSlot * 2] = 0;
     rearrange_item_slots();
 }

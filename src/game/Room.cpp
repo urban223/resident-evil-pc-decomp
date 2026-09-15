@@ -725,8 +725,22 @@ void load_room_masks(int param_1) // 0x00475a90
 // For each camera in the room, loads the background PAK file, decompresses it,
 // and either displays it immediately (mode 0) or caches it (mode non-zero).
 // ============================================================================
+// CUSTOM: the RAID arena has no photograph.
+//
+// Both of these end in LoadFile + unpack_pakfile_ on an RC<room>.pak, and
+// neither checks the load. A missing file leaves LoadFile returning -1 without
+// touching the buffer, and unpack_pakfile_ then runs LZW over whatever is
+// already there into a fixed-size destination with no bound on either side -
+// so the failure mode is not a black screen, it is a write past the end of
+// g_TimImageBuffer. The cache path is worse still: the -1 is added straight
+// into the running offset and poisons g_bgCameraOffsets for every camera.
+//
+// So the room without a background does not ask for one. What it has instead
+// is geometry (RaidArena.cpp), and the clear colour behind it.
 void load_room_bg(void) // 0x00462b00
 {
+    if (g_raidMode != 0) return;
+
     if (g_bgCacheMode == 0) {
         int cameraIdx = 0;
         if (g_RdtPointer->cameras_count != 0) {
@@ -796,6 +810,8 @@ void load_room_bg(void) // 0x00462b00
 // ============================================================================
 void load_room_bg_image(void) // 0x004629c0
 {
+    if (g_raidMode != 0) return;   // see the note on load_room_bg
+
     // ROOM3110.RDT (Courtyard 0x11) is a scrapped dev heliport stub RDT that also
     // exists in the PS1 version - the game never enters it (the shipped heliport is
     // ROOM_HELIPORT). Its own bg paks rc3110-2.pak are the heliport at different

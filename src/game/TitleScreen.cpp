@@ -297,6 +297,12 @@ static void title_menu_backdrop(void)
 // title mode of its own rather than another step in the menu's fade counter.
 #define TITLE_MODE_EXTRA 2
 
+// CUSTOM: a title exit of its own. The original's ids are 0 attract demo,
+// 1 character select, 2/3 load a save - all handled by title_state's switch.
+// RAID needs neither a character select (it picks its own) nor a save load,
+// so it gets an id that chains game_start directly.
+#define TITLE_SEL_RAID   4
+
 // Centre-relative space, the same one the menu is laid out in (see
 // TITLE_MENU_X): y 0 is the middle of the screen. The heading sits above
 // centre, clear of the native prompt, which draws itself at y 62 in this space.
@@ -1081,16 +1087,19 @@ void update_title_options(void)
 
         if (s_titleExtraPhase == 3) {
             if (g_fading_state > 0x7B80) {
-                title_menu_backdrop();
+                // CUSTOM: the RAID screen starts a run. It used to fade back
+                // to the menu; now the press IS the start, so under full black
+                // the title loop ends and title_state chains game_start.
+                //
+                // No backdrop swap and no fade back in here: the screen stays
+                // black and game_start's own loading takes it from here, which
+                // is what makes the press read as one move into the level
+                // rather than a bounce off this screen.
                 s_titleExtraPhase = 0;
-                s_titleMenuGuard = 8;
-                g_titleMode = 1;
-                g_titleOptionsFading = 1;   // step 1 holds until the black clears
-                g_fading_state = 0;
-                g_fade_type_id = 2;
-                g_fading_counter = 0xFC00;
-                fade_update();
-                g_main_state_flags = (g_main_state_flags & ~MSF_SCREEN_MODE_MASK) | MSF_SCREEN_REBUILD;
+                g_raidMode = 1;
+                g_SelectedCharactedId = CHAR_JILL;
+                g_titleSelectionId = TITLE_SEL_RAID;
+                title_exit_loop();
             }
             return;
         }
@@ -1480,6 +1489,11 @@ void title_state(void)
 	g_playingGameFlag = 0;
 	g_menu_choice_id = 0;
 
+	// CUSTOM: every visit to the title starts outside RAID. Clearing it here
+	// rather than at the end of a run means it cannot survive one however the
+	// run ended - death, quit, or the ending.
+	g_raidMode = 0;
+
     setMenuScreenOffset(320, 240, 0, 0, 0);
     CenterScreenOrigin();
     clear_textures();
@@ -1538,6 +1552,20 @@ void title_state(void)
         g_main_state_flags2 |= MSF2_ATTRACT_DEMO;
         Task_chain((void*)game_start);
         Task_chain((void*)logos_state);
+        return;
+
+    // CUSTOM: RAID. Straight to gameplay - the character is already chosen
+    // (the RAID screen set it) and there is no save to restore, so neither the
+    // character select of case 1 nor the LoadSaveGameState of cases 2/3
+    // applies. InitializeGame reads g_raidMode and takes it from there.
+    case TITLE_SEL_RAID:
+        nullsub_0047eb80();
+        // Belt and braces: MSF2_ATTRACT_DEMO decides which of InitializeGame's
+        // two player-setup branches runs, and a run must take the real one.
+        // game_start already drops the bit on its way out of a demo, so this
+        // only matters if that ever stops being true.
+        g_main_state_flags2 &= ~MSF2_ATTRACT_DEMO;
+        Task_chain((void*)game_start);
         return;
 
     case 1:

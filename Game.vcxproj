@@ -129,6 +129,8 @@
     <ClCompile Include="src\game\LogosScreen.cpp" />
     <ClCompile Include="src\game\DebugScreens.cpp" />
     <ClCompile Include="src\game\DebugMenu.cpp" />
+    <ClCompile Include="src\game\RaidArena.cpp" />
+    <ClCompile Include="src\game\WeaponSlide.cpp" />
     <ClCompile Include="src\game\DebugSaveLoad.cpp" />
     <ClCompile Include="src\game\GameStart.cpp" />
     <ClCompile Include="src\game\GameLoop.cpp" />

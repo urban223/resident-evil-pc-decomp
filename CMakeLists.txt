@@ -49,6 +49,8 @@ set(RE1_SOURCES
     src/game/ComputerLab.cpp
     src/game/DeathScreen.cpp
     src/game/DebugMenu.cpp
+    src/game/RaidArena.cpp
+    src/game/WeaponSlide.cpp
     src/game/DebugSaveLoad.cpp
     src/game/DebugScreens.cpp
     src/game/DoorSystem.cpp

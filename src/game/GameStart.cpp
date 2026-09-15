@@ -302,6 +302,137 @@ void InitPlayerEntity(void)
     g_playerEntity.unk_ca = 0;
 }
 
+
+// ===========================================================================
+// CUSTOM: RAID mode.
+//
+// The RAID screen starts a run instead of going back to the menu. A run is an
+// ordinary gameplay session - game_start, InitializeGame, game_loop, the same
+// as NEW GAME - with three differences applied here:
+//
+//   * the character is fixed (no character select on the way in),
+//   * the room is fixed, and
+//   * the room is EMPTIED: whatever the room's own init script spawned is
+//     dropped before the first frame, because a RAID run is going to bring
+//     its own encounters rather than inherit the story's.
+//
+// The flag is cleared by title_state on the way in, so it never survives a run
+// and a NEW GAME after a RAID run is an ordinary new game.
+//
+// The room is NOT one of the story's. Stage 0 room 0x10 ships as a four-byte
+// stub - filename filler so the room<S><RR><V>.rdt pattern stays dense - and
+// nothing in the game enters it, so it is the one slot a new room can take
+// without displacing anything. tools/build_raid_room.py writes what goes
+// there: a box with one camera, four walls and no pre-rendered background at
+// all. The arena is real geometry, drawn by src/game/RaidArena.cpp.
+// ===========================================================================
+int g_raidMode = 0;
+
+#define RAID_STAGE  0
+#define RAID_ROOM   0x10
+
+// There is no door to arrive through, so the spawn is stated rather than
+// derived. These are the same numbers tools/build_raid_room.py prints, and the
+// angle convention is the game's: 0 = +X, 0x400 = +Z, 4096 = a full turn.
+#define RAID_SPAWN_X      6000
+#define RAID_SPAWN_Z      6000
+#define RAID_SPAWN_ANGLE  0x200
+
+// The RAID inventory. Deliberately its OWN table rather than a tweak of
+// SetInitialItems: the story's starting kit answers a question about the
+// mansion's first ten minutes, and this one answers a different question, so
+// the two should be free to drift apart. This is the whole of it - editing the
+// mode's loadout is editing these lines.
+//
+// Jill has 8 slots (CountHeldItems: 4 - (id & 3 != 1) doubled), and the three
+// custom pistols self-refill to 4 in weapon_autoaim_check, so their quantity
+// here is cosmetic.
+static const unsigned char s_raidItems[][2] = {
+    { ITEM_KNIFE,           0  },
+    { ITEM_BERETTA,        15  },
+    // Spare rounds for it. The Beretta is the only thing in this list that can
+    // run dry - the three custom pistols refill themselves - so the clip is
+    // what the reload (AIM + CANCEL, weapon_reload in PlayerAnimations.cpp)
+    // has to draw from.
+    { ITEM_CLIP,           60  },
+    { ITEM_GRENADE_PISTOL,  4  },
+    { ITEM_ACID_PISTOL,     4  },
+    { ITEM_FREEZE_PISTOL,   4  },
+    { ITEM_FIRST_AID_SPRAY, 1  },
+};
+
+#define RAID_ITEM_COUNT ((int)(sizeof(s_raidItems) / sizeof(s_raidItems[0])))
+
+static void Raid_SetItems(void)
+{
+    const int slots = 8;                    // Jill
+    int i;
+
+    for (i = 0; i < RAID_ITEM_COUNT && i < slots; i++) {
+        g_ItemsSlots[i].Id  = s_raidItems[i][0];
+        g_ItemsSlots[i].qty = s_raidItems[i][1];
+        g_ItemSlotIndices[i] = (unsigned char)i;
+    }
+    const int used = i;
+    for (; i < slots; i++) {
+        g_ItemsSlots[i].Id  = 0;
+        g_ItemsSlots[i].qty = 0;
+    }
+
+    g_ItemSlotsBitmask = (1 << (used & 0x1f)) - 1;
+    g_TotalHeldItems   = (unsigned char)used;
+
+    // The story's other starting state has no meaning here either: the room
+    // pick-up quantities SCD 0x4C restores belong to rooms this mode does not
+    // visit, and nothing is "not taken yet" in an arena.
+    g_pickupQtyA = 0;
+    g_pickupQtyB = 0;
+    g_pickupQtyC = 0;
+}
+
+static void Raid_EnterRoom(void)
+{
+    // Stand her in the arena. The debug room change can lean on
+    // RoomPlace_AtFirstDoor because every story room has a door to arrive
+    // through; this one does not, so the spawn is written out.
+    //
+    // Both the matrix translation and the position field: the matrix is what
+    // the renderer and the collision pass read, the position is what the
+    // collision pass rolls BACK to when a move is refused, so leaving the old
+    // one in place would teleport her to the main hall on her first step into
+    // a wall. (X and Z are zero-extended into the matrix and Y is
+    // sign-extended - the same asymmetry room_transition_load's own placement
+    // has.)
+    g_playerEntity.scaMatrixData.localMatrix.t[0] = RAID_SPAWN_X;
+    g_playerEntity.scaMatrixData.localMatrix.t[1] = 0;
+    g_playerEntity.scaMatrixData.localMatrix.t[2] = RAID_SPAWN_Z;
+    g_playerEntity.position.x = RAID_SPAWN_X;
+    g_playerEntity.position.y = 0;
+    g_playerEntity.position.z = RAID_SPAWN_Z;
+    g_playerEntity.posY = 0;
+    g_playerEntity.directionAngle = RAID_SPAWN_ANGLE;
+
+    // The title screen's picture is still in g_displayImageSRV, and a room
+    // that never calls display_image does not replace it. Drop it, or the
+    // arena is built in front of RESIDENT EVIL.
+    display_image_drop();
+
+    // Empty the room. Same two steps the door transition's own teardown uses
+    // (BuildEnemySnap, DoorSystem.cpp): drain the count and clear every slot's
+    // status flags, which is what update_entities tests before dispatching.
+    g_enemy_count = 0;
+    for (int i = 0; i < 30; i++) {
+        g_EnemiesList[i].status_flags = 0;
+    }
+
+    // Re-cut the camera now that she is actually somewhere. The arena has one
+    // camera and its switch table terminates on the first record, so this does
+    // not pick a different one - what it is here for is the cut_set() at the
+    // end of it, which reinstalls the camera matrix and the FOV against the
+    // room that is now loaded.
+    check_camera_switch(1);
+}
+
 // ===========================================================================
 // InitializeGame (0x004807a0)
 // Main game initialization. Loads bio_card.dat, sets up player entity, health,
@@ -357,6 +488,20 @@ void InitializeGame(void)
             */
             g_playerEntity.health = (short)((g_playerEntity.id & 1) * -44 + 140);
             g_PlayerHealthCopy = g_playerEntity.health;
+
+            // CUSTOM: a RAID run starts somewhere else. InitPlayerData has
+            // just written the main hall's start coordinates; they are
+            // replaced after init_room by Raid_EnterRoom, once the room is
+            // loaded and there is a door to stand by.
+            if (g_raidMode != 0) {
+                g_stageId = RAID_STAGE;
+                g_roomId  = RAID_ROOM;
+                // Its own loadout, over the top of the story one InitPlayerData
+                // just wrote. LoadHeldItemsImages runs after this and builds the
+                // HUD icons from whatever is in the slots, so replacing them
+                // here is all it takes.
+                Raid_SetItems();
+            }
         } else {
             LoadAttractModePlayerData();
         }
@@ -433,6 +578,10 @@ void InitializeGame(void)
     g_main_state_flags = g_main_state_flags & ~MSF_ROOM_TRANSITION;
 
     init_room();
+
+    if (g_raidMode != 0) {
+        Raid_EnterRoom();
+    }
 
     g_AttractModeIdleTimer = 1;
     update_room_bgm();
