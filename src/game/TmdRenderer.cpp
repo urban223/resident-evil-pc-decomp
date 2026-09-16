@@ -32,10 +32,8 @@
 #include "../marni/MarniDX.h"
 #include "../marni/MarniSystem.h"
 #include "../marni/Marni3DObject.h"
-#include "../platform/platform.h"   // OutputDebugStringA (temporary readout)
 #include <cstdlib>
 #include <cstring>
-#include <cstdio>
 
 // Forward declarations for dependencies defined elsewhere
 extern unsigned int AsyncCreateTmdObject(unsigned int param1, unsigned int param2, unsigned int param3);
@@ -434,27 +432,6 @@ void FlushTmdObjects(void)
             }
 
             CMarniViewport2* elem = (CMarniViewport2*)e->elem;
-
-            // CUSTOM, temporary: report what the flush ACTUALLY reads for the
-            // in-hand weapon mesh. WeaponSlide.cpp edits that array and its own
-            // read-back shows the edit landing, so if the gun does not move,
-            // either this loop never sees this element or it sees different
-            // numbers. One line a second, only for the 138-vertex mesh, which
-            // is the weapon's and nothing else's.
-            if (g_slideDebug && (int)elem->m_vertexCount == 138) {
-                static int t = 0;
-                if (++t >= 30) {
-                    t = 0;
-                    const float* vb = (const float*)elem->m_pVertexBuffer;
-                    char line[192];
-                    sprintf(line, "[flush] weapon elem %p vb %p  v102.y %.0f  "
-                                  "v0.y %.0f  queued %d/%d\n",
-                            (void*)elem, (void*)vb,
-                            vb ? vb[102 * 11 + 1] : 0.0f,
-                            vb ? vb[1] : 0.0f, i, queued);
-                    OutputDebugStringA(line);
-                }
-            }
 
             const float* vbuf = (const float*)elem->m_pVertexBuffer;
             const WORD*  ibuf = (const WORD*)elem->m_pIndexBuffer;
