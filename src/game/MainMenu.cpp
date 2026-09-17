@@ -259,12 +259,13 @@ static void skin_item_desc(unsigned char itemId, char* l1, int c1,
     }
 }
 
-static void skin_item_name(unsigned char itemId, char* out, int cap)
+// One item-name string, whichever table it came from, spelled in ASCII.
+// Declared in Globals.h beside those tables: the editor's content browser
+// names items through this too, so the two cannot spell a name differently.
+void ItemName_ToAscii(const unsigned char* p, char* out, int cap)
 {
     out[0] = '\0';
-    if (itemId == ITEM_NONE || cap < 2) return;
-    const unsigned char* p = message_item_name_lookup(itemId);
-    if (p == NULL) return;
+    if (p == NULL || cap < 2) return;
     int n = 0;
     while (*p != 0x07 && *p != 0x01 && n < cap - 1) {
         if (*p >= 0xF8) { p += 2; continue; }   // button glyph: no ASCII form
@@ -273,6 +274,13 @@ static void skin_item_name(unsigned char itemId, char* out, int cap)
     }
     while (n > 0 && out[n - 1] == ' ') n--;     // the table pads some names
     out[n] = '\0';
+}
+
+static void skin_item_name(unsigned char itemId, char* out, int cap)
+{
+    out[0] = '\0';
+    if (itemId == ITEM_NONE || cap < 2) return;
+    ItemName_ToAscii(message_item_name_lookup(itemId), out, cap);
 }
 
 // RE1 has no item-type field of its own; the id ranges in Types.h are the

@@ -150,7 +150,7 @@ static void content_list(EdRect body)
     const int count = (S->contentTab == 0) ? g_edItemCount : g_edEnemyCount;
     int shown = 0;
     for (int i = 0; i < count; i++) {
-        const char* nm = (S->contentTab == 0) ? g_edItems[i].name
+        const char* nm = (S->contentTab == 0) ? EdContent_ItemNameAt(i)
                                               : g_edEnemyNames[i];
         if (matches(nm, S->search)) shown++;
     }
@@ -160,7 +160,7 @@ static void content_list(EdRect body)
     float y = page.y + 2.0f;
 
     for (int i = 0; i < count; i++) {
-        const char* nm = (S->contentTab == 0) ? g_edItems[i].name
+        const char* nm = (S->contentTab == 0) ? EdContent_ItemNameAt(i)
                                               : g_edEnemyNames[i];
         if (!matches(nm, S->search)) continue;
 

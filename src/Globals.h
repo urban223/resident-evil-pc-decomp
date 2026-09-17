@@ -1544,6 +1544,12 @@ extern const unsigned char* const g_AcidPistolNamePtr;
 // CUSTOM: ITEM_FREEZE_PISTOL's own display name, same arrangement.
 extern const unsigned char* const g_FreezePistolNamePtr;
 
+// CUSTOM: an item-name string from any of the tables above, spelled in ASCII
+// for the port's own TTF-baked UI (the status-screen skin, the editor). Stops
+// at the terminator, drops button glyphs and the padding some names carry.
+// Defined in MainMenu.cpp, beside the skin's other decoders.
+void ItemName_ToAscii(const unsigned char* encoded, char* out, int cap);
+
 
 // DAT_00be05b0 // 0x00be05b0
 
