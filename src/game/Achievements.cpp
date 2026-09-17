@@ -2,6 +2,11 @@
 //
 // See Achievements.h for what this is and why it bypasses the PSX 2D path.
 //
+// The sheet and every quad drawn from it go through UiAtlas (UiAtlas.h), which
+// is what makes the toast and the status-screen skin one texture and one load
+// path. This file used to load achvui.bin a second time into a texture of its
+// own, and carry its own copies of the scale, the blit and the text loop.
+//
 // Layout, in atlas pixels (the generator bakes the panel at 2x its design
 // size, and the runtime draws one atlas pixel as `k` backbuffer pixels, so
 // these numbers are the toast's own coordinate system):
@@ -31,13 +36,12 @@
 // thing is actually finished.
 #include "Achievements.h"
 #include "AchievementAtlasData.h"
-#include "FileLoader.h"
+#include "UiAtlas.h"
 #include "../marni/MarniSystem.h"
 #include "../marni/MarniSound.h"
 #include "../system/AssetPath.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -213,88 +217,9 @@ static void achv_sound_play(int kind)
 }
 
 // ---------------------------------------------------------------------------
-// Atlas
-// ---------------------------------------------------------------------------
-static MarniHandle s_atlas = MARNI_NULL_HANDLE;
-static int s_atlasTried = 0;
-
-static void achv_atlas_load(void)
-{
-    if (s_atlas != MARNI_NULL_HANDLE || s_atlasTried) return;
-    if (!IsGraphicsSystemReadyForOperation()) return;   // retry next frame
-    s_atlasTried = 1;
-
-    const size_t pixels = (size_t)ACHV_ATLAS_W * (size_t)ACHV_ATLAS_H * 4;
-    const size_t expect = pixels + 12;                  // 'AUI1' + w + h
-    unsigned char* buf = (unsigned char*)malloc(expect);
-    if (buf == NULL) return;
-
-    size_t read = LoadFile(GAME_DATA_ROOT "Data\\achvui.bin", buf, 0);
-    if (read == expect
-        && buf[0] == 'A' && buf[1] == 'U' && buf[2] == 'I' && buf[3] == '1') {
-        unsigned int w = *(unsigned int*)(buf + 4);
-        unsigned int h = *(unsigned int*)(buf + 8);
-        if (w == (unsigned int)ACHV_ATLAS_W && h == (unsigned int)ACHV_ATLAS_H) {
-            // bpp 32 is memcpy'd straight into an R8G8B8A8 texture
-            // (MarniDX::CreateTexture), so the file's byte order IS the
-            // texture's: R, G, B, A per pixel, which is what the generator
-            // writes.
-            MarniCreateTexture(ACHV_ATLAS_W, ACHV_ATLAS_H, 32, buf + 12, &s_atlas);
-        }
-    }
-    free(buf);
-}
-
-// ---------------------------------------------------------------------------
 // Drawing helpers. Every coordinate here is in backbuffer pixels; `k` converts
 // atlas pixels to those.
 // ---------------------------------------------------------------------------
-static float achv_ui_scale(void)
-{
-    // The toast is sized off the real backbuffer, not the game's 320x240
-    // logical space, so it stays the same fraction of the window at every
-    // resolution instead of growing into a 1/3-screen slab at 4K.
-    DWORD bw = 0, bh = 0;
-    MarniGetBackBufferSize(&bw, &bh);
-    if (bh < 240) bh = 240;
-    float k = ((float)bh / 480.0f) * 0.5f;
-    if (k < 0.45f) k = 0.45f;
-    if (k > 2.20f) k = 2.20f;
-    return k;
-}
-
-static void achv_blit(const AchvRect* r, float x, float y, float w, float h,
-                      unsigned int color)
-{
-    const float u0 = (float)r->x / (float)ACHV_ATLAS_W;
-    const float v0 = (float)r->y / (float)ACHV_ATLAS_H;
-    const float u1 = (float)(r->x + r->w) / (float)ACHV_ATLAS_W;
-    const float v1 = (float)(r->y + r->h) / (float)ACHV_ATLAS_H;
-    MarniDrawSpriteEx(x, y, w, h, u0, v0, u1, v1, color, s_atlas,
-                      MARNI_SAMPLER_LINEAR, MARNI_BLEND_ALPHA);
-}
-
-static const PortFont s_achvFontTitle = { g_achvFontTitle, ACHV_FONT_FIRST, ACHV_FONT_LAST };
-static const PortFont s_achvFontBody  = { g_achvFontBody,  ACHV_FONT_FIRST, ACHV_FONT_LAST };
-
-static void achv_glyph_blit(void* user, const PortGlyph* g,
-                            float x, float y, float w, float h)
-{
-    AchvRect r;
-    r.x = g->x; r.y = g->y; r.w = g->w; r.h = g->h;
-    achv_blit(&r, x, y, w, h, *(const unsigned int*)user);
-}
-
-static void achv_draw_text(const PortFont* font, const char* s,
-                           float x, float y, float k, unsigned int color)
-{
-    PortText_Draw(font, s, x, y, k, achv_glyph_blit, &color);
-}
-
-static void achv_fill(float x, float y, float w, float h, unsigned int color)
-{
-    achv_blit(&g_achvWhite, x, y, w, h, color);
-}
 
 // alpha 0..255 folded into an 0xAARRGGBB literal
 static unsigned int achv_fade(unsigned int argb, int alpha)
@@ -417,24 +342,23 @@ static void achv_draw_plate(float x, float y, float w, float h, float k,
     if (mid > 0.0f) {
         r.x = (short)(g_achvPanel.x + ACHV_PANEL_CAP_L);
         r.w = (short)(g_achvPanel.w - ACHV_PANEL_CAP_L - ACHV_PANEL_CAP_R);
-        achv_blit(&r, x + capL, y, mid, h, color);
+        UiAtlas_Blit(&r, x + capL, y, mid, h, color);
     }
 
     r.x = g_achvPanel.x;
     r.w = (short)ACHV_PANEL_CAP_L;
-    achv_blit(&r, x, y, capL, h, color);
+    UiAtlas_Blit(&r, x, y, capL, h, color);
 
     r.x = (short)(g_achvPanel.x + g_achvPanel.w - ACHV_PANEL_CAP_R);
     r.w = (short)ACHV_PANEL_CAP_R;
-    achv_blit(&r, x + w - capR, y, capR, h, color);
+    UiAtlas_Blit(&r, x + w - capR, y, capR, h, color);
 }
 
 void Achievements_Draw(void)
 {
     if (s_phase == ACHV_PHASE_IDLE || s_queueCount == 0) return;
 
-    achv_atlas_load();
-    if (s_atlas == MARNI_NULL_HANDLE) return;
+    if (!UiAtlas_Ready()) return;
 
     const AchvToast* toast = &s_queue[s_queueHead];
     if (toast->id < 0 || toast->id >= ACHV_COUNT) return;
@@ -465,7 +389,7 @@ void Achievements_Draw(void)
     MarniGetBackBufferSize(&bw, &bh);
     if (bw < 320) bw = 320;
 
-    const float k = achv_ui_scale();
+    const float k = UiAtlas_Scale();
     const float fullW = (float)g_achvPanel.w * k;
     const float capsuleW = (float)(ACHV_PANEL_CAP_L + ACHV_PANEL_CAP_R) * k;
     const float ph = (float)g_achvPanel.h * k;
@@ -480,10 +404,10 @@ void Achievements_Draw(void)
 
     // --- plate, icon slot, icon ---
     achv_draw_plate(px, py, pw, ph, k, achv_fade(0xFFFFFFFFu, alpha));
-    achv_blit(&g_achvIconSlot, px + 14.0f * k, py + 14.0f * k, 64.0f * k, 64.0f * k,
+    UiAtlas_Blit(&g_achvIconSlot, px + 14.0f * k, py + 14.0f * k, 64.0f * k, 64.0f * k,
               achv_fade(0xBE2EC4B6u, alpha));
     if (def->icon >= 0 && def->icon < ACHV_ICON_COUNT) {
-        achv_blit(&g_achvIcons[def->icon], px + 22.0f * k, py + 22.0f * k,
+        UiAtlas_Blit(&g_achvIcons[def->icon], px + 22.0f * k, py + 22.0f * k,
                   48.0f * k, 48.0f * k, achv_fade(0xFFBEFAF4u, alpha));
     }
 
@@ -501,9 +425,9 @@ void Achievements_Draw(void)
     const float tx = px + 96.0f * k;
     const char* label = (toast->kind == ACHV_KIND_PROGRESS) ? "PROGRESS"
                                                             : "ACHIEVEMENT UNLOCKED";
-    achv_draw_text(&s_achvFontBody, label, tx, py + 8.0f * k, k,
+    UiAtlas_Text(UI_FONT_BODY, label, tx, py + 8.0f * k, k,
                    achv_fade(0xFF56AAA6u, textAlpha));
-    achv_draw_text(&s_achvFontTitle, def->name, tx, py + 26.0f * k, k,
+    UiAtlas_Text(UI_FONT_TITLE, def->name, tx, py + 26.0f * k, k,
                    achv_fade(0xFFE4FFFCu, textAlpha));
 
     if (toast->kind == ACHV_KIND_PROGRESS && def->target > 0) {
@@ -515,16 +439,16 @@ void Achievements_Draw(void)
         if (value < 0) value = 0;
         if (value > def->target) value = def->target;
 
-        achv_fill(barX, barY, barW, barH, achv_fade(0x462EC4B6u, textAlpha));
-        achv_fill(barX, barY, barW * (float)value / (float)def->target, barH,
+        UiAtlas_Fill(barX, barY, barW, barH, achv_fade(0x462EC4B6u, textAlpha));
+        UiAtlas_Fill(barX, barY, barW * (float)value / (float)def->target, barH,
                   achv_fade(0xFFC6FF4Au, textAlpha));
 
         char count[32];
         snprintf(count, sizeof(count), "%d / %d", value, (int)def->target);
-        achv_draw_text(&s_achvFontBody, count, barX + barW + 12.0f * k,
+        UiAtlas_Text(UI_FONT_BODY, count, barX + barW + 12.0f * k,
                        py + 58.0f * k, k, achv_fade(0xFFC6FF4Au, textAlpha));
     } else {
-        achv_draw_text(&s_achvFontBody, def->sub, tx, py + 60.0f * k, k,
+        UiAtlas_Text(UI_FONT_BODY, def->sub, tx, py + 60.0f * k, k,
                        achv_fade(0xFF7ABAB8u, textAlpha));
     }
 }

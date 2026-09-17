@@ -3,7 +3,9 @@
 // Not part of the original game. The toast that drops in from the top of the
 // screen is drawn straight through the Marni layer from one RGBA atlas
 // (assets/USA/Data/achvui.bin, baked by tools/build_achievement_ui.py from the
-// Space GUI pack), so it shares nothing with the PSX VRAM-page path the rest
+// Space GUI pack, and reached through UiAtlas.h - the same sheet and the same
+// loader the status-screen skin draws from), so it shares nothing with the
+// PSX VRAM-page path the rest
 // of the 2D art goes through and is free of its 8bpp/CLUT limits - which is
 // also why it can use a real TTF-baked font instead of fontus.tim's 8x14 one.
 //
