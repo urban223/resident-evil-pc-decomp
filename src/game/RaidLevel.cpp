@@ -81,6 +81,137 @@ static unsigned char raid_u8(int v)
     return (unsigned char)v;
 }
 
+// ---------------------------------------------------------------------------
+// The directives. One row per keyword: how many integers it reads, and what it
+// does with them. A keyword is a row and a handler here, a line in the writer
+// (editor/EditorSave.cpp) and a line in both grammar comments - this file's
+// and the writer's - and tests/check_raid_level_grammar.py fails when one of
+// the four is missed.
+//
+// `nargs` is how many integers the line must have, not how many it may:
+// anything after them is ignored, as it always was, so a column added by a
+// newer build does not make an older one drop the line.
+//
+// The handlers keep the values exactly as they come off the line - negative
+// Y is how a ceiling is spelled, and nothing here clamps a coordinate. Keeping
+// X/Z positive and below 32768 is the file's job (the collision and zone
+// tests read them back UNSIGNED); a parser that started fixing them up would
+// hide a broken level instead of showing it.
+// ---------------------------------------------------------------------------
+#define RAID_MAX_ARGS 12
+
+struct RaidDirective {
+    const char* key;
+    int         nargs;
+    void      (*apply)(RaidLevel* lv, const int* v);
+};
+
+static void raid_ambient(RaidLevel* lv, const int* v)
+{
+    lv->ambR = (short)v[0]; lv->ambG = (short)v[1]; lv->ambB = (short)v[2];
+}
+
+static void raid_light(RaidLevel* lv, const int* v)
+{
+    if (lv->nlight >= RAID_MAX_LIGHT) return;
+    RaidLight* L = &lv->light[lv->nlight++];
+    L->x = v[0]; L->y = v[1]; L->z = v[2];
+    L->r = raid_u8(v[3]); L->g = raid_u8(v[4]); L->b = raid_u8(v[5]);
+    L->radius = (short)v[6];
+}
+
+static void raid_cam(RaidLevel* lv, const int* v)
+{
+    if (lv->ncam >= RAID_MAX_CAM) return;
+    RaidCam* C = &lv->cam[lv->ncam++];
+    C->fx = v[0]; C->fy = v[1]; C->fz = v[2];
+    C->tx = v[3]; C->ty = v[4]; C->tz = v[5];
+    C->fov = v[6];
+}
+
+static void raid_camzone(RaidLevel* lv, const int* v)
+{
+    if (lv->nzone >= RAID_MAX_ZONE) return;
+    RaidZone* Z = &lv->zone[lv->nzone++];
+    Z->cam = (short)v[0];
+    Z->x0 = (short)v[1]; Z->z0 = (short)v[2];
+    Z->x1 = (short)v[3]; Z->z1 = (short)v[4];
+}
+
+static void raid_spawn(RaidLevel* lv, const int* v)
+{
+    lv->spawnX = v[0]; lv->spawnZ = v[1]; lv->spawnAngle = v[2];
+}
+
+static void raid_box(RaidLevel* lv, const int* v)
+{
+    if (lv->nbox >= RAID_MAX_BOX) return;
+    RaidBox* B = &lv->box[lv->nbox++];
+    // Normalise, so an editor may drag a box out in any direction and the
+    // collision still sees a MAX corner and a MIN corner.
+    B->x0 = (short)(v[0] < v[3] ? v[0] : v[3]);
+    B->x1 = (short)(v[0] < v[3] ? v[3] : v[0]);
+    B->y0 = (short)(v[1] < v[4] ? v[1] : v[4]);
+    B->y1 = (short)(v[1] < v[4] ? v[4] : v[1]);
+    B->z0 = (short)(v[2] < v[5] ? v[2] : v[5]);
+    B->z1 = (short)(v[2] < v[5] ? v[5] : v[2]);
+    B->flags = (unsigned short)v[6];
+    B->shade = (float)v[7] * 0.01f;
+    B->tr = raid_u8(v[8]); B->tg = raid_u8(v[9]); B->tb = raid_u8(v[10]);
+}
+
+static void raid_enemy(RaidLevel* lv, const int* v)
+{
+    if (lv->nenemy >= RAID_MAX_ENEMY) return;
+    RaidEnemy* E = &lv->enemy[lv->nenemy++];
+    E->x = (short)v[0]; E->z = (short)v[1];
+    E->angle = (short)v[2]; E->type = raid_u8(v[3]);
+}
+
+static void raid_item(RaidLevel* lv, const int* v)
+{
+    if (lv->nitem >= RAID_MAX_ITEM) return;
+    RaidItem* I = &lv->item[lv->nitem++];
+    I->x = (short)v[0]; I->z = (short)v[1];
+    I->angle = (short)v[2];
+    I->type = raid_u8(v[3]); I->amount = raid_u8(v[4]);
+}
+
+static void raid_give(RaidLevel* lv, const int* v)
+{
+    if (lv->ngive >= RAID_MAX_GIVE) return;
+    RaidGive* G = &lv->give[lv->ngive++];
+    G->type = raid_u8(v[0]); G->amount = raid_u8(v[1]);
+}
+
+// "ver" is not in here, and neither is anything unknown: both are ignored on
+// purpose, so an older build reads a newer file instead of refusing it.
+static const RaidDirective kRaidDirectives[] = {
+    { "ambient",  3, raid_ambient },
+    { "light",    7, raid_light },
+    { "cam",      7, raid_cam },
+    { "camzone",  5, raid_camzone },
+    { "spawn",    3, raid_spawn },
+    { "box",     11, raid_box },
+    { "enemy",    4, raid_enemy },
+    { "item",     5, raid_item },
+    { "give",     2, raid_give },
+};
+
+static const RaidDirective* raid_directive(const char* key)
+{
+    if (key == NULL) return NULL;               // blank or comment
+    for (unsigned int i = 0; i < sizeof(kRaidDirectives) / sizeof(kRaidDirectives[0]); i++) {
+        const RaidDirective* d = &kRaidDirectives[i];
+        if (strcmp(key, d->key) == 0) {
+            // A row wider than v[] would overrun it. The grammar check
+            // catches that before it is committed; this keeps it out of memory.
+            return (d->nargs <= RAID_MAX_ARGS) ? d : NULL;
+        }
+    }
+    return NULL;
+}
+
 int RaidLevel_Load(void)
 {
     static char buf[RAID_LEVEL_MAX];
@@ -107,76 +238,11 @@ int RaidLevel_Load(void)
         *eol = '\0';
 
         char* p = line;
-        char* key = raid_tok(&p);
-        int v[12];
-
-        if (key == NULL) {
-            /* blank or comment */
-        } else if (strcmp(key, "ambient") == 0) {
-            if (raid_ints(&p, v, 3)) {
-                lv.ambR = (short)v[0]; lv.ambG = (short)v[1]; lv.ambB = (short)v[2];
-            }
-        } else if (strcmp(key, "light") == 0) {
-            if (lv.nlight < RAID_MAX_LIGHT && raid_ints(&p, v, 7)) {
-                RaidLight* L = &lv.light[lv.nlight++];
-                L->x = v[0]; L->y = v[1]; L->z = v[2];
-                L->r = raid_u8(v[3]); L->g = raid_u8(v[4]); L->b = raid_u8(v[5]);
-                L->radius = (short)v[6];
-            }
-        } else if (strcmp(key, "cam") == 0) {
-            if (lv.ncam < RAID_MAX_CAM && raid_ints(&p, v, 7)) {
-                RaidCam* C = &lv.cam[lv.ncam++];
-                C->fx = v[0]; C->fy = v[1]; C->fz = v[2];
-                C->tx = v[3]; C->ty = v[4]; C->tz = v[5];
-                C->fov = v[6];
-            }
-        } else if (strcmp(key, "camzone") == 0) {
-            if (lv.nzone < RAID_MAX_ZONE && raid_ints(&p, v, 5)) {
-                RaidZone* Z = &lv.zone[lv.nzone++];
-                Z->cam = (short)v[0];
-                Z->x0 = (short)v[1]; Z->z0 = (short)v[2];
-                Z->x1 = (short)v[3]; Z->z1 = (short)v[4];
-            }
-        } else if (strcmp(key, "spawn") == 0) {
-            if (raid_ints(&p, v, 3)) {
-                lv.spawnX = v[0]; lv.spawnZ = v[1]; lv.spawnAngle = v[2];
-            }
-        } else if (strcmp(key, "box") == 0) {
-            if (lv.nbox < RAID_MAX_BOX && raid_ints(&p, v, 11)) {
-                RaidBox* B = &lv.box[lv.nbox++];
-                // Normalise, so an editor may drag a box out in any direction
-                // and the collision still sees a MAX corner and a MIN corner.
-                B->x0 = (short)(v[0] < v[3] ? v[0] : v[3]);
-                B->x1 = (short)(v[0] < v[3] ? v[3] : v[0]);
-                B->y0 = (short)(v[1] < v[4] ? v[1] : v[4]);
-                B->y1 = (short)(v[1] < v[4] ? v[4] : v[1]);
-                B->z0 = (short)(v[2] < v[5] ? v[2] : v[5]);
-                B->z1 = (short)(v[2] < v[5] ? v[5] : v[2]);
-                B->flags = (unsigned short)v[6];
-                B->shade = (float)v[7] * 0.01f;
-                B->tr = raid_u8(v[8]); B->tg = raid_u8(v[9]); B->tb = raid_u8(v[10]);
-            }
-        } else if (strcmp(key, "enemy") == 0) {
-            if (lv.nenemy < RAID_MAX_ENEMY && raid_ints(&p, v, 4)) {
-                RaidEnemy* E = &lv.enemy[lv.nenemy++];
-                E->x = (short)v[0]; E->z = (short)v[1];
-                E->angle = (short)v[2]; E->type = raid_u8(v[3]);
-            }
-        } else if (strcmp(key, "item") == 0) {
-            if (lv.nitem < RAID_MAX_ITEM && raid_ints(&p, v, 5)) {
-                RaidItem* I = &lv.item[lv.nitem++];
-                I->x = (short)v[0]; I->z = (short)v[1];
-                I->angle = (short)v[2];
-                I->type = raid_u8(v[3]); I->amount = raid_u8(v[4]);
-            }
-        } else if (strcmp(key, "give") == 0) {
-            if (lv.ngive < RAID_MAX_GIVE && raid_ints(&p, v, 2)) {
-                RaidGive* G = &lv.give[lv.ngive++];
-                G->type = raid_u8(v[0]); G->amount = raid_u8(v[1]);
-            }
+        const RaidDirective* d = raid_directive(raid_tok(&p));
+        int v[RAID_MAX_ARGS];
+        if (d != NULL && raid_ints(&p, v, d->nargs)) {
+            d->apply(&lv, v);
         }
-        /* "ver" and anything unknown: ignored on purpose, so an older build
-           reads a newer file instead of refusing it. */
 
         line = next;
     }
