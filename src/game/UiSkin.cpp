@@ -611,20 +611,13 @@ static void action_menu(const struct UiSkinState* st)
 }
 
 // ---------------------------------------------------------------------------
-void UiSkin_DrawStatus(const struct UiSkinState* st)
+// The screen, block by block. UiSkin_DrawStatus calls these in the order the
+// blocks used to sit in it, and that order is load-bearing: pieces that share
+// a depth are separated by queue order (see cell()), so reordering the calls
+// would change what lands on top even though no depth changed.
+// ---------------------------------------------------------------------------
+static void tabs(const struct UiSkinState* st)
 {
-    if (!s_enabled || st == NULL) return;
-    if (!UiAtlas_Ready()) return;
-
-    skin_begin();
-
-    // the frozen room, dimmed. Without a scrim the item icons - blocky 40x30
-    // pixel art - lose contrast against a lit room.
-    fill(0, 0, 320, 240, C_SCRIM, D_SCRIM);
-
-    filler(st->frame);
-
-    // --- tabs ---------------------------------------------------------------
     static const char* const kTabs[4] = { "MAP", "FILE", "RADIO", "EXIT" };
     for (int i = 0; i < 4; i++) {
         const float x = 200.0f + i * 29.0f;
@@ -640,8 +633,32 @@ void UiSkin_DrawStatus(const struct UiSkinState* st)
         label(UI_FONT_BODY, kTabs[i], x + (27.0f - w) * 0.5f, 6, col);
     }
     fill(GRID_X, 19, 312 - GRID_X, 1, C_LINE, D_PLATE);
+}
 
-    // --- the item grid ------------------------------------------------------
+// cursor furniture: brackets and side markers, in front of the icons
+static void cursor_marks(const struct UiSkinState* st)
+{
+    if (st->selected < 0 || st->selected >= GRID_COLS * GRID_ROWS) return;
+
+    const float x = GRID_X + (st->selected % GRID_COLS) * CELL_GX;
+    const float y = GRID_Y + (st->selected / GRID_COLS) * CELL_GY;
+    const float b = 6.0f;
+    fill(x - 2, y - 2, b, 1, C_EDGE, D_FRONT);
+    fill(x - 2, y - 2, 1, b, C_EDGE, D_FRONT);
+    fill(x + CELL_W + 2 - b, y - 2, b, 1, C_EDGE, D_FRONT);
+    fill(x + CELL_W + 1, y - 2, 1, b, C_EDGE, D_FRONT);
+    fill(x - 2, y + CELL_H + 1, b, 1, C_EDGE, D_FRONT);
+    fill(x - 2, y + CELL_H + 2 - b, 1, b, C_EDGE, D_FRONT);
+    fill(x + CELL_W + 2 - b, y + CELL_H + 1, b, 1, C_EDGE, D_FRONT);
+    fill(x + CELL_W + 1, y + CELL_H + 2 - b, 1, b, C_EDGE, D_FRONT);
+
+    const unsigned int pulse = (((st->frame / 5) & 1) == 0) ? C_ORANGE : 0x78FF9650u;
+    mark(&g_achvMarkTriangle, x - 6, y + CELL_H * 0.5f - 2, 4, 4, pulse, D_FRONT);
+    mark(&g_achvMarkTriangle, x + CELL_W + 2, y + CELL_H * 0.5f - 2, 4, 4, pulse, D_FRONT);
+}
+
+static void item_grid(const struct UiSkinState* st)
+{
     for (int i = 0; i < GRID_COLS * GRID_ROWS; i++) {
         const float x = GRID_X + (i % GRID_COLS) * CELL_GX;
         const float y = GRID_Y + (i / GRID_COLS) * CELL_GY;
@@ -652,105 +669,101 @@ void UiSkin_DrawStatus(const struct UiSkinState* st)
         }
     }
 
-    // cursor furniture: brackets and side markers, in front of the icons
-    if (st->selected >= 0 && st->selected < GRID_COLS * GRID_ROWS) {
-        const float x = GRID_X + (st->selected % GRID_COLS) * CELL_GX;
-        const float y = GRID_Y + (st->selected / GRID_COLS) * CELL_GY;
-        const float b = 6.0f;
-        fill(x - 2, y - 2, b, 1, C_EDGE, D_FRONT);
-        fill(x - 2, y - 2, 1, b, C_EDGE, D_FRONT);
-        fill(x + CELL_W + 2 - b, y - 2, b, 1, C_EDGE, D_FRONT);
-        fill(x + CELL_W + 1, y - 2, 1, b, C_EDGE, D_FRONT);
-        fill(x - 2, y + CELL_H + 1, b, 1, C_EDGE, D_FRONT);
-        fill(x - 2, y + CELL_H + 2 - b, 1, b, C_EDGE, D_FRONT);
-        fill(x + CELL_W + 2 - b, y + CELL_H + 1, b, 1, C_EDGE, D_FRONT);
-        fill(x + CELL_W + 1, y + CELL_H + 2 - b, 1, b, C_EDGE, D_FRONT);
-
-        const unsigned int pulse = (((st->frame / 5) & 1) == 0) ? C_ORANGE : 0x78FF9650u;
-        mark(&g_achvMarkTriangle, x - 6, y + CELL_H * 0.5f - 2, 4, 4, pulse, D_FRONT);
-        mark(&g_achvMarkTriangle, x + CELL_W + 2, y + CELL_H * 0.5f - 2, 4, 4, pulse, D_FRONT);
-    }
+    cursor_marks(st);
 
     glint(GRID_X - 2, GRID_Y - 2,
           GRID_COLS * CELL_GX - (CELL_GX - CELL_W) + 4,
           GRID_ROWS * CELL_GY - (CELL_GY - CELL_H) + 4,
           st->frame, 2.2f, 26, 0x00AAFFF6u);
+}
 
-    // --- the info card ------------------------------------------------------
-    fill(GRID_X, RULE_Y, 312 - GRID_X, 1, C_LINE, D_PLATE);
-    if (st->itemName != NULL) {
-        fill(CARD_X0, NAME_Y - 3, CARD_X1 - CARD_X0, 226 - (NAME_Y - 3), C_CARD, D_PLATE);
-        frame_rect(CARD_X0, NAME_Y - 3, CARD_X1 - CARD_X0, 226 - (NAME_Y - 3),
-                   0x785AB4B0u, D_PLATE);
-        // A hatched corner, the way every panel in the reference is cut. Five
-        // stepped runs read as a diagonal at this size and cost five quads
-        // rather than the fifty a real stroked diagonal would.
-        for (int i = 0; i < 5; i++) {
-            const float len = 12.0f - i * 2.0f;
-            fill(CARD_X1 - 2.0f - len, NAME_Y - 1.0f + i * 2.0f, len, 1,
-                 0x3C5AB4B0u, D_TEXT);
-        }
-        label(UI_FONT_TITLE, st->itemName, GRID_X, NAME_Y, C_TEXT);
-        fill(CARD_X0, NAME_Y + 12, CARD_X1 - CARD_X0 - 1, 2, C_AMBER, D_TEXT);
-        if (st->itemType != NULL) {
-            fill(CARD_X0, NAME_Y + 15, 46, 9, 0xAA286C6Cu, D_TEXT);
-            label(UI_FONT_BODY, st->itemType, CARD_X0 + 4, NAME_Y + 16, C_TEXT);
-        }
-        // id chip and code readout at the right end of the name line
-        {
-            const float chipW = 22.0f;
-            const float chipX = CARD_X1 - 46.0f;
-            char id[8];
-            snprintf(id, sizeof(id), "# %02d",
-                     (st->selected >= 0) ? st->selected + 1 : 0);
-            fill(chipX, NAME_Y + 3, chipW, 8, 0xD278F0E2u, D_TEXT);
-            label(UI_FONT_BODY, id, chipX + 3, NAME_Y + 4, 0xFF061416u);
-            char code[16];
-            snprintf(code, sizeof(code), "00:%05d",
-                     10000 + ((st->selected >= 0) ? st->selected * 17 : 0));
-            label(UI_FONT_BODY, code, chipX + chipW + 2, NAME_Y + 4, C_DIM);
-        }
-        // The item's own examine text (g_ItemDescriptions), decoded to ASCII by
-        // MainMenu.cpp and re-wrapped here. The table's line break sits where
-        // the original's 26-column line ran out; the card is far wider, so
-        // honouring it would leave most descriptions as two short stubs.
-        // While the item viewer is open the card is where that text is being
-        // read, so it steps up to the title font - same words, the size the
-        // reading deserves.
-        if (st->itemDesc != NULL) {
-            const int font = st->descLarge ? UI_FONT_TITLE : UI_FONT_BODY;
-            const float width = (float)(CARD_X1 - 4) - GRID_X;
-            char lines[3][WRAP_MAX_CHARS];
-            const int n = wrap_text(font, st->itemDesc, width, lines, 3);
-            const float step = st->descLarge ? 13.0f : 10.0f;
-            const float top  = st->descLarge ? (NAME_Y + 25.0f) : (NAME_Y + 28.0f);
-            for (int i = 0; i < n; i++) {
-                if (st->descLarge) {
-                    UiAtlas_TextPushed(UI_FONT_TITLE, lines[i], GRID_X * s_sx,
-                                       (top + i * step) * s_sy,
-                                       text_k(UI_FONT_TITLE) * 0.95f * s_sy,
-                                       C_TEXT, D_TEXT);
-                } else {
-                    label(UI_FONT_BODY, lines[i], GRID_X, top + i * step, C_BODY);
-                }
-            }
+// id chip and code readout at the right end of the name line
+static void card_id(const struct UiSkinState* st)
+{
+    const float chipW = 22.0f;
+    const float chipX = CARD_X1 - 46.0f;
+    char id[8];
+    snprintf(id, sizeof(id), "# %02d",
+             (st->selected >= 0) ? st->selected + 1 : 0);
+    fill(chipX, NAME_Y + 3, chipW, 8, 0xD278F0E2u, D_TEXT);
+    label(UI_FONT_BODY, id, chipX + 3, NAME_Y + 4, 0xFF061416u);
+    char code[16];
+    snprintf(code, sizeof(code), "00:%05d",
+             10000 + ((st->selected >= 0) ? st->selected * 17 : 0));
+    label(UI_FONT_BODY, code, chipX + chipW + 2, NAME_Y + 4, C_DIM);
+}
+
+// The item's own examine text (g_ItemDescriptions), decoded to ASCII by
+// MainMenu.cpp and re-wrapped here. The table's line break sits where the
+// original's 26-column line ran out; the card is far wider, so honouring it
+// would leave most descriptions as two short stubs. While the item viewer is
+// open the card is where that text is being read, so it steps up to the title
+// font - same words, the size the reading deserves.
+static void card_description(const struct UiSkinState* st)
+{
+    if (st->itemDesc == NULL) return;
+
+    const int font = st->descLarge ? UI_FONT_TITLE : UI_FONT_BODY;
+    const float width = (float)(CARD_X1 - 4) - GRID_X;
+    char lines[3][WRAP_MAX_CHARS];
+    const int n = wrap_text(font, st->itemDesc, width, lines, 3);
+    const float step = st->descLarge ? 13.0f : 10.0f;
+    const float top  = st->descLarge ? (NAME_Y + 25.0f) : (NAME_Y + 28.0f);
+    for (int i = 0; i < n; i++) {
+        if (st->descLarge) {
+            UiAtlas_TextPushed(UI_FONT_TITLE, lines[i], GRID_X * s_sx,
+                               (top + i * step) * s_sy,
+                               text_k(UI_FONT_TITLE) * 0.95f * s_sy,
+                               C_TEXT, D_TEXT);
+        } else {
+            label(UI_FONT_BODY, lines[i], GRID_X, top + i * step, C_BODY);
         }
     }
+}
 
-    // capacity bar under the card
+static void info_card(const struct UiSkinState* st)
+{
+    fill(GRID_X, RULE_Y, 312 - GRID_X, 1, C_LINE, D_PLATE);
+    if (st->itemName == NULL) return;
+
+    fill(CARD_X0, NAME_Y - 3, CARD_X1 - CARD_X0, 226 - (NAME_Y - 3), C_CARD, D_PLATE);
+    frame_rect(CARD_X0, NAME_Y - 3, CARD_X1 - CARD_X0, 226 - (NAME_Y - 3),
+               0x785AB4B0u, D_PLATE);
+    // A hatched corner, the way every panel in the reference is cut. Five
+    // stepped runs read as a diagonal at this size and cost five quads rather
+    // than the fifty a real stroked diagonal would.
+    for (int i = 0; i < 5; i++) {
+        const float len = 12.0f - i * 2.0f;
+        fill(CARD_X1 - 2.0f - len, NAME_Y - 1.0f + i * 2.0f, len, 1,
+             0x3C5AB4B0u, D_TEXT);
+    }
+    label(UI_FONT_TITLE, st->itemName, GRID_X, NAME_Y, C_TEXT);
+    fill(CARD_X0, NAME_Y + 12, CARD_X1 - CARD_X0 - 1, 2, C_AMBER, D_TEXT);
+    if (st->itemType != NULL) {
+        fill(CARD_X0, NAME_Y + 15, 46, 9, 0xAA286C6Cu, D_TEXT);
+        label(UI_FONT_BODY, st->itemType, CARD_X0 + 4, NAME_Y + 16, C_TEXT);
+    }
+    card_id(st);
+    card_description(st);
+}
+
+// capacity bar under the card
+static void capacity(const struct UiSkinState* st)
+{
     for (int i = 0; i < 16; i++) {
         const int on = i < st->heldCount;
         fill(GRID_X + i * 11.0f, 228, 8, 3,
              on ? 0xD278F0E2u : 0x50467878u, D_TEXT);
     }
     label(UI_FONT_BODY, "CAPACITY", GRID_X, 233, C_DIM);
-    {
-        char cap[16];
-        snprintf(cap, sizeof(cap), "%d / %d", st->heldCount, st->slotCount);
-        label_right(UI_FONT_BODY, cap, 312, 233, C_DIM);
-    }
+    char cap[16];
+    snprintf(cap, sizeof(cap), "%d / %d", st->heldCount, st->slotCount);
+    label_right(UI_FONT_BODY, cap, 312, 233, C_DIM);
+}
 
-    // --- left column --------------------------------------------------------
+// The left column's three slots: the portrait, EQUIPPED and OTHER.
+static void left_slots(const struct UiSkinState* st)
+{
     label(UI_FONT_BODY, "CHARACTER", 8, 14, C_LABEL);
     cell(PORTRAIT_X, PORTRAIT_Y, 38, CELL_H, 1, 0);
     if (st->characterName) label(UI_FONT_TITLE, st->characterName, 50, 26, C_TEXT);
@@ -761,27 +774,31 @@ void UiSkin_DrawStatus(const struct UiSkinState* st)
 
     label(UI_FONT_BODY, "OTHER", 8, 110, C_LABEL);
     cell(OTHER_X, OTHER_Y, CELL_W, CELL_H, st->other >= 0, 0);
+}
 
-    // condition: same cell frame, trace inside, status word under it
+// condition: same cell frame, trace inside, status word under it
+static void condition(const struct UiSkinState* st)
+{
     label(UI_FONT_BODY, "CONDITION", ECG_X, ECG_Y - 8, C_LABEL);
     cell(ECG_X, ECG_Y, ECG_W, ECG_H, 1, 0);
     ecg_screen(st->frame, st->ekgHead, st->conditionColor);
-    {
-        // No synthetic trace here: the game draws a real EKG of its own
-        // (menu_draw_health_bar), wave tables and all, and MainMenu.cpp
-        // remaps its line primitives into UiSkin_EkgRect below - so what is
-        // in this block is the game's own heartbeat, stretched to fit. It
-        // sweeps across the block and fades behind itself, exactly as it does
-        // on the original screen, so there is no baseline to draw either.
-        if (st->condition) {
-            const float k = text_k(UI_FONT_TITLE);
-            UiAtlas_TextPushed(UI_FONT_TITLE, st->condition,
-                               (ECG_X + 5) * s_sx, (ECG_Y + ECG_H - 11) * s_sy,
-                               k * s_sy, st->conditionColor, D_TEXT);
-        }
+    // No synthetic trace here: the game draws a real EKG of its own
+    // (menu_draw_health_bar), wave tables and all, and MainMenu.cpp remaps its
+    // line primitives into UiSkin_EkgRect - so what is in this block is the
+    // game's own heartbeat, stretched to fit. It sweeps across the block and
+    // fades behind itself, exactly as it does on the original screen, so there
+    // is no baseline to draw either.
+    if (st->condition) {
+        const float k = text_k(UI_FONT_TITLE);
+        UiAtlas_TextPushed(UI_FONT_TITLE, st->condition,
+                           (ECG_X + 5) * s_sx, (ECG_Y + ECG_H - 11) * s_sy,
+                           k * s_sy, st->conditionColor, D_TEXT);
     }
+}
 
-    // points, then the pip rows
+// points, then the pip rows
+static void points(const struct UiSkinState* st)
+{
     label(UI_FONT_BODY, "POINTS", 8, 217, C_LABEL);
     {
         char buf[16];
@@ -801,26 +818,51 @@ void UiSkin_DrawStatus(const struct UiSkinState* st)
         pip_row(10, 226, n, lit, &g_achvMarkDiamond, C_EDGE, 0x6E326E6Eu);
     }
     pip_row(56, 226, 4, 2, &g_achvMarkRing, C_AMBER, 0x6E5A5040u);
+}
 
-    action_menu(st);
+// The message banner. RE1's menu messages are drawn by the message system
+// itself, in the game's own 8x14 font, and there is no getting in front of
+// them - so the skin gives them a floor to stand on instead of letting them
+// fall across the condition block and the card.
+static void message_banner(const struct UiSkinState* st)
+{
+    if (st->msgY <= 0) return;
 
-    // The message banner. RE1's menu messages are drawn by the message system
-    // itself, in the game's own 8x14 font, and there is no getting in front of
-    // them - so the skin gives them a floor to stand on instead of letting
-    // them fall across the condition block and the card.
-    if (st->msgY > 0) {
-        const float top = (float)st->msgY - 6.0f;
-        const float h = 14.0f * 2.0f + 10.0f;
-        fill(4, top, 312, h, 0xF2040C10u, D_MSG_BACK);
-        fill(4, top, 312, 1, 0xC878F0E2u, D_MSG_BACK);
-        fill(4, top + h - 1, 312, 1, 0xC878F0E2u, D_MSG_BACK);
-        fill(4, top, 1, h, 0x8C5AB4B0u, D_MSG_BACK);
-        fill(315, top, 1, h, 0x8C5AB4B0u, D_MSG_BACK);
-        // a corner tick at each end, so the band belongs to the same UI
-        for (int i = 0; i < 2; i++) {
-            const float bx = i ? 309.0f : 4.0f;
-            fill(bx, top + 2, 3, 1, 0xC878F0E2u, D_MSG_BACK);
-            fill(bx, top + h - 3, 3, 1, 0xC878F0E2u, D_MSG_BACK);
-        }
+    const float top = (float)st->msgY - 6.0f;
+    const float h = 14.0f * 2.0f + 10.0f;
+    fill(4, top, 312, h, 0xF2040C10u, D_MSG_BACK);
+    fill(4, top, 312, 1, 0xC878F0E2u, D_MSG_BACK);
+    fill(4, top + h - 1, 312, 1, 0xC878F0E2u, D_MSG_BACK);
+    fill(4, top, 1, h, 0x8C5AB4B0u, D_MSG_BACK);
+    fill(315, top, 1, h, 0x8C5AB4B0u, D_MSG_BACK);
+    // a corner tick at each end, so the band belongs to the same UI
+    for (int i = 0; i < 2; i++) {
+        const float bx = i ? 309.0f : 4.0f;
+        fill(bx, top + 2, 3, 1, 0xC878F0E2u, D_MSG_BACK);
+        fill(bx, top + h - 3, 3, 1, 0xC878F0E2u, D_MSG_BACK);
     }
+}
+
+// ---------------------------------------------------------------------------
+void UiSkin_DrawStatus(const struct UiSkinState* st)
+{
+    if (!s_enabled || st == NULL) return;
+    if (!UiAtlas_Ready()) return;
+
+    skin_begin();
+
+    // the frozen room, dimmed. Without a scrim the item icons - blocky 40x30
+    // pixel art - lose contrast against a lit room.
+    fill(0, 0, 320, 240, C_SCRIM, D_SCRIM);
+
+    filler(st->frame);
+    tabs(st);
+    item_grid(st);
+    info_card(st);
+    capacity(st);
+    left_slots(st);
+    condition(st);
+    points(st);
+    action_menu(st);
+    message_banner(st);
 }
