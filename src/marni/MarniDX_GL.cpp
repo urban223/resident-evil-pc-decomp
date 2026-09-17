@@ -44,6 +44,12 @@ struct MarniDX::Impl {
     GLint  uTex    = -1;
     GLint  uPersp  = -1;
 
+    // PORT-ONLY: the editor viewport (see MarniDX.h). screenCoord ->
+    // backbuffer pixel is (origin + coord * scale); identity is the game.
+    float vpOX = 0.0f, vpOY = 0.0f;
+    float vpSX = 1.0f, vpSY = 1.0f;
+    int   scX = 0, scY = 0, scW = 0, scH = 0;   // 0 = whole backbuffer
+
     MarniHandle whiteHandle = MARNI_NULL_HANDLE;
     MarniHandle fontHandle  = MARNI_NULL_HANDLE;
     int fontW = 0, fontH = 0;
@@ -220,13 +226,17 @@ static void DrawBatch(MarniDX::Impl* p, const float* verts, int vertexCount,
 {
     if (p == nullptr || !p->ready || p->program == 0 || vertexCount <= 0) return;
 
-    // Y-down ortho: (0,0) top-left -> NDC (-1,+1).
+    // Y-down ortho: (0,0) top-left -> NDC (-1,+1), through the viewport
+    // transform - a caller's coordinate c lands on backbuffer pixel
+    // (origin + c * scale), so the scale multiplies and the origin shifts.
+    const float vsx = (p->vpSX != 0.0f) ? p->vpSX : 1.0f;
+    const float vsy = (p->vpSY != 0.0f) ? p->vpSY : 1.0f;
     float mvp[16] = {0};
-    mvp[0]  = 2.0f / (float)p->width;
-    mvp[5]  = -2.0f / (float)p->height;
+    mvp[0]  =  2.0f * vsx / (float)p->width;
+    mvp[5]  = -2.0f * vsy / (float)p->height;
     mvp[10] = 1.0f;
-    mvp[12] = -1.0f;
-    mvp[13] = 1.0f;
+    mvp[12] = 2.0f * p->vpOX / (float)p->width - 1.0f;
+    mvp[13] = 1.0f - 2.0f * p->vpOY / (float)p->height;
     mvp[15] = 1.0f;
 
     GLuint texture = p->whiteHandle != MARNI_NULL_HANDLE
@@ -455,7 +465,14 @@ void MarniDX::Clear(float r, float g, float b, float a)
     // examine screen, whose model rotates, lost everything except the few
     // fragments that happened to be no farther than last frame's surface.
     glDepthMask(GL_TRUE);
+    // glClear IS masked by the scissor test, unlike D3D11's
+    // ClearRenderTargetView. While the editor has the viewport scissored to a
+    // sub-rectangle, a scissored clear would leave the rest of the window
+    // holding whatever the last frame put there.
+    const bool scissored = (p->scW > 0 && p->scH > 0);
+    if (scissored) glDisable(GL_SCISSOR_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (scissored) glEnable(GL_SCISSOR_TEST);
 }
 
 void MarniDX::Present()
@@ -732,6 +749,58 @@ void MarniDX::DrawTriangles3D(const float* verts, int triCount, MarniHandle tex,
 // ---------------------------------------------------------------------------
 // Readback
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Viewport transform + scissor (PORT-ONLY; see MarniDX.h)
+// ---------------------------------------------------------------------------
+void MarniDX::SetViewportTransform(float originX, float originY,
+                                   float scaleX, float scaleY)
+{
+    Impl* p = m_pImpl;
+    if (!p) return;
+    p->vpOX = originX;
+    p->vpOY = originY;
+    p->vpSX = (scaleX != 0.0f) ? scaleX : 1.0f;
+    p->vpSY = (scaleY != 0.0f) ? scaleY : 1.0f;
+}
+
+void MarniDX::GetViewportTransform(float* outOriginX, float* outOriginY,
+                                   float* outScaleX, float* outScaleY) const
+{
+    const Impl* p = m_pImpl;
+    if (outOriginX) *outOriginX = p ? p->vpOX : 0.0f;
+    if (outOriginY) *outOriginY = p ? p->vpOY : 0.0f;
+    if (outScaleX)  *outScaleX  = p ? p->vpSX : 1.0f;
+    if (outScaleY)  *outScaleY  = p ? p->vpSY : 1.0f;
+}
+
+void MarniDX::SetScissor(int x, int y, int w, int h)
+{
+    Impl* p = m_pImpl;
+    if (!p) return;
+
+    if (w <= 0 || h <= 0) {
+        p->scX = p->scY = p->scW = p->scH = 0;
+        if (p->ready) glDisable(GL_SCISSOR_TEST);
+        return;
+    }
+
+    int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > p->width)  x1 = p->width;
+    if (y1 > p->height) y1 = p->height;
+    if (x1 < x0) x1 = x0;
+    if (y1 < y0) y1 = y0;
+
+    p->scX = x0; p->scY = y0; p->scW = x1 - x0; p->scH = y1 - y0;
+    if (p->ready) {
+        glEnable(GL_SCISSOR_TEST);
+        // GL's scissor origin is the BOTTOM-left of the framebuffer; every
+        // coordinate in this API is top-left, so the Y flips here.
+        glScissor(p->scX, p->height - (p->scY + p->scH), p->scW, p->scH);
+    }
+}
 
 BOOL MarniDX::CaptureBackbufferToRGBA(void** outPixels, DWORD* outWidth, DWORD* outHeight)
 {

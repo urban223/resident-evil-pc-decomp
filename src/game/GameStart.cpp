@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 #include "../system/AssetPath.h"
+#include "RaidLevel.h"
+#include "RaidEnemies.h"
 
 extern void setSomeColor(int r, int g, int b);              // 0x00470a50
 extern void empty_40ae40(int);                              // 0x0040ae40 RoomInit.cpp
@@ -331,9 +333,9 @@ int g_raidMode = 0;
 #define RAID_STAGE  0
 #define RAID_ROOM   0x10
 
-// There is no door to arrive through, so the spawn is stated rather than
-// derived. These are the same numbers tools/build_raid_room.py prints, and the
-// angle convention is the game's: 0 = +X, 0x400 = +Z, 4096 = a full turn.
+// The spawn comes from the level file too (Data\\raid1.lvl). These are only
+// the fallback for a level that does not state one, and the angle convention
+// is the game's: 0 = +X, 0x400 = +Z, 4096 = a full turn.
 #define RAID_SPAWN_X      6000
 #define RAID_SPAWN_Z      6000
 #define RAID_SPAWN_ANGLE  0x200
@@ -392,6 +394,27 @@ static void Raid_SetItems(void)
 
 static void Raid_EnterRoom(void)
 {
+    // The level first: it supplies the camera, the lights, the collision and
+    // the spawn, all of which the rest of this function then relies on. A file
+    // that will not parse leaves the RDT's own empty shell, which is an empty
+    // room rather than a crash.
+    int spawnX = RAID_SPAWN_X, spawnZ = RAID_SPAWN_Z, spawnA = RAID_SPAWN_ANGLE;
+    if (RaidLevel_Load()) {
+        RaidLevel_Apply();
+        if (g_raidLevel.spawnX != 0 || g_raidLevel.spawnZ != 0) {
+            spawnX = g_raidLevel.spawnX;
+            spawnZ = g_raidLevel.spawnZ;
+            spawnA = g_raidLevel.spawnAngle;
+        }
+
+        // The level's own loadout, if it states one. This is the right moment
+        // and Raid_SetItems is not: that runs before init_room, and the level
+        // file is not read until here. A level that says nothing about the
+        // inventory keeps the mode's built-in table - saying nothing is not the
+        // same as saying "none".
+        RaidItems_Give();
+    }
+
     // Stand her in the arena. The debug room change can lean on
     // RoomPlace_AtFirstDoor because every story room has a door to arrive
     // through; this one does not, so the spawn is written out.
@@ -403,14 +426,14 @@ static void Raid_EnterRoom(void)
     // a wall. (X and Z are zero-extended into the matrix and Y is
     // sign-extended - the same asymmetry room_transition_load's own placement
     // has.)
-    g_playerEntity.scaMatrixData.localMatrix.t[0] = RAID_SPAWN_X;
+    g_playerEntity.scaMatrixData.localMatrix.t[0] = spawnX;
     g_playerEntity.scaMatrixData.localMatrix.t[1] = 0;
-    g_playerEntity.scaMatrixData.localMatrix.t[2] = RAID_SPAWN_Z;
-    g_playerEntity.position.x = RAID_SPAWN_X;
+    g_playerEntity.scaMatrixData.localMatrix.t[2] = spawnZ;
+    g_playerEntity.position.x = (short)spawnX;
     g_playerEntity.position.y = 0;
-    g_playerEntity.position.z = RAID_SPAWN_Z;
+    g_playerEntity.position.z = (short)spawnZ;
     g_playerEntity.posY = 0;
-    g_playerEntity.directionAngle = RAID_SPAWN_ANGLE;
+    g_playerEntity.directionAngle = (short)spawnA;
 
     // The title screen's picture is still in g_displayImageSRV, and a room
     // that never calls display_image does not replace it. Drop it, or the
@@ -424,6 +447,10 @@ static void Raid_EnterRoom(void)
     for (int i = 0; i < 30; i++) {
         g_EnemiesList[i].status_flags = 0;
     }
+
+    // ...and then put the level's own enemies in it. After the emptying, not
+    // before: this fills the same slots that loop has just cleared.
+    RaidEnemies_Spawn();
 
     // Re-cut the camera now that she is actually somewhere. The arena has one
     // camera and its switch table terminates on the first record, so this does

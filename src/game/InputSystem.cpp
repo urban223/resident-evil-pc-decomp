@@ -6,6 +6,7 @@
 #include "../marni/MarniInput.h"
 #include "../marni/MarniXInput.h"
 #include <cstring>
+#include "editor/Editor.h"   // CUSTOM: the in-game editor
 
 // ============================================================================
 // Pad default bindings (port addition)
@@ -331,7 +332,12 @@ DWORD PlayerPad_Update(void)
 	// front of (ENTER/SPACE is the action key). The overlay itself samples
 	// the keyboard directly and is unaffected. g_debugMenuOpen stays 0 while
 	// debug features are disabled.
-	if (g_debugMenuOpen != 0) {
+	//
+	// CUSTOM: the editor blanks it the same way, and for the same reason -
+	// WASD flies the camera while it is up, and the player would walk. Only
+	// while EDITING: Play In Editor is the game running, and the game needs
+	// its pad.
+	if (g_debugMenuOpen != 0 || Editor_IsOpen()) {
 		g_PlayerPadPressed = 0;
 		g_PlayerPadHeld = 0;
 		g_PlayerDpadHeld = 0;

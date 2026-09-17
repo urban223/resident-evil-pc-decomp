@@ -204,6 +204,33 @@ public:
                          bool depthWrite = true);
 
     // ----------------------------------------------------------------------
+    // Viewport transform + scissor (PORT-ONLY: the editor's viewport).
+    //
+    // Every screen-space draw path in this backend builds its orthographic
+    // matrix from one helper, so a single offset+scale set here retargets the
+    // WHOLE renderer - room geometry, character models, the sprite queue, the
+    // HUD - into a sub-rectangle of the window. That is what an editor
+    // viewport is: not a second renderer agreeing with the first, but the same
+    // renderer pointed at part of the window. Identity (0,0,1,1) is the game.
+    //
+    //   backbufferPixel = origin + screenCoordinate * scale
+    //
+    // The scale is applied ON TOP of the game-space scale callers already
+    // apply through MarniGetRenderScale; pass 1 to leave their arithmetic
+    // alone and only move the image.
+    // ----------------------------------------------------------------------
+    void SetViewportTransform(float originX, float originY,
+                              float scaleX, float scaleY);
+    void GetViewportTransform(float* outOriginX, float* outOriginY,
+                              float* outScaleX, float* outScaleY) const;
+
+    // Hardware scissor, in real backbuffer pixels. Width or height <= 0
+    // restores the whole backbuffer. The transform above moves the image; this
+    // is what stops the parts of it that fall outside the viewport from
+    // painting over the panels around it.
+    void SetScissor(int x, int y, int w, int h);
+
+    // ----------------------------------------------------------------------
     // Backbuffer readback (used by CMarniBits::SaveBitmapToFile, the original
     // +0x2064 framebuffer-proxy path). Allocates a contiguous RGBA8 buffer via
     // operator_new and returns it in *outPixels + dimensions. Caller owns the

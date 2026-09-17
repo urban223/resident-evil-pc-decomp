@@ -1,6 +1,7 @@
 // WindowProc.cpp - Main window procedure + keyboard input handling
 // WindowProc (0x00441170), OnKeyDown (0x00497830)
 #include "Globals.h"
+#include "game/editor/Editor.h"   // CUSTOM: the in-game editor
 #include <mmsystem.h>
 
 // ============================================================================
@@ -104,6 +105,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_ACTIVATE:
             g_bWindowFocused = FALSE;
             if (LOWORD(wParam) == WA_INACTIVE) {
+                // CUSTOM: a button released while we are not focused never
+                // arrives, and the drag it started would run forever.
+                EditorInput_OnFocusLost();
                 // 0x004411f4: Window deactivated
                 if (!g_bIsSoftwareRendering && g_mciVideoDeviceID == 1) {
                     g_bMCIVideoEvent = TRUE;
@@ -177,6 +181,63 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     g_debugTextureViewerFlag = 1;
                 }
             }
+            // Not in the original: F7 re-reads the RAID level file
+            // (Data\\raid1.lvl) without leaving the room, so an external
+            // editor can be a live one. Consumed by RaidArena_Draw, which is
+            // the point in the frame where the room is certainly loaded.
+            // KEYUP, like the toggles above, so autorepeat cannot queue a
+            // hundred reloads while the key is held.
+            else if (wParam == VK_F7) {
+                g_raidReloadRequest = 1;
+            }
+            // Not in the original: F2 toggles the in-game level editor. KEYUP
+            // like the rest, so autorepeat cannot flip it every frame the key
+            // is held. It only does anything in RAID mode.
+            else if (wParam == VK_F2) {
+                Editor_Toggle();
+            }
+            break;
+
+        // --- Mouse ---
+        // Not in the original: the game had no mouse handling at all. These
+        // four feed the editor, which is the only thing that wants a cursor.
+        //
+        // GET_X_LPARAM/GET_Y_LPARAM are signed on purpose: with the mouse
+        // captured, a drag that leaves the window reports negative client
+        // coordinates, and the (unsigned) LOWORD idiom turns those into 65000
+        // and sends a gizmo to the other side of the level.
+        case WM_MOUSEMOVE:
+            EditorInput_OnMouseMove((int)(short)LOWORD(lParam),
+                                    (int)(short)HIWORD(lParam));
+            break;
+
+        case WM_LBUTTONDOWN: SetCapture(hwnd); EditorInput_OnMouseButton(ED_MB_LEFT,   1); break;
+        case WM_RBUTTONDOWN: SetCapture(hwnd); EditorInput_OnMouseButton(ED_MB_RIGHT,  1); break;
+        case WM_MBUTTONDOWN: SetCapture(hwnd); EditorInput_OnMouseButton(ED_MB_MIDDLE, 1); break;
+
+        // Release the capture only once NO button is still down: a chorded
+        // press (Unreal's "move without rotating" is LMB+RMB) would otherwise
+        // drop the capture on the first release and lose the rest of the drag.
+        case WM_LBUTTONUP:
+        case WM_RBUTTONUP:
+        case WM_MBUTTONUP:
+            EditorInput_OnMouseButton(msg == WM_LBUTTONUP ? ED_MB_LEFT :
+                                      msg == WM_RBUTTONUP ? ED_MB_RIGHT : ED_MB_MIDDLE, 0);
+            if ((wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) == 0) {
+                ReleaseCapture();
+            }
+            break;
+
+        case WM_MOUSEWHEEL:
+            EditorInput_OnMouseWheel((int)(short)HIWORD(wParam));
+            break;
+
+        // Not in the original: typed characters, for the editor's numeric and
+        // text fields. A virtual key code is not a character - it is a key
+        // position, before the layout has had its say - so the fields read
+        // this and the commands read plat_key_state.
+        case WM_CHAR:
+            EditorInput_OnChar((int)wParam);
             break;
         
         // --- WM_SYSCOMMAND ---

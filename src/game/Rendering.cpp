@@ -1,6 +1,7 @@
 // Rendering.cpp - Frame rendering, present, sprite drawing
 // All functions decompiled from Ghidra with original addresses
 #include "../Globals.h"
+#include "editor/Editor.h"   // CUSTOM: the in-game editor overlay
 #include "../platform/platform.h"
 #include "../DebugPrint.h"
 #include "../marni/MarniSystem.h"
@@ -532,7 +533,19 @@ void FrameRateGovernor(void)
             // background sprites and BEFORE the models, so the characters
             // depth-test against the room they are standing in. It
             // early-returns when RAID mode is not running.
+            // CUSTOM: what the player can reach, and the take button. Before
+            // the draw, so a pickup taken this frame is not drawn one more
+            // time after it is already in the inventory.
+            RaidItems_Update();
+
             RaidArena_Draw();
+
+            // CUSTOM: the editor's overlay, over the room it is editing and
+            // under the models, so a gizmo reads against the geometry. Its own
+            // lines go through MarniDrawLine, which is depth-disabled and lands
+            // on top regardless - a manipulator hidden behind the floor is not
+            // a manipulator.
+            Editor_Draw();
 
             // CUSTOM: cycle the Beretta's slide, in the last moment before the
             // geometry is consumed.
@@ -623,6 +636,13 @@ void FrameRateGovernor(void)
             // the presented-frame clock rather than the game's task rate.
             Achievements_Tick();
             Achievements_Draw();
+
+            // CUSTOM: the editor's interface. Last of all, because it is the
+            // only thing in the frame that is not part of the game: everything
+            // above went through the viewport transform and is inside the
+            // viewport rectangle, and this drops that transform and draws the
+            // panels around it in window pixels.
+            Editor_DrawUI();
 
             if (!g_DisablePad) {
                 MarniPresent();

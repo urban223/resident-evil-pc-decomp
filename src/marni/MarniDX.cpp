@@ -164,6 +164,14 @@ struct MarniDX::Impl {
     ID3D11InputLayout*       model3DLayout = nullptr;
     ID3D11Buffer*            model3DVB     = nullptr;
 
+    // PORT-ONLY: the editor viewport. screenCoord -> backbuffer pixel is
+    // (origin + coord * scale); identity is the game filling the window.
+    // The scissor is kept here too so ChangeDisplayMode can re-apply it - a
+    // swap-chain resize resets the rasteriser's rects.
+    float                    vpOX = 0.0f, vpOY = 0.0f;
+    float                    vpSX = 1.0f, vpSY = 1.0f;
+    int                      scX = 0, scY = 0, scW = 0, scH = 0;   // 0 = full
+
     // fallback white 1x1 texture + SRV (handle index 1 reserved)
     ID3D11Texture2D*         whiteTex      = nullptr;
     ID3D11ShaderResourceView* whiteSRV    = nullptr;
@@ -228,6 +236,25 @@ static void BuildOrthoMatrix(float* m, float left, float right,
     m[12] = (left + right) / (left - right);
     m[13] = (top + bottom) / (bottom - top);
     m[15] = 1.0f;
+}
+
+// The one place screen coordinates become clip space. Four call sites feed
+// it - sprites, rects, lines and the two triangle paths - which is exactly why
+// the viewport transform can live here and nowhere else.
+//
+// A caller's coordinate c lands on backbuffer pixel (origin + c * scale), so
+// the orthographic volume is the backbuffer rectangle carried back through
+// that map: left = -origin/scale, width = backbufferWidth/scale.
+static void BuildScreenMatrix(MarniDX::Impl* p, float* m)
+{
+    const float sx = (p->vpSX != 0.0f) ? p->vpSX : 1.0f;
+    const float sy = (p->vpSY != 0.0f) ? p->vpSY : 1.0f;
+    const float left   = -p->vpOX / sx;
+    const float right  = left + (float)p->width  / sx;
+    const float top    = -p->vpOY / sy;
+    const float bottom = top  + (float)p->height / sy;
+    // bottom/top swapped: screen space is Y-down (see the call sites).
+    BuildOrthoMatrix(m, left, right, bottom, top);
 }
 
 static bool CompileShaders(ID3D11Device* dev,
@@ -774,7 +801,20 @@ int MarniDX::ChangeDisplayMode(DWORD newW, DWORD newH, BOOL fullScreen)
     D3D11_VIEWPORT vp = {};
     vp.Width = (float)newW; vp.Height = (float)newH; vp.MaxDepth = 1.0f;
     p->context->RSSetViewports(1, &vp);
+    // A resize resets the rasteriser's rects, so the editor's scissor has to
+    // be put back - and clamped, because the window may have got smaller than
+    // the rect the editor last asked for.
     D3D11_RECT sr = { 0, 0, (LONG)newW, (LONG)newH };
+    if (p->scW > 0 && p->scH > 0) {
+        LONG rx1 = (LONG)(p->scX + p->scW), ry1 = (LONG)(p->scY + p->scH);
+        if (rx1 > (LONG)newW) rx1 = (LONG)newW;
+        if (ry1 > (LONG)newH) ry1 = (LONG)newH;
+        if (p->scX < (int)newW && p->scY < (int)newH &&
+            rx1 > (LONG)p->scX && ry1 > (LONG)p->scY) {
+            sr.left = (LONG)p->scX; sr.top = (LONG)p->scY;
+            sr.right = rx1;         sr.bottom = ry1;
+        }
+    }
     p->context->RSSetScissorRects(1, &sr);
     p->context->OMSetRenderTargets(1, &p->rtv, p->depthStencilView);
     return 1;
@@ -1071,8 +1111,7 @@ static void DrawQuadInternal(MarniDX::Impl* p, const QuadVertex verts[6],
     // bottom=height, top=0 so that pos.y=0 -> NDC +1 (top) and
     // pos.y=height -> NDC -1 (bottom). Without this swap the image
     // is rendered vertically flipped.
-    BuildOrthoMatrix(&cb.mvp[0][0], 0.0f, (float)p->width,
-                                   (float)p->height, 0.0f);
+    BuildScreenMatrix(p, &cb.mvp[0][0]);
     D3D11_MAPPED_SUBRESOURCE cm = {};
     if (SUCCEEDED(p->context->Map(p->spriteCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &cm))) {
         memcpy(cm.pData, &cb, sizeof(cb));
@@ -1154,8 +1193,7 @@ void MarniDX::DrawTriangles(const float* verts, int triCount, MarniHandle tex,
     p->context->Unmap(p->quadVB, 0);
 
     SpriteConstantBuffer cb;
-    BuildOrthoMatrix(&cb.mvp[0][0], 0.0f, (float)p->width,
-                                   (float)p->height, 0.0f);
+    BuildScreenMatrix(p, &cb.mvp[0][0]);
     D3D11_MAPPED_SUBRESOURCE cm = {};
     if (SUCCEEDED(p->context->Map(p->spriteCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &cm))) {
         memcpy(cm.pData, &cb, sizeof(cb));
@@ -1211,8 +1249,7 @@ void MarniDX::DrawTriangles3D(const float* verts, int triCount, MarniHandle tex,
     p->context->Unmap(p->model3DVB, 0);
 
     SpriteConstantBuffer cb;
-    BuildOrthoMatrix(&cb.mvp[0][0], 0.0f, (float)p->width,
-                                   (float)p->height, 0.0f);
+    BuildScreenMatrix(p, &cb.mvp[0][0]);
     D3D11_MAPPED_SUBRESOURCE cm = {};
     if (SUCCEEDED(p->context->Map(p->spriteCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &cm))) {
         memcpy(cm.pData, &cb, sizeof(cb));
@@ -1279,8 +1316,7 @@ void MarniDX::DrawTrianglesPersp(const float* verts, int triCount, MarniHandle t
     p->context->Unmap(p->model3DVB, 0);
 
     SpriteConstantBuffer cb;
-    BuildOrthoMatrix(&cb.mvp[0][0], 0.0f, (float)p->width,
-                                   (float)p->height, 0.0f);
+    BuildScreenMatrix(p, &cb.mvp[0][0]);
     D3D11_MAPPED_SUBRESOURCE cm = {};
     if (SUCCEEDED(p->context->Map(p->spriteCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &cm))) {
         memcpy(cm.pData, &cb, sizeof(cb));
@@ -1439,6 +1475,61 @@ void MarniDX::DrawLine(float x0, float y0, float x1, float y1,
 // ============================================================================
 // Readback
 // ============================================================================
+// ============================================================================
+// Viewport transform + scissor (PORT-ONLY)
+// ============================================================================
+void MarniDX::SetViewportTransform(float originX, float originY,
+                                   float scaleX, float scaleY)
+{
+    Impl* p = m_pImpl;
+    if (!p) return;
+    p->vpOX = originX;
+    p->vpOY = originY;
+    p->vpSX = (scaleX != 0.0f) ? scaleX : 1.0f;
+    p->vpSY = (scaleY != 0.0f) ? scaleY : 1.0f;
+}
+
+void MarniDX::GetViewportTransform(float* outOriginX, float* outOriginY,
+                                   float* outScaleX, float* outScaleY) const
+{
+    const Impl* p = m_pImpl;
+    if (outOriginX) *outOriginX = p ? p->vpOX : 0.0f;
+    if (outOriginY) *outOriginY = p ? p->vpOY : 0.0f;
+    if (outScaleX)  *outScaleX  = p ? p->vpSX : 1.0f;
+    if (outScaleY)  *outScaleY  = p ? p->vpSY : 1.0f;
+}
+
+void MarniDX::SetScissor(int x, int y, int w, int h)
+{
+    Impl* p = m_pImpl;
+    if (!p) return;
+
+    if (w <= 0 || h <= 0) {                 // the whole backbuffer
+        p->scX = p->scY = p->scW = p->scH = 0;
+        if (p->context && p->ready) {
+            D3D11_RECT full = { 0, 0, (LONG)p->width, (LONG)p->height };
+            p->context->RSSetScissorRects(1, &full);
+        }
+        return;
+    }
+
+    // Clamp: D3D11 rejects a scissor rect that leaves the render target, and
+    // a docked panel dragged past the window edge produces exactly that.
+    int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int)p->width)  x1 = (int)p->width;
+    if (y1 > (int)p->height) y1 = (int)p->height;
+    if (x1 < x0) x1 = x0;
+    if (y1 < y0) y1 = y0;
+
+    p->scX = x0; p->scY = y0; p->scW = x1 - x0; p->scH = y1 - y0;
+    if (p->context && p->ready) {
+        D3D11_RECT r = { (LONG)x0, (LONG)y0, (LONG)x1, (LONG)y1 };
+        p->context->RSSetScissorRects(1, &r);
+    }
+}
+
 BOOL MarniDX::CaptureBackbufferToRGBA(void** outPixels, DWORD* outW, DWORD* outH)
 {
     Impl* p = m_pImpl;

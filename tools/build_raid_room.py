@@ -81,7 +81,11 @@ def mask_block():
     return u32(0)
 
 def switch_zones():
-    """One camera needs TWO records.
+    """The shell's own table, used only between room_set and RaidLevel_Apply -
+    the level's cameras replace it in memory a moment later. It still has to be
+    correct, because check_camera_switch walks it during room_set.
+
+    One camera needs TWO records.
 
     rec0 is camera 0's GROUP HEADER, and its quad is live data: PlayerAnimations
     tests the player against it every frame and bit 0 of zoneFlags gates her
@@ -177,6 +181,13 @@ def effect_index():
     frame data, so eight of them is 'no effects'."""
     return b'\xFF' * 8 + b'\x00' * 8
 
+# The shell carries a camera SLOT per RAID_MAX_CAM, because RaidLevel_Apply
+# fills them from the level file at load and shrinks cameras_count to however
+# many the level actually uses. Baking one slot would cap every level at one
+# camera; baking eight costs 288 bytes.
+N_CAM = 8
+
+
 def camera(mask_off):
     b  = u32(mask_off)          # relocated; the 4-byte zero block above
     b += u32(0)                 # tim mask - relocated but never dereferenced
@@ -229,7 +240,7 @@ def build():
     add('tail',     b'\x00' * 64)      # object_models / item_models / icons etc.
     add('vab',      b'\x00' * 16)      # the bump allocator's first bytes
 
-    cursor = HEADER + CAM
+    cursor = HEADER + CAM * N_CAM
     off = {}
     for blk in blocks:
         blk[2] = cursor
@@ -244,7 +255,7 @@ def build():
     efspr = off['efspr'] + 28
 
     h  = u8(0)                       # sprites_count - overwritten at load
-    h += u8(1)                       # cameras_count
+    h += u8(N_CAM)                   # cameras_count - trimmed at load by the level
     h += u8(0)                       # omodel_slot_count
     h += u8(0)                       # item_count
     h += u16(0)                      # pad
@@ -277,7 +288,7 @@ def build():
     h += b''.join(u32(p) for p in ptrs)
     assert len(h) == HEADER, hex(len(h))
 
-    out = h + camera(off['mask'])
+    out = h + camera(off['mask']) * N_CAM
     for _, data, _ in blocks:
         out += data
 
@@ -305,7 +316,7 @@ def main():
                 f.write(blob)
         n += 1
         print("wrote", d)
-    print("rdt %d bytes, %d trees" % (len(blob), n))
+    print("rdt %d bytes, %d camera slots, %d trees" % (len(blob), N_CAM, n))
     print("spawn", SPAWN, "camera", CAM_FROM, "->", CAM_TO, "fov", CAM_FOV)
 
 if __name__ == "__main__":

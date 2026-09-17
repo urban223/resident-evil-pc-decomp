@@ -1136,6 +1136,8 @@ extern int  g_iCollisionDebugY;   // world Y of the overlay plane (0 = room floo
 void CollisionDebug_Draw(void);
 void RaidArena_Draw(void);                        // RaidArena.cpp - the RAID mode's 3D room
 void WeaponSlide_Update(void);                    // WeaponSlide.cpp - the Beretta's slide
+void RaidItems_Update(void);                      // RaidItems.cpp - the arena's pickups
+extern int g_raidReloadRequest;                   // RaidLevel.cpp - F7, re-read the arena file
 void display_image_drop(void);                    // Rendering.cpp - clear the background image with no replacement
 
 // --- Room boundary collision (RoomCollision.cpp) ---

@@ -14,6 +14,7 @@
 // Called by: game_start (0x00480710)
 // ============================================================================
 #include "../Globals.h"
+#include "editor/Editor.h"   // CUSTOM: the in-game level editor
 #include "../marni/MarniInput.h"
 #include <cstdio>
 #include <cstdlib>
@@ -181,7 +182,8 @@ LAB_00480d7c:
                 // fires the script's event branch (fade-out, cutscene) the
                 // moment a bit is toggled, blacking the background.
                 // g_debugMenuOpen stays 0 while debug features are disabled.
-                if (g_debugMenuOpen == 0) {
+                // CUSTOM: the editor freezes the simulation the same way.
+                if (g_debugMenuOpen == 0 && !Editor_IsOpen()) {
                     run_command_functions((unsigned short*)g_RoomScdOpcodes);
                     room_events_check();
                     room_state_reset();
@@ -280,10 +282,22 @@ LAB_00480d7c:
                 }
 
 LAB_00480e89:
+                // CUSTOM: one frame of the editor, before anything is drawn.
+                // It moves the camera by writing the room's own camera record,
+                // so it has to run before the scene render further down and
+                // after the mouse has been sampled for this frame.
+                Editor_Tick();
+
                 // 0x00480e89-0x00480ebd: Update entities and player
                 // Debug menu open: pause entity/enemy updates while it is up.
                 // g_debugMenuOpen stays 0 while debug features are disabled.
-                if (g_debugMenuOpen == 0) {
+                //
+                // CUSTOM: the editor pauses them too, but NOT the scene render
+                // below - the whole point is to look at the room while nothing
+                // in it is moving. That is the one way its freeze differs from
+                // the debug menu's, which hides the scene so the menu box is
+                // the only thing on screen.
+                if (g_debugMenuOpen == 0 && !Editor_IsOpen()) {
                     update_entities();
                 }
 

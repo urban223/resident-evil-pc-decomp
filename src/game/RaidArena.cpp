@@ -37,6 +37,8 @@
 #include "../Globals.h"
 #include "Types.h"
 #include "Entities.h"
+#include "RaidLevel.h"       // g_raidLevel, and the pickups' state
+#include "RaidItemModels.h"  // the pickups' real models
 #include "SpriteRenderer.h"   // g_SubpixelOffsetX/Y - the screen centre
 #include "TmdRenderer.h"      // TmdViewZToNdc - the model pass's depth mapping
 #include "../marni/MarniDX.h"
@@ -44,24 +46,13 @@
 #include <cmath>
 
 // ---------------------------------------------------------------------------
-// The room, in world units, and its palette.
-//
-// These numbers are the SAME box tools/build_raid_room.py writes the collision
-// for. They are duplicated rather than read out of the RDT on purpose: the RDT
-// stores where the WALLS are (solid slabs outside the play area, which is what
-// a push-out test wants), not where the SURFACES are, and reconstructing one
-// from the other would be guessing. If the arena changes shape, both change.
+// The room is DATA now (RaidLevel.h, read from Data\raid1.lvl). What is left
+// in this file is how a level is DRAWN: the projection, the near clip, the fog
+// and the shading. Nothing here knows the shape of a room, which is what makes
+// an editor possible.
 // ---------------------------------------------------------------------------
-#define RA_X0   2000.0f
-#define RA_X1  10000.0f
-#define RA_Z0   2000.0f
-#define RA_Z1  10000.0f
-#define RA_CEIL (-3600.0f)      // RE1 is -Y up
-#define RA_FLOOR    0.0f
-
-#define RA_CELLS    8           // floor grid, per axis
-#define RA_WALL_H   4           // wall rows
-#define RA_NEAR    96.0f        // near plane for this pass, world units
+#define RA_CELL    1000.0f      // face subdivision, world units
+#define RA_NEAR      96.0f      // near plane for this pass, world units
 
 // Fog: the far side of the room sinks toward the clear colour instead of
 // ending at a hard edge, which is what keeps a box from reading as a box.
@@ -232,6 +223,26 @@ static void RaPoly(const RaView& V, const RaVert* in, int n)
 // a fixed tint per surface, a lift toward the lamp end of the room, and fog
 // with distance from the camera.
 // ---------------------------------------------------------------------------
+// The level's footprint, refreshed whenever it is (re)loaded. The light pool
+// below needs a centre, and the only honest one is the level's own.
+static float s_bx0 = 0.0f, s_bx1 = 1.0f, s_bz0 = 0.0f, s_bz1 = 1.0f;
+
+static void RaBounds(void)
+{
+    if (g_raidLevel.nbox <= 0) return;
+    float x0 = 32767.0f, x1 = -32767.0f, z0 = 32767.0f, z1 = -32767.0f;
+    for (int i = 0; i < g_raidLevel.nbox; i++) {
+        const RaidBox* B = &g_raidLevel.box[i];
+        if (B->x0 < x0) x0 = (float)B->x0;
+        if (B->x1 > x1) x1 = (float)B->x1;
+        if (B->z0 < z0) z0 = (float)B->z0;
+        if (B->z1 > z1) z1 = (float)B->z1;
+    }
+    if (x1 <= x0) x1 = x0 + 1.0f;
+    if (z1 <= z0) z1 = z0 + 1.0f;
+    s_bx0 = x0; s_bx1 = x1; s_bz0 = z0; s_bz1 = z1;
+}
+
 static void RaShade(const RaView& V, RaVert& p, float br, float tr, float tg, float tb)
 {
     float dx = p.x - V.fromX, dy = p.y - V.fromY, dz = p.z - V.fromZ;
@@ -244,12 +255,19 @@ static void RaShade(const RaView& V, RaVert& p, float br, float tr, float tg, fl
 
     // A soft pool of light toward the middle of the floor, so the box has a
     // centre to stand in rather than being evenly grey.
-    float mx = (p.x - (RA_X0 + RA_X1) * 0.5f) / ((RA_X1 - RA_X0) * 0.5f);
-    float mz = (p.z - (RA_Z0 + RA_Z1) * 0.5f) / ((RA_Z1 - RA_Z0) * 0.5f);
+    float mx = (p.x - (s_bx0 + s_bx1) * 0.5f) / ((s_bx1 - s_bx0) * 0.5f);
+    float mz = (p.z - (s_bz0 + s_bz1) * 0.5f) / ((s_bz1 - s_bz0) * 0.5f);
     float pool = 1.0f - 0.38f * (mx*mx + mz*mz);
     if (pool < 0.42f) pool = 0.42f;
 
-    float k = br * pool * (1.0f - fog);
+    // Height. The light in these rooms is on the floor, so a surface loses it
+    // going up - which is what used to be a hand-written per-row term on the
+    // walls and is now true of anything, at any height, for free.
+    float up = 1.0f + p.y * (0.35f / 4000.0f);     // p.y is negative upwards
+    if (up < 0.45f) up = 0.45f;
+    if (up > 1.0f)  up = 1.0f;
+
+    float k = br * pool * up * (1.0f - fog);
     p.cr = tr * k;
     p.cg = tg * k;
     p.cb = tb * k;
@@ -269,6 +287,131 @@ static void RaQuad(const RaView& V,
     RaPoly(V, q, 4);
 }
 
+// Does this axis-aligned face point at the eye? `axis` is 0/1/2 for X/Y/Z and
+// `sign` is which way its outward normal runs along it.
+static int RaFacing(const RaView& V, float sign, int axis, float cx, float cy, float cz)
+{
+    const float d[3] = { cx - V.fromX, cy - V.fromY, cz - V.fromZ };
+    return (d[axis] * sign) < 0.0f;
+}
+
+// One flat face, cut into cells. `u` and `v` are the face's two full edges, so
+// a caller states a face as a corner and two vectors and never has to think
+// about winding.
+static void RaGrid(const RaView& V,
+                   float ax, float ay, float az,
+                   float ux, float uy, float uz,
+                   float vx, float vy, float vz,
+                   float br, float tr, float tg, float tb, int checker)
+{
+    const float ul = sqrtf(ux*ux + uy*uy + uz*uz);
+    const float vl = sqrtf(vx*vx + vy*vy + vz*vz);
+    int nu = (int)(ul / RA_CELL) + 1;
+    int nv = (int)(vl / RA_CELL) + 1;
+    if (nu > 12) nu = 12;
+    if (nv > 12) nv = 12;
+
+    for (int i = 0; i < nu; i++) {
+        const float a0 = (float)i / nu, a1 = (float)(i + 1) / nu;
+        for (int j = 0; j < nv; j++) {
+            const float b0 = (float)j / nv, b1 = (float)(j + 1) / nv;
+            float s = br;
+            if (checker && ((i ^ j) & 1)) s *= 0.80f;
+            RaQuad(V,
+                   ax + ux*a0 + vx*b0, ay + uy*a0 + vy*b0, az + uz*a0 + vz*b0,
+                   ax + ux*a1 + vx*b0, ay + uy*a1 + vy*b0, az + uz*a1 + vz*b0,
+                   ax + ux*a1 + vx*b1, ay + uy*a1 + vy*b1, az + uz*a1 + vz*b1,
+                   ax + ux*a0 + vx*b1, ay + uy*a0 + vy*b1, az + uz*a0 + vz*b1,
+                   s, tr, tg, tb);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pickups.
+//
+// A pickup has no model: the item models a story room uses are loaded by that
+// room's script out of its own PAK, and this room has neither. So it is drawn
+// as what it is - a marker. A small box, bobbing, over a bright patch on the
+// floor that says where it is from across the room, tinted by what kind of item
+// it is, and brighter while it is in reach so the player knows ACTION will take
+// it. Cheap, readable, and it costs the batch seven quads.
+// ---------------------------------------------------------------------------
+#define RA_ITEM_HALF     110.0f     // half the marker's width
+#define RA_ITEM_TALL     260.0f
+#define RA_ITEM_FLOAT    620.0f     // how high it hovers (Y is negative upwards)
+#define RA_ITEM_BOB       70.0f
+#define RA_ITEM_PATCH    460.0f     // half the floor patch under it
+
+static int s_itemPhase = 0;         // frames, for the bob and the pulse
+
+// The marker's colour, by what the item is. The ranges are the menu's own
+// categories (MainMenu.cpp), so a weapon on the floor is the colour the
+// inventory screen would give it.
+static void RaItemTint(unsigned char id, float* r, float* g, float* b)
+{
+    if (id >= ITEM_KNIFE && id <= ITEM_ROCKET_LAUNCHER) { *r=0.78f; *g=0.84f; *b=0.95f; return; }
+    if (ITEM_IS_CUSTOM_PISTOL(id) || id == ITEM_INGRAM || id == ITEM_MINIMI)
+                                                        { *r=0.78f; *g=0.84f; *b=0.95f; return; }
+    if (id >= ITEM_CLIP && id <= ITEM_FLAME_ROUNDS)     { *r=0.95f; *g=0.80f; *b=0.42f; return; }
+    if (id >= ITEM_FIRST_AID_SPRAY && id <= ITEM_MIX_2GREEN_RED)
+                                                        { *r=0.55f; *g=0.92f; *b=0.62f; return; }
+    if (id >= ITEM_SWORD_KEY && id <= ITEM_DESK_KEY)    { *r=0.95f; *g=0.86f; *b=0.45f; return; }
+    *r = 0.88f; *g = 0.88f; *b = 0.92f;
+}
+
+static void RaDrawItems(const RaView& V)
+{
+    s_itemPhase++;
+
+    for (int i = 0; i < g_raidLevel.nitem && i < RAID_MAX_ITEM; i++) {
+        if (RaidItems_Taken(i)) continue;
+        const RaidItem* I = &g_raidLevel.item[i];
+
+        float tr, tg, tb;
+        RaItemTint(I->type, &tr, &tg, &tb);
+
+        // A 64-frame triangle wave, so the bob and the pulse need no sine and
+        // no float state that a reload would have to reset.
+        const int   ph   = (s_itemPhase + i * 9) & 63;
+        const float wave = (ph < 32 ? (float)ph : (float)(64 - ph)) * (1.0f / 32.0f);
+
+        const int   reach = RaidItems_Reach(i);
+        const float br    = reach ? (1.05f + 0.25f * wave) : 0.80f;
+
+        // The patch on the floor is drawn either way - it is what says where a
+        // pickup is from across the room, and it carries the category colour
+        // the model itself has no reason to. The floating marker box is only
+        // the stand-in for a model that is not there.
+
+        const float cx = (float)I->x, cz = (float)I->z;
+        const float top = -RA_ITEM_FLOAT - RA_ITEM_BOB * wave;
+        const float bot = top + RA_ITEM_TALL;
+
+        // The floor patch. Flat, so it takes the shading a floor takes, and
+        // drawn first so the marker sits over it. Twelve units clear of the
+        // floor rather than one or two: the depth buffer is doing a lot of work
+        // at ten thousand units out and a coplanar patch would fight with it.
+        RaGrid(V, cx - RA_ITEM_PATCH, -12.0f, cz - RA_ITEM_PATCH,
+               RA_ITEM_PATCH * 2.0f, 0, 0,  0, 0, RA_ITEM_PATCH * 2.0f,
+               br * 0.55f, tr, tg, tb, 0);
+
+        if (RaidItemModels_Have(I->type)) continue;   // the real model takes it from here
+
+        // The marker. Six faces, no backface test: it is small, it floats, and
+        // culling it per face would flicker as it turns.
+        const float x0 = cx - RA_ITEM_HALF, x1 = cx + RA_ITEM_HALF;
+        const float z0 = cz - RA_ITEM_HALF, z1 = cz + RA_ITEM_HALF;
+        const float dx = x1 - x0, dz = z1 - z0, dy = bot - top;
+        RaGrid(V, x0, top, z0,  dx, 0, 0,  0, 0, dz,  br,         tr, tg, tb, 0);
+        RaGrid(V, x0, bot, z0,  dx, 0, 0,  0, 0, dz,  br * 0.45f, tr, tg, tb, 0);
+        RaGrid(V, x0, top, z0,  0, dy, 0,  0, 0, dz,  br * 0.72f, tr, tg, tb, 0);
+        RaGrid(V, x1, top, z0,  0, dy, 0,  0, 0, dz,  br * 0.72f, tr, tg, tb, 0);
+        RaGrid(V, x0, top, z0,  dx, 0, 0,  0, dy, 0,  br * 0.62f, tr, tg, tb, 0);
+        RaGrid(V, x0, top, z1,  dx, 0, 0,  0, dy, 0,  br * 0.62f, tr, tg, tb, 0);
+    }
+}
+
 // ===========================================================================
 // RaidArena_Draw - once per frame, from the render flush, before the models.
 // ===========================================================================
@@ -276,6 +419,19 @@ void RaidArena_Draw(void)
 {
     if (g_raidMode == 0) return;
     if (g_RdtPointer == NULL) return;
+
+    // The reload key (window_proc). Taken here rather than in the input path
+    // because here the room is certainly loaded and certainly this one, so a
+    // file that turns out to be broken leaves the level that is already up.
+    if (g_raidReloadRequest) {
+        g_raidReloadRequest = 0;
+        if (RaidLevel_Load()) {
+            RaidLevel_Apply();
+            Room_SetupCamera();     // just the matrix and the FOV, no room reload
+        }
+    }
+
+    if (!g_raidLevel.loaded) return;
 
     s_dx = Marni_DX();
     if (s_dx == NULL) return;
@@ -291,75 +447,64 @@ void RaidArena_Draw(void)
     s_triCount = 0;
     s_cursor   = 0;
 
-    // ---- floor -----------------------------------------------------------
-    // A grid rather than one quad, for two reasons: the fog and the light pool
-    // are evaluated per vertex, so a single room-sized quad would interpolate
-    // both across the whole floor and show neither; and the two tones give the
-    // eye something to read the perspective against, which is most of what
-    // sells a flat plane as a floor.
-    {
-        const float sx = (RA_X1 - RA_X0) / RA_CELLS;
-        const float sz = (RA_Z1 - RA_Z0) / RA_CELLS;
-        for (int iz = 0; iz < RA_CELLS; iz++) {
-            for (int ix = 0; ix < RA_CELLS; ix++) {
-                float x = RA_X0 + sx * ix;
-                float z = RA_Z0 + sz * iz;
-                const float br = ((ix ^ iz) & 1) ? 0.72f : 0.58f;
-                RaQuad(V,
-                       x,      RA_FLOOR, z,
-                       x + sx, RA_FLOOR, z,
-                       x + sx, RA_FLOOR, z + sz,
-                       x,      RA_FLOOR, z + sz,
-                       br, 1.00f, 0.97f, 0.88f);
-            }
+    RaBounds();
+
+    // ---- the level ---------------------------------------------------------
+    // Every box, six faces, each subdivided into cells. The subdivision is not
+    // decoration: the fog and the light pool are evaluated PER VERTEX, so a
+    // single room-sized quad would interpolate both across the whole surface
+    // and show neither.
+    //
+    // A face is skipped when its outward normal points away from the eye.
+    // That is honest backface culling rather than a guess about which side of
+    // a wall the player is on, and it matters: a room built from solid slabs
+    // has an outer surface nobody can ever see, and drawing it doubles the
+    // triangle count for nothing.
+    for (int i = 0; i < g_raidLevel.nbox; i++) {
+        const RaidBox* B = &g_raidLevel.box[i];
+        if ((B->flags & RAID_BOX_DRAW) == 0) continue;
+
+        const float x0 = (float)B->x0, x1 = (float)B->x1;
+        const float y0 = (float)B->y0, y1 = (float)B->y1;
+        const float z0 = (float)B->z0, z1 = (float)B->z1;
+        const float dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+        const int chk = (B->flags & RAID_BOX_CHECKER) != 0;
+        const float tr = (float)B->tr * (1.0f / 255.0f);
+        const float tg = (float)B->tg * (1.0f / 255.0f);
+        const float tb = (float)B->tb * (1.0f / 255.0f);
+
+        // Y is negative upwards, so y0 is the TOP of the box. The top gets the
+        // full shade, the sides less, the underside least - the difference is
+        // what stops a box reading as a flat silhouette.
+        // A plate (no thickness) is one face and is always drawn: it has no
+        // outside, and a floor seen edge-on is still a floor.
+        if (dy == 0.0f) {
+            RaGrid(V, x0, y0, z0,  dx, 0, 0,  0, 0, dz,  B->shade, tr, tg, tb, chk);
+            continue;
         }
+
+        if (RaFacing(V, -1.0f, 1, (x0+x1)*0.5f, y0, (z0+z1)*0.5f))
+            RaGrid(V, x0, y0, z0,  dx, 0, 0,  0, 0, dz,  B->shade,        tr, tg, tb, chk);
+        if (RaFacing(V,  1.0f, 1, (x0+x1)*0.5f, y1, (z0+z1)*0.5f))
+            RaGrid(V, x0, y1, z0,  dx, 0, 0,  0, 0, dz,  B->shade * 0.30f, tr, tg, tb, chk);
+        if (RaFacing(V, -1.0f, 0, x0, (y0+y1)*0.5f, (z0+z1)*0.5f))
+            RaGrid(V, x0, y0, z0,  0, dy, 0,  0, 0, dz,  B->shade * 0.62f, tr, tg, tb, 0);
+        if (RaFacing(V,  1.0f, 0, x1, (y0+y1)*0.5f, (z0+z1)*0.5f))
+            RaGrid(V, x1, y0, z0,  0, dy, 0,  0, 0, dz,  B->shade * 0.62f, tr, tg, tb, 0);
+        if (RaFacing(V, -1.0f, 2, (x0+x1)*0.5f, (y0+y1)*0.5f, z0))
+            RaGrid(V, x0, y0, z0,  dx, 0, 0,  0, dy, 0,  B->shade * 0.55f, tr, tg, tb, 0);
+        if (RaFacing(V,  1.0f, 2, (x0+x1)*0.5f, (y0+y1)*0.5f, z1))
+            RaGrid(V, x0, y0, z1,  dx, 0, 0,  0, dy, 0,  B->shade * 0.55f, tr, tg, tb, 0);
     }
 
-    // ---- walls -----------------------------------------------------------
-    // All four, every frame. The two the camera stands between fall entirely
-    // behind the near plane and cost nothing but the clip test, so there is no
-    // culling to get wrong.
-    {
-        const float rows = (float)RA_WALL_H;
-        for (int side = 0; side < 4; side++) {
-            for (int c = 0; c < RA_CELLS; c++) {
-                for (int rrow = 0; rrow < RA_WALL_H; rrow++) {
-                    float y0 = RA_FLOOR + (RA_CEIL - RA_FLOOR) * (rrow / rows);
-                    float y1 = RA_FLOOR + (RA_CEIL - RA_FLOOR) * ((rrow + 1) / rows);
-
-                    float t0 = (float)c / RA_CELLS;
-                    float t1 = (float)(c + 1) / RA_CELLS;
-                    float ax, az, bx, bz;
-                    switch (side) {
-                        case 0:   // west, x = X0
-                            ax = RA_X0; az = RA_Z0 + (RA_Z1 - RA_Z0) * t0;
-                            bx = RA_X0; bz = RA_Z0 + (RA_Z1 - RA_Z0) * t1;
-                            break;
-                        case 1:   // east
-                            ax = RA_X1; az = RA_Z0 + (RA_Z1 - RA_Z0) * t0;
-                            bx = RA_X1; bz = RA_Z0 + (RA_Z1 - RA_Z0) * t1;
-                            break;
-                        case 2:   // north, z = Z0
-                            ax = RA_X0 + (RA_X1 - RA_X0) * t0; az = RA_Z0;
-                            bx = RA_X0 + (RA_X1 - RA_X0) * t1; bz = RA_Z0;
-                            break;
-                        default:  // south
-                            ax = RA_X0 + (RA_X1 - RA_X0) * t0; az = RA_Z1;
-                            bx = RA_X0 + (RA_X1 - RA_X0) * t1; bz = RA_Z1;
-                            break;
-                    }
-
-                    // Darker toward the ceiling: the light in this room is on
-                    // the floor, so the walls should lose it going up.
-                    float up = 1.0f - 0.55f * ((rrow + 0.5f) / rows);
-                    RaQuad(V,
-                           ax, y0, az,  bx, y0, bz,
-                           bx, y1, bz,  ax, y1, az,
-                           0.46f * up, 0.82f, 0.86f, 1.00f);
-                }
-            }
-        }
-    }
+    RaDrawItems(V);
 
     RaFlush();
+
+    // The pickups' real models. AFTER the flush, because these do not go
+    // through this file's own triangle batch at all - they are TMD objects,
+    // queued into the renderer's model pass the same way a character is, and
+    // that pass runs later in the frame.
+    RaidItemModels_Sync();
+    RaidItemModels_Draw();
 }

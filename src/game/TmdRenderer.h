@@ -64,6 +64,12 @@
 // ObjectCleanupCallback sweeps 0..249 - the same 250 the original uses, and no
 // longer a number anything else has to dodge. (g_tmdObjectBuffer is sized for
 // 290 slots; the extra 40 are slack, not a reservation.)
+// Forward declarations, so this header stays include-free the way it has been:
+// the three types below are only ever used through pointers here.
+struct MATRIX;              // game/Types.h
+struct VECTOR;              // game/Types.h
+class  CMarniDirect3DTMD;   // marni/Marni3DObject.h
+
 #define TMD_SLOT_STRIDE         0x1594
 #define TMD_CLEANUP_SLOT_COUNT  250     // main-buffer slots ObjectCleanupCallback destroys
 #define TMD_DOOR_SLOT_COUNT     12      // one per door order entry
@@ -72,6 +78,33 @@
 extern unsigned char g_doorTmdSlotBuffer[TMD_DOOR_SLOT_COUNT * TMD_SLOT_STRIDE]; // DoorSystem.cpp, orig 0x009104c8
 extern unsigned char g_itemTmdSlotBuffer[TMD_ITEM_SLOT_COUNT * TMD_SLOT_STRIDE]; // MainMenu.cpp,   orig 0x008f8d88
 extern unsigned char g_itemSharedTmdSlot[TMD_SLOT_STRIDE];                       // MainMenu.cpp,   orig 0x008f8908
+
+// CUSTOM: the RAID arena's pickup models. One slot per DISTINCT item type in
+// the level, not per pickup - four clips on the floor are one parsed model
+// drawn four times.
+#define TMD_RAID_ITEM_SLOT_COUNT 8
+extern unsigned char g_raidItemTmdSlots[TMD_RAID_ITEM_SLOT_COUNT * TMD_SLOT_STRIDE]; // RaidItemModels.cpp
+
+// CUSTOM: draw a slot you own yourself, at a world transform of your choosing.
+//
+// This is the tail of FUN_00483080 - the part that turns a GTE matrix into the
+// 16 floats CMarniDirect3DTMD::Transform wants - without its head, which looks
+// the slot up through an ANIMATION slot and the entity allocator. Code that
+// parsed a model into its own storage has no animation slot to be found by, so
+// it needs this half on its own.
+//
+// It lives here rather than in the caller because the view composition it ends
+// with (FUN_00486190) is static to this file, and because a second copy of that
+// matrix order is exactly the kind of thing that silently transposes.
+//
+//   slot     a CMarniDirect3DTMD that PSXObject_Store + Create have filled
+//   world    the model's world transform: GTE rotation (4096 = 1.0, so a
+//            smaller value scales the model down) and an integer translation
+//   lightAt  where to light it from, or NULL to leave the light state alone
+//   depthShift  the OT depth shift the entity path uses; 4 is what render_entity
+//            passes for a character
+void TmdDrawSlotAt(CMarniDirect3DTMD* slot, const MATRIX* world,
+                   const VECTOR* lightAt, int depthShift);
 
 // Queue a TMD per-object data entry (0x84-byte block inside a
 // CMarniDirect3DTMD slot: m_objectData or m_objectDataCopy) for rendering

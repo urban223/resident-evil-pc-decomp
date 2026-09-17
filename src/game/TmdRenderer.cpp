@@ -203,6 +203,7 @@ void TmdQueueObject(void* objData, int depth)
         { g_itemTmdSlotBuffer,  sizeof(g_itemTmdSlotBuffer)  },  // item viewer
         { g_itemSharedTmdSlot,  sizeof(g_itemSharedTmdSlot)  },  // item viewer, shared transparent
         { g_tmdObjectBuffer,    sizeof(g_tmdObjectBuffer)    },  // entities, room objects
+        { g_raidItemTmdSlots,   sizeof(g_raidItemTmdSlots)   },  // CUSTOM: RAID pickups
     };
 
     BYTE* slotBase = NULL;
@@ -1154,6 +1155,65 @@ void FUN_00483080(void* spriteData, int depthShift)
     // left every object with a garbage depth and no stored transform).
     CMarniDirect3DTMD* tmd = (CMarniDirect3DTMD*)(void*)tmdObj;
     tmd->Transform(g_pMarniDirect3D, (void*)(size_t)depth, transformMatrix, 0);
+}
+
+// ---------------------------------------------------------------------------
+// TmdDrawSlotAt - CUSTOM. See TmdRenderer.h for why this exists.
+//
+// The same matrix order as FUN_00483080 above, deliberately written out again
+// rather than factored out of it: that function's version is load-bearing
+// faithfulness to 0x004830ef, and a shared helper would invite someone to
+// "tidy" the transpose out of both at once.
+// ---------------------------------------------------------------------------
+void TmdDrawSlotAt(CMarniDirect3DTMD* slot, const MATRIX* world,
+                   const VECTOR* lightAt, int depthShift)
+{
+    if (slot == NULL || world == NULL || g_pMarniDirect3D == NULL) return;
+
+    // Camera x model, exactly as render_entity composes a joint.
+    MATRIX localMatrix;
+    ApplyLVAndMul0Matrix(&g_RoomCameraData, (void*)world, &localMatrix);
+
+    // Behind the eye: nothing to draw, and a negative depth would sort wrong.
+    if (localMatrix.t[2] < 0) return;
+
+    if (lightAt != NULL) {
+        update_entity_lighting((VECTOR*)lightAt);
+        MATRIX* src = &g_lightMatrix;
+        MATRIX* dst = &g_matrixScratch;
+        for (int i = 8; i != 0; i--) {
+            *(unsigned int*)dst->m[0] = *(unsigned int*)src->m[0];
+            src = (MATRIX*)(src->m[0] + 2);
+            dst = (MATRIX*)(dst->m[0] + 2);
+        }
+        SetLightMatrix(&g_matrixScratch);
+    }
+
+    SetRotAndTransMatrix(&localMatrix);
+
+    const int depthField = g_gteRotTransMatrix.t[2];
+    if (depthField < 0) return;
+    const int depth = depthField >> (depthShift & 0x1F);
+
+    float m[16];
+    const float scale = 0.00024414063f;   // 1/4096
+    m[0]  = (float)g_gteRotTransMatrix.m[0][0] * scale;
+    m[4]  = (float)g_gteRotTransMatrix.m[0][1] * scale;
+    m[8]  = (float)g_gteRotTransMatrix.m[0][2] * scale;
+    m[1]  = (float)g_gteRotTransMatrix.m[1][0] * scale;
+    m[5]  = (float)g_gteRotTransMatrix.m[1][1] * scale;
+    m[9]  = (float)g_gteRotTransMatrix.m[1][2] * scale;
+    m[2]  = (float)g_gteRotTransMatrix.m[2][0] * scale;
+    m[6]  = (float)g_gteRotTransMatrix.m[2][1] * scale;
+    m[10] = (float)g_gteRotTransMatrix.m[2][2] * scale;
+    m[12] = (float)g_gteRotTransMatrix.t[0];
+    m[13] = (float)g_gteRotTransMatrix.t[1];
+    m[14] = (float)depthField;
+    m[3]  = 0.0f; m[7] = 0.0f; m[11] = 0.0f; m[15] = 1.0f;
+
+    FUN_00486190(m);
+
+    slot->Transform(g_pMarniDirect3D, (void*)(size_t)depth, m, 0);
 }
 
 // ============================================================================

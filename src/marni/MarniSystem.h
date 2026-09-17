@@ -172,6 +172,41 @@ void  MarniDrawTrianglesPersp(const float* verts, int triCount, MarniHandle tex,
 // logical video resolution while the swapchain keeps the window size).
 void  MarniGetRenderScale(float* outScaleX, float* outScaleY);
 
+// PORT-ONLY: point the whole renderer at a sub-rectangle of the window.
+//
+// The editor's viewport is not a second renderer: it is this one, drawn
+// through an offset and a scale that every screen-space path picks up from a
+// single matrix inside the backend. MarniSetViewport takes the rectangle in
+// real backbuffer pixels plus the game-space size that should fill it;
+// MarniResetViewport puts the game back in charge of the whole window.
+//
+// The scissor travels with it, because without one the room paints over the
+// panels around it.
+//
+// `fit` decides what happens when the rectangle is not the game's 4:3:
+//
+//   MARNI_FIT_STRETCH  fill it and distort. Never what you want; here because
+//                      naming the other two needs something to contrast with.
+//   MARNI_FIT_CONTAIN  the whole game frame, letterboxed. What Play In Editor
+//                      uses: the HUD is part of the frame and cropping it is
+//                      not showing the player what they will see.
+//   MARNI_FIT_COVER    fill the rectangle, undistorted, losing whatever falls
+//                      outside it. What the editor camera uses: you are flying
+//                      the camera yourself, so "off the top of the frame" is
+//                      a thing you fix by looking elsewhere, and bars around a
+//                      viewport you are working in are just lost screen.
+#define MARNI_FIT_STRETCH  0
+#define MARNI_FIT_CONTAIN  1
+#define MARNI_FIT_COVER    2
+
+void  MarniSetViewport(int x, int y, int w, int h, int fit);
+void  MarniResetViewport(void);
+
+// What the backend is currently drawing through, for code that has to undo the
+// mapping - turning a cursor position back into a game-space coordinate.
+void  MarniGetViewport(float* outOriginX, float* outOriginY,
+                       float* outScaleX, float* outScaleY);
+
 // Create a texture from raw host pixels; returns an opaque MarniHandle.
 // bpp may be 4, 8, 16, 24, or 32. On success the handle is written to
 // *outTex (if non-NULL) and the function returns TRUE, otherwise FALSE.

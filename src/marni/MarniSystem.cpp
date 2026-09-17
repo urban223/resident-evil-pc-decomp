@@ -694,6 +694,71 @@ void MarniGetRenderScale(float* outScaleX, float* outScaleY)
     if (outScaleY) *outScaleY = (float)bh / (float)lh;
 }
 
+// ============================================================================
+// MarniSetViewport / MarniResetViewport  (PORT-ONLY)
+//
+// Callers have already multiplied their game-space coordinates by
+// MarniGetRenderScale (backbuffer / logical), so what reaches the backend
+// spans the whole backbuffer. Squeezing that into a rectangle is therefore a
+// second scale of (rect / backbuffer) and a translation to the rectangle's
+// corner - and because the first scale is exactly backbuffer/logical, the two
+// compose to rect/logical: the logical frame lands on the rectangle, whatever
+// the window is doing.
+// ============================================================================
+void MarniSetViewport(int x, int y, int w, int h, int fit)
+{
+    CMarniDirect3D* pD3D = (CMarniDirect3D*)g_pMarniDirect3D;
+    if (!pD3D || !pD3D->m_pDX) return;
+    if (w <= 0 || h <= 0) { MarniResetViewport(); return; }
+
+    DWORD bw = 0, bh = 0;
+    pD3D->m_pDX->GetBackBufferSize(&bw, &bh);
+    if (bw < 1) bw = 1;
+    if (bh < 1) bh = 1;
+
+    float sx = (float)w / (float)bw;
+    float sy = (float)h / (float)bh;
+    float ox = (float)x;
+    float oy = (float)y;
+
+    if (fit != MARNI_FIT_STRETCH) {
+        const float k = (fit == MARNI_FIT_COVER)
+                      ? ((sx > sy) ? sx : sy)
+                      : ((sx < sy) ? sx : sy);
+        // Centre what is left over - the letterbox bars of CONTAIN, or the
+        // parts that fall outside the rectangle under COVER.
+        ox += ((float)w - (float)bw * k) * 0.5f;
+        oy += ((float)h - (float)bh * k) * 0.5f;
+        sx = sy = k;
+    }
+
+    pD3D->m_pDX->SetViewportTransform(ox, oy, sx, sy);
+    pD3D->m_pDX->SetScissor(x, y, w, h);
+}
+
+void MarniResetViewport(void)
+{
+    CMarniDirect3D* pD3D = (CMarniDirect3D*)g_pMarniDirect3D;
+    if (!pD3D || !pD3D->m_pDX) return;
+    pD3D->m_pDX->SetViewportTransform(0.0f, 0.0f, 1.0f, 1.0f);
+    pD3D->m_pDX->SetScissor(0, 0, 0, 0);
+}
+
+void MarniGetViewport(float* outOriginX, float* outOriginY,
+                      float* outScaleX, float* outScaleY)
+{
+    CMarniDirect3D* pD3D = (CMarniDirect3D*)g_pMarniDirect3D;
+    if (!pD3D || !pD3D->m_pDX) {
+        if (outOriginX) *outOriginX = 0.0f;
+        if (outOriginY) *outOriginY = 0.0f;
+        if (outScaleX)  *outScaleX  = 1.0f;
+        if (outScaleY)  *outScaleY  = 1.0f;
+        return;
+    }
+    pD3D->m_pDX->GetViewportTransform(outOriginX, outOriginY,
+                                      outScaleX, outScaleY);
+}
+
 BOOL MarniCreateTexture(int width, int height, int bpp, const void* pixelData,
                         MarniHandle* outTex)
 {

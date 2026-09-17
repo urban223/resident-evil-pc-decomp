@@ -49,7 +49,29 @@ set(RE1_SOURCES
     src/game/ComputerLab.cpp
     src/game/DeathScreen.cpp
     src/game/DebugMenu.cpp
+    src/game/editor/EditorActions.cpp
+    src/game/editor/EditorContent.cpp
+    src/game/editor/ui/EditorUICore.cpp
+    src/game/editor/ui/EditorUIDraw.cpp
+    src/game/editor/ui/EditorUIWidgets.cpp
+    src/game/editor/panels/EditorShell.cpp
+    src/game/editor/panels/PanelBars.cpp
+    src/game/editor/panels/PanelOutliner.cpp
+    src/game/editor/panels/PanelDetails.cpp
+    src/game/editor/panels/PanelPlace.cpp
+    src/game/editor/panels/PanelViewport.cpp
+    src/game/editor/EditorCamera.cpp
+    src/game/editor/EditorGizmo.cpp
+    src/game/editor/EditorDraw.cpp
+    src/game/editor/EditorInput.cpp
+    src/game/editor/EditorMode.cpp
+    src/game/editor/EditorSave.cpp
+    src/game/editor/EditorSelect.cpp
     src/game/RaidArena.cpp
+    src/game/RaidEnemies.cpp
+    src/game/RaidItemModels.cpp
+    src/game/RaidItems.cpp
+    src/game/RaidLevel.cpp
     src/game/WeaponSlide.cpp
     src/game/DebugSaveLoad.cpp
     src/game/DebugScreens.cpp
