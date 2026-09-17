@@ -130,11 +130,11 @@
     <ClCompile Include="src\game\DebugScreens.cpp" />
     <ClCompile Include="src\game\DebugMenu.cpp" />
     <ClCompile Include="src\game\editor\EditorActions.cpp" />
+    <ClCompile Include="src\game\editor\EditorShell.cpp" />
     <ClCompile Include="src\game\editor\EditorContent.cpp" />
     <ClCompile Include="src\game\editor\ui\EditorUICore.cpp" />
     <ClCompile Include="src\game\editor\ui\EditorUIDraw.cpp" />
     <ClCompile Include="src\game\editor\ui\EditorUIWidgets.cpp" />
-    <ClCompile Include="src\game\editor\panels\EditorShell.cpp" />
     <ClCompile Include="src\game\editor\panels\PanelBars.cpp" />
     <ClCompile Include="src\game\editor\panels\PanelOutliner.cpp" />
     <ClCompile Include="src\game\editor\panels\PanelDetails.cpp" />

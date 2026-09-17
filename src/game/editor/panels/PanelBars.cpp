@@ -108,107 +108,131 @@ static int toolbar_button(EdRect* row, float w, const char* label, int icon,
     return hit;
 }
 
-void EdPanel_Toolbar(EdRect r)
+// The groups, left to right. Each cuts what it uses off the front of `row`
+// and leaves the rest for the next one.
+static void toolbar_file(EdRect* row)
 {
-    EditorShell* S = &g_edShell;
-    EdUI_Fill(r, EDC_TOOLBAR);
-    EdUI_Fill(EdR(r.x, r.y + r.h - 1.0f, r.w, 1.0f), EDC_BORDER);
-
-    EdRect row = r;
-    EdR_Cut(&row, EDM_GAP, ED_SIDE_LEFT);
-
-    if (toolbar_button(&row, 86.0f, "Save", EDUI_ICON_SAVE, 0,
+    if (toolbar_button(row, 86.0f, "Save", EDUI_ICON_SAVE, 0,
                        "Write the level back to raid1.lvl  (Ctrl+S)"))
         EdAct_Save();
-    if (toolbar_button(&row, 38.0f, NULL, EDUI_ICON_UNDO, ED_BTN_ICON_ONLY,
+    if (toolbar_button(row, 38.0f, NULL, EDUI_ICON_UNDO, ED_BTN_ICON_ONLY,
                        "Reload the level from disk  (F7)"))
         EdAct_Reload();
+}
 
-    toolbar_sep(&row);
-
+static void toolbar_play(EdRect* row)
+{
     const int playing = EdAct_Playing();
     if (!playing) {
-        if (toolbar_button(&row, 92.0f, "Play", EDUI_ICON_PLAY, ED_BTN_ACCENT,
+        if (toolbar_button(row, 92.0f, "Play", EDUI_ICON_PLAY, ED_BTN_ACCENT,
                            "Run the level in this viewport  (F5)"))
             EdAct_Play();
     } else {
-        if (toolbar_button(&row, 92.0f, "Stop", EDUI_ICON_STOP, ED_BTN_ACCENT,
+        if (toolbar_button(row, 92.0f, "Stop", EDUI_ICON_STOP, ED_BTN_ACCENT,
                            "Stop and go back to editing  (Esc)"))
             EdAct_Stop();
     }
+}
 
-    toolbar_sep(&row);
-
-    if (toolbar_button(&row, 38.0f, NULL, EDUI_ICON_MOVE,
+static void toolbar_gizmo(EdRect* row)
+{
+    if (toolbar_button(row, 38.0f, NULL, EDUI_ICON_MOVE,
                        ED_BTN_ICON_ONLY | ED_BTN_IF_ON(g_edGizmoMode == ED_GIZMO_MOVE),
                        "Move  (1)"))
         g_edGizmoMode = ED_GIZMO_MOVE;
-    if (toolbar_button(&row, 38.0f, NULL, EDUI_ICON_ROTATE,
+    if (toolbar_button(row, 38.0f, NULL, EDUI_ICON_ROTATE,
                        ED_BTN_ICON_ONLY | ED_BTN_IF_ON(g_edGizmoMode == ED_GIZMO_ROTATE),
                        "Rotate  (2)"))
         g_edGizmoMode = ED_GIZMO_ROTATE;
+}
 
-    toolbar_sep(&row);
-
-    // Snapping. The value is the step, and 0 is off, so one control says both
-    // whether it snaps and by how much.
+// Snapping. The value is the step, and 0 is off, so one control says both
+// whether it snaps and by how much.
+static void toolbar_snap(EdRect* row)
+{
+    EditorShell* S = &g_edShell;
     EdUI_TextIn(EDUI_FONT_SMALL, "SNAP",
-                EdR_Cut(&row, 38.0f, ED_SIDE_LEFT), ED_ALIGN_CENTRE,
+                EdR_Cut(row, 38.0f, ED_SIDE_LEFT), ED_ALIGN_CENTRE,
                 EDC_TEXT_FAINT);
     {
-        const EdRect box = EdR_Inset(EdR_Cut(&row, 76.0f, ED_SIDE_LEFT), 10.0f);
+        const EdRect box = EdR_Inset(EdR_Cut(row, 76.0f, ED_SIDE_LEFT), 10.0f);
         EdUI_DragInt(EdUI_Id("tool.snapmove"), box, &S->snapMove, 5.0f,
                      0, 2000, "");
         if (EdUI_IsHot(EdUI_Id("tool.snapmove")))
             EdUI_Tooltip("Grid step for moving, in world units. 0 is off.");
     }
-    EdR_Cut(&row, 4.0f, ED_SIDE_LEFT);
+    EdR_Cut(row, 4.0f, ED_SIDE_LEFT);
     EdUI_TextIn(EDUI_FONT_SMALL, "ANGLE",
-                EdR_Cut(&row, 42.0f, ED_SIDE_LEFT), ED_ALIGN_CENTRE,
+                EdR_Cut(row, 42.0f, ED_SIDE_LEFT), ED_ALIGN_CENTRE,
                 EDC_TEXT_FAINT);
     {
-        const EdRect box = EdR_Inset(EdR_Cut(&row, 92.0f, ED_SIDE_LEFT), 10.0f);
+        const EdRect box = EdR_Inset(EdR_Cut(row, 92.0f, ED_SIDE_LEFT), 10.0f);
         int deg = (S->snapAngle * 360) / 4096;
         if (EdUI_DragInt(EdUI_Id("tool.snapangle"), box, &deg, 0.5f, 0, 180, " deg"))
             S->snapAngle = (deg * 4096) / 360;
         if (EdUI_IsHot(EdUI_Id("tool.snapangle")))
             EdUI_Tooltip("Rotation step in degrees. 0 is off.");
     }
+}
 
-    toolbar_sep(&row);
-
-    if (toolbar_button(&row, 38.0f, NULL, EDUI_ICON_GRID,
+static void toolbar_view(EdRect* row)
+{
+    EditorShell* S = &g_edShell;
+    if (toolbar_button(row, 38.0f, NULL, EDUI_ICON_GRID,
                        ED_BTN_ICON_ONLY | ED_BTN_IF_ON(S->showGrid),
                        "Show the ground grid"))
         S->showGrid = !S->showGrid;
-    if (toolbar_button(&row, 38.0f, NULL, EDUI_ICON_LIGHT,
+    if (toolbar_button(row, 38.0f, NULL, EDUI_ICON_LIGHT,
                        ED_BTN_ICON_ONLY | ED_BTN_IF_ON(S->showLights),
                        "Show light markers"))
         S->showLights = !S->showLights;
-    if (toolbar_button(&row, 38.0f, NULL, EDUI_ICON_ZONE,
+    if (toolbar_button(row, 38.0f, NULL, EDUI_ICON_ZONE,
                        ED_BTN_ICON_ONLY | ED_BTN_IF_ON(S->showZones),
                        "Show camera zones"))
         S->showZones = !S->showZones;
-    if (toolbar_button(&row, 38.0f, NULL, EDUI_ICON_STATS,
+    if (toolbar_button(row, 38.0f, NULL, EDUI_ICON_STATS,
                        ED_BTN_ICON_ONLY | ED_BTN_IF_ON(S->showStats),
                        "Show the statistics overlay"))
         S->showStats = !S->showStats;
+}
 
-    // --- right-hand end: the camera speed, where Unreal keeps it -----------
-    {
-        EdRect right = r;
-        EdR_Cut(&right, EDM_GAP, ED_SIDE_RIGHT);
-        EdRect box = EdR_Inset(EdR_Cut(&right, 132.0f, ED_SIDE_RIGHT), 9.0f);
-        EdUI_SliderFloat(EdUI_Id("tool.speed"), box, &g_edCam.speed,
-                         20.0f, 900.0f, "%.0f");
-        if (EdUI_IsHot(EdUI_Id("tool.speed")))
-            EdUI_Tooltip("Fly speed. The wheel does this too while looking.");
-        EdUI_TextIn(EDUI_FONT_SMALL, "CAMERA",
-                    EdR_Cut(&right, 56.0f, ED_SIDE_RIGHT), ED_ALIGN_CENTRE,
-                    EDC_TEXT_FAINT);
-        EdUI_Icon(EdR_Cut(&right, 24.0f, ED_SIDE_RIGHT), EDUI_ICON_SPEED,
-                  EDC_TEXT_FAINT);
-    }
+// The right-hand end: the camera speed, where Unreal keeps it. Cut from the
+// bar's right edge, not from what the left-hand groups left over.
+static void toolbar_camera(EdRect r)
+{
+    EdRect right = r;
+    EdR_Cut(&right, EDM_GAP, ED_SIDE_RIGHT);
+    EdRect box = EdR_Inset(EdR_Cut(&right, 132.0f, ED_SIDE_RIGHT), 9.0f);
+    EdUI_SliderFloat(EdUI_Id("tool.speed"), box, &g_edCam.speed,
+                     20.0f, 900.0f, "%.0f");
+    if (EdUI_IsHot(EdUI_Id("tool.speed")))
+        EdUI_Tooltip("Fly speed. The wheel does this too while looking.");
+    EdUI_TextIn(EDUI_FONT_SMALL, "CAMERA",
+                EdR_Cut(&right, 56.0f, ED_SIDE_RIGHT), ED_ALIGN_CENTRE,
+                EDC_TEXT_FAINT);
+    EdUI_Icon(EdR_Cut(&right, 24.0f, ED_SIDE_RIGHT), EDUI_ICON_SPEED,
+              EDC_TEXT_FAINT);
+}
+
+void EdPanel_Toolbar(EdRect r)
+{
+    EdUI_Fill(r, EDC_TOOLBAR);
+    EdUI_Fill(EdR(r.x, r.y + r.h - 1.0f, r.w, 1.0f), EDC_BORDER);
+
+    EdRect row = r;
+    EdR_Cut(&row, EDM_GAP, ED_SIDE_LEFT);
+
+    toolbar_file(&row);
+    toolbar_sep(&row);
+    toolbar_play(&row);
+    toolbar_sep(&row);
+    toolbar_gizmo(&row);
+    toolbar_sep(&row);
+    toolbar_snap(&row);
+    toolbar_sep(&row);
+    toolbar_view(&row);
+
+    toolbar_camera(r);
 }
 
 // ---------------------------------------------------------------------------

@@ -17,8 +17,6 @@
 
 #include <string.h>
 
-EditorShell g_edShell;
-
 int EdAct_Snap(int v)
 {
     const int s = g_edShell.snapMove;

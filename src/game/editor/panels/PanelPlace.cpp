@@ -114,18 +114,11 @@ static int matches(const char* name, const char* needle)
     return 0;
 }
 
-void EdPanel_Content(EdRect r)
+// Tabs and the search field, cut off the top of the panel's body.
+static void content_tabs(EdRect* body)
 {
     EditorShell* S = &g_edShell;
-    EdUI_Fill(r, EDC_PANEL);
-
-    char note[24];
-    snprintf(note, sizeof(note), "%s",
-             S->contentTab == 0 ? "items" : "enemies");
-    EdRect body = EdPanel_Header(r, EDUI_ICON_FOLDER, "Content", note);
-
-    // --- tabs + search ----------------------------------------------------
-    EdRect bar = EdR_Cut(&body, 28.0f, ED_SIDE_TOP);
+    EdRect bar = EdR_Cut(body, 28.0f, ED_SIDE_TOP);
     EdUI_Fill(bar, EDC_PANEL);
     EdRect brow = EdR_Inset(bar, 4.0f);
 
@@ -147,13 +140,13 @@ void EdPanel_Content(EdRect r)
               EDC_TEXT_FAINT);
     EdUI_TextField(EdUI_Id("content.search"), brow, S->search,
                    (int)sizeof(S->search));
+}
 
-    // The footer is carved off before the list is laid out: a list that runs
-    // under the button it is being placed with hides its own last row.
-    EdRect foot = EdR_Cut(&body, 34.0f, ED_SIDE_BOTTOM);
-    EdUI_Fill(body, EDC_PANEL_ALT);
-
-    // --- the list ---------------------------------------------------------
+// The items or enemies matching the search, as a scrolling list. Clicking one
+// makes it the pick the Place button and the palette use.
+static void content_list(EdRect body)
+{
+    EditorShell* S = &g_edShell;
     const int count = (S->contentTab == 0) ? g_edItemCount : g_edEnemyCount;
     int shown = 0;
     for (int i = 0; i < count; i++) {
@@ -193,8 +186,12 @@ void EdPanel_Content(EdRect r)
         }
     }
     EdUI_ScrollEnd();
+}
 
-    // --- the action -------------------------------------------------------
+// The action: place whatever the list has picked.
+static void content_footer(EdRect foot)
+{
+    EditorShell* S = &g_edShell;
     EdUI_Fill(foot, EDC_PANEL);
     EdUI_Fill(EdR(foot.x, foot.y, foot.w, 1.0f), EDC_BORDER);
     EdRect place = EdR_Inset(foot, 5.0f);
@@ -211,4 +208,25 @@ void EdPanel_Content(EdRect r)
         if (S->contentTab == 0) EdAct_AddItem(S->contentPick);
         else                    EdAct_AddEnemy(S->contentPick);
     }
+}
+
+void EdPanel_Content(EdRect r)
+{
+    EditorShell* S = &g_edShell;
+    EdUI_Fill(r, EDC_PANEL);
+
+    char note[24];
+    snprintf(note, sizeof(note), "%s",
+             S->contentTab == 0 ? "items" : "enemies");
+    EdRect body = EdPanel_Header(r, EDUI_ICON_FOLDER, "Content", note);
+
+    content_tabs(&body);
+
+    // The footer is carved off before the list is laid out: a list that runs
+    // under the button it is being placed with hides its own last row.
+    EdRect foot = EdR_Cut(&body, 34.0f, ED_SIDE_BOTTOM);
+    EdUI_Fill(body, EDC_PANEL_ALT);
+
+    content_list(body);
+    content_footer(foot);
 }

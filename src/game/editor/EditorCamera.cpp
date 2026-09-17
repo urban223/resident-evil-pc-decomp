@@ -107,13 +107,15 @@ void EditorCamera_FrameLevel(void)
 // Shift+LMB pan, the wheel dollies, WASD flies and Q/E go up and down. RMB plus
 // the wheel sets the fly speed, which is where Unreal puts it and the right
 // place for it: you find out you are too slow while you are already flying.
+//
+// One function per gesture, run in this order every frame. Shift and the right
+// button are read once, in EditorCamera_Update, and handed down, so every
+// gesture sees the same modifiers even if a key changes state mid-frame.
 // ---------------------------------------------------------------------------
-void EditorCamera_Update(void)
-{
-    const int shift = ed_key(VK_SHIFT);
-    const int rmb   = g_edMouse.held[ED_MB_RIGHT];
 
-    // ---- wheel: the fly speed while looking, the distance otherwise --------
+// The wheel: the fly speed while looking, the distance otherwise.
+static void camera_wheel(int rmb)
+{
     if (g_edMouse.wheel != 0) {
         const float notches = (float)g_edMouse.wheel / 120.0f;
         if (rmb) {
@@ -126,8 +128,11 @@ void EditorCamera_Update(void)
             if (g_edCam.dist > ED_MAX_DIST) g_edCam.dist = ED_MAX_DIST;
         }
     }
+}
 
-    // ---- turning ------------------------------------------------------------
+// Turning: orbiting the pivot (LMB) or looking around from the eye (RMB).
+static void camera_turn(int shift, int rmb)
+{
     const float turn = 0.012f;
     if (rmb || (g_edMouse.held[ED_MB_LEFT] && !shift &&
                 !g_edMouse.held[ED_MB_MIDDLE])) {
@@ -152,8 +157,11 @@ void EditorCamera_Update(void)
             g_edCam.tz = eyeZ + sinf(g_edCam.yaw) * ch * g_edCam.dist;
         }
     }
+}
 
-    // ---- panning ------------------------------------------------------------
+// Panning: MMB, or Shift+LMB.
+static void camera_pan(int shift)
+{
     if (g_edMouse.held[ED_MB_MIDDLE] ||
         (g_edMouse.held[ED_MB_LEFT] && shift)) {
         if (g_edView.ok) {
@@ -166,8 +174,11 @@ void EditorCamera_Update(void)
             g_edCam.tz += g_edView.r[2]*mx + g_edView.u[2]*my;
         }
     }
+}
 
-    // ---- flying -------------------------------------------------------------
+// Flying: WASD along the view, Q/E down and up in world space.
+static void camera_fly(int shift)
+{
     if (g_edView.ok) {
         const float sp = g_edCam.speed * (shift ? 3.0f : 1.0f);
         float f = 0.0f, r = 0.0f, up = 0.0f;
@@ -185,6 +196,17 @@ void EditorCamera_Update(void)
             g_edCam.tz += g_edView.n[2]*f + g_edView.r[2]*r;
         }
     }
+}
+
+void EditorCamera_Update(void)
+{
+    const int shift = ed_key(VK_SHIFT);
+    const int rmb   = g_edMouse.held[ED_MB_RIGHT];
+
+    camera_wheel(rmb);
+    camera_turn(shift, rmb);
+    camera_pan(shift);
+    camera_fly(shift);
 }
 
 // ---------------------------------------------------------------------------

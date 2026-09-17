@@ -11,13 +11,15 @@
 // g_edShell, which is also where the view toggles and the snap settings live,
 // so the whole interface's arrangement is one struct that could be written to
 // a config file the day someone wants it to persist.
-#include "../EditorShell.h"
-#include "../EditorState.h"
-#include "../../RaidLevel.h"
-#include "../../../Globals.h"
+#include "EditorShell.h"
+#include "EditorState.h"
+#include "../RaidLevel.h"
+#include "../../Globals.h"
 
 #include <stdio.h>
 #include <string.h>
+
+EditorShell g_edShell;
 
 void EditorShell_Init(void)
 {

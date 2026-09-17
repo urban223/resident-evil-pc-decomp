@@ -52,11 +52,11 @@ set(RE1_SOURCES
     src/game/DeathScreen.cpp
     src/game/DebugMenu.cpp
     src/game/editor/EditorActions.cpp
+    src/game/editor/EditorShell.cpp
     src/game/editor/EditorContent.cpp
     src/game/editor/ui/EditorUICore.cpp
     src/game/editor/ui/EditorUIDraw.cpp
     src/game/editor/ui/EditorUIWidgets.cpp
-    src/game/editor/panels/EditorShell.cpp
     src/game/editor/panels/PanelBars.cpp
     src/game/editor/panels/PanelOutliner.cpp
     src/game/editor/panels/PanelDetails.cpp
