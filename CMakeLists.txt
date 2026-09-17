@@ -41,6 +41,7 @@ set(RE1_SOURCES
     src/video/VideoPlayback.cpp
 
     src/game/Achievements.cpp
+    src/game/PortAtlas.cpp
     src/game/UiAtlas.cpp
     src/game/UiSkin.cpp
     src/game/CharacterSelectionScreen.cpp

@@ -19,44 +19,18 @@
 // sampling a 34px glyph into a 17px box is what the engine's 8x8 font already
 // looks like, and getting away from that is the whole reason this file exists.
 #include "EditorUIInternal.h"
-#include "../../FileLoader.h"
+#include "../../PortAtlas.h"
 #include "../../../marni/MarniSystem.h"
 #include "../../../system/AssetPath.h"
 
-#include <stdlib.h>
 #include <string.h>
 
-#define EDUI_MAX_TRIES 3
-
-static MarniHandle s_atlas = MARNI_NULL_HANDLE;
-static int s_tries = 0;
+static PortAtlas s_atlas = PORT_ATLAS_INIT;
 
 int EdUiDraw_Ready(void)
 {
-    if (s_atlas != MARNI_NULL_HANDLE) return 1;
-    if (s_tries >= EDUI_MAX_TRIES) return 0;
-    if (!IsGraphicsSystemReadyForOperation()) return 0;
-    s_tries++;
-
-    const size_t pixels = (size_t)EDUI_ATLAS_W * (size_t)EDUI_ATLAS_H * 4;
-    const size_t expect = pixels + 12;                  // 'EUI1' + w + h
-    unsigned char* buf = (unsigned char*)malloc(expect);
-    if (buf == NULL) return 0;
-
-    size_t read = LoadFile(GAME_DATA_ROOT "Data\\edui.bin", buf, 0);
-    if (read == expect
-        && buf[0] == 'E' && buf[1] == 'U' && buf[2] == 'I' && buf[3] == '1') {
-        const unsigned int w = *(unsigned int*)(buf + 4);
-        const unsigned int h = *(unsigned int*)(buf + 8);
-        if (w == (unsigned int)EDUI_ATLAS_W && h == (unsigned int)EDUI_ATLAS_H) {
-            // bpp 32 is memcpy'd straight into an R8G8B8A8 texture, so the
-            // file's byte order IS the texture's - which is what the baker
-            // writes with Image.tobytes().
-            MarniCreateTexture(EDUI_ATLAS_W, EDUI_ATLAS_H, 32, buf + 12, &s_atlas);
-        }
-    }
-    free(buf);
-    return s_atlas != MARNI_NULL_HANDLE;
+    return PortAtlas_Load(&s_atlas, GAME_DATA_ROOT "Data\\edui.bin", "EUI1",
+                          EDUI_ATLAS_W, EDUI_ATLAS_H);
 }
 
 void EdUiDraw_Reset(void)
@@ -64,8 +38,7 @@ void EdUiDraw_Reset(void)
     // The device went away (a resolution change destroys every texture). Let
     // the next Ready() upload the sheet again rather than drawing from a
     // handle that no longer names anything.
-    s_atlas = MARNI_NULL_HANDLE;
-    s_tries = 0;
+    PortAtlas_Reset(&s_atlas);
 }
 
 EdRect EdUiDraw_Clip(void)
@@ -83,7 +56,7 @@ EdRect EdUiDraw_Clip(void)
 // ---------------------------------------------------------------------------
 void EdUiDraw_Quad(const EdUiRect* src, EdRect dst, unsigned int argb)
 {
-    if (s_atlas == MARNI_NULL_HANDLE) return;
+    if (s_atlas.tex == MARNI_NULL_HANDLE) return;
     if (dst.w <= 0.0f || dst.h <= 0.0f) return;
     if ((argb & 0xFF000000u) == 0u) return;
 
@@ -109,7 +82,7 @@ void EdUiDraw_Quad(const EdUiRect* src, EdRect dst, unsigned int argb)
 
     MarniDrawSpriteEx(x0 * k, y0 * k, (x1 - x0) * k, (y1 - y0) * k,
                       u0 * iw, v0 * ih, u1 * iw, v1 * ih,
-                      argb, s_atlas, MARNI_SAMPLER_LINEAR, MARNI_BLEND_ALPHA);
+                      argb, s_atlas.tex, MARNI_SAMPLER_LINEAR, MARNI_BLEND_ALPHA);
 }
 
 void EdUI_Quad(const EdUiRect* src, EdRect dst, unsigned int argb)

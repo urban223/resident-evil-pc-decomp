@@ -1,11 +1,9 @@
 // UiAtlas.cpp - CUSTOM (port-only): loader and draw helpers for the shared
 // Space GUI atlas. See UiAtlas.h for why there are two draw paths.
 #include "UiAtlas.h"
-#include "FileLoader.h"
+#include "PortAtlas.h"
 #include "../marni/MarniSystem.h"
 #include "../system/AssetPath.h"
-
-#include <stdlib.h>
 
 // Rendering.cpp - queue a textured quad in the pending-sprite list. Port-only;
 // the game's own 2D goes through display_texture instead.
@@ -17,37 +15,12 @@ extern int PendingSprite_PushEx(float x, float y, float w, float h,
                                 DWORD color, MarniHandle tex, unsigned int depth,
                                 int pointSample);
 
-#define UI_ATLAS_MAX_TRIES 3
-
-static MarniHandle s_atlas = MARNI_NULL_HANDLE;
-static int s_tries = 0;
+static PortAtlas s_atlas = PORT_ATLAS_INIT;
 
 int UiAtlas_Ready(void)
 {
-    if (s_atlas != MARNI_NULL_HANDLE) return 1;
-    if (s_tries >= UI_ATLAS_MAX_TRIES) return 0;
-    if (!IsGraphicsSystemReadyForOperation()) return 0;   // device not up yet
-    s_tries++;
-
-    const size_t pixels = (size_t)ACHV_ATLAS_W * (size_t)ACHV_ATLAS_H * 4;
-    const size_t expect = pixels + 12;                    // 'AUI1' + w + h
-    unsigned char* buf = (unsigned char*)malloc(expect);
-    if (buf == NULL) return 0;
-
-    size_t read = LoadFile(GAME_DATA_ROOT "Data\\achvui.bin", buf, 0);
-    if (read == expect
-        && buf[0] == 'A' && buf[1] == 'U' && buf[2] == 'I' && buf[3] == '1') {
-        unsigned int w = *(unsigned int*)(buf + 4);
-        unsigned int h = *(unsigned int*)(buf + 8);
-        if (w == (unsigned int)ACHV_ATLAS_W && h == (unsigned int)ACHV_ATLAS_H) {
-            // bpp 32 is memcpy'd straight into an R8G8B8A8 texture
-            // (MarniDX::CreateTexture), so the file's byte order IS the
-            // texture's: R, G, B, A per pixel, which is what the baker writes.
-            MarniCreateTexture(ACHV_ATLAS_W, ACHV_ATLAS_H, 32, buf + 12, &s_atlas);
-        }
-    }
-    free(buf);
-    return s_atlas != MARNI_NULL_HANDLE;
+    return PortAtlas_Load(&s_atlas, GAME_DATA_ROOT "Data\\achvui.bin", "AUI1",
+                          ACHV_ATLAS_W, ACHV_ATLAS_H);
 }
 
 float UiAtlas_Scale(void)
@@ -76,29 +49,29 @@ static void uv_of(const AchvRect* r, float* u0, float* v0, float* u1, float* v1)
 void UiAtlas_Blit(const AchvRect* r, float x, float y, float w, float h,
                   unsigned int color)
 {
-    if (s_atlas == MARNI_NULL_HANDLE) return;
+    if (s_atlas.tex == MARNI_NULL_HANDLE) return;
     float u0, v0, u1, v1;
     uv_of(r, &u0, &v0, &u1, &v1);
-    MarniDrawSpriteEx(x, y, w, h, u0, v0, u1, v1, color, s_atlas,
+    MarniDrawSpriteEx(x, y, w, h, u0, v0, u1, v1, color, s_atlas.tex,
                       MARNI_SAMPLER_LINEAR, MARNI_BLEND_ALPHA);
 }
 
 void UiAtlas_Push(const AchvRect* r, float x, float y, float w, float h,
                   unsigned int color, unsigned int depth)
 {
-    if (s_atlas == MARNI_NULL_HANDLE) return;
+    if (s_atlas.tex == MARNI_NULL_HANDLE) return;
     float u0, v0, u1, v1;
     uv_of(r, &u0, &v0, &u1, &v1);
-    PendingSprite_Push(x, y, w, h, u0, v0, u1, v1, color, s_atlas, depth);
+    PendingSprite_Push(x, y, w, h, u0, v0, u1, v1, color, s_atlas.tex, depth);
 }
 
 void UiAtlas_PushPixel(const AchvRect* r, float x, float y, float w, float h,
                        unsigned int color, unsigned int depth)
 {
-    if (s_atlas == MARNI_NULL_HANDLE) return;
+    if (s_atlas.tex == MARNI_NULL_HANDLE) return;
     float u0, v0, u1, v1;
     uv_of(r, &u0, &v0, &u1, &v1);
-    PendingSprite_PushEx(x, y, w, h, u0, v0, u1, v1, color, s_atlas, depth, 1);
+    PendingSprite_PushEx(x, y, w, h, u0, v0, u1, v1, color, s_atlas.tex, depth, 1);
 }
 
 void UiAtlas_Fill(float x, float y, float w, float h, unsigned int color)
