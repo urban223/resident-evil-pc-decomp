@@ -23,8 +23,6 @@
 #include "../../../marni/MarniSystem.h"
 #include "../../../system/AssetPath.h"
 
-#include <string.h>
-
 static PortAtlas s_atlas = PORT_ATLAS_INIT;
 
 int EdUiDraw_Ready(void)
@@ -183,11 +181,11 @@ void EdUI_Icon(EdRect r, int icon, unsigned int argb)
 // ---------------------------------------------------------------------------
 // Text
 // ---------------------------------------------------------------------------
-static const EdUiGlyph* glyph_of(int font, unsigned char c)
+static PortFont font_of(int font)
 {
     if (font < 0 || font >= EDUI_FONT_COUNT) font = EDUI_FONT_UI;
-    if (c < EDUI_FONT_FIRST || c > EDUI_FONT_LAST) c = '?';
-    return &g_eduiFonts[font][c - EDUI_FONT_FIRST];
+    const PortFont f = { g_eduiFonts[font], EDUI_FONT_FIRST, EDUI_FONT_LAST };
+    return f;
 }
 
 // Baked pixels -> design pixels.
@@ -199,11 +197,8 @@ static float font_k(int font)
 
 float EdUI_TextW(int font, const char* s)
 {
-    if (s == NULL) return 0.0f;
-    const float k = font_k(font);
-    float w = 0.0f;
-    for (; *s; s++) w += (float)glyph_of(font, (unsigned char)*s)->adv * k;
-    return w;
+    const PortFont f = font_of(font);
+    return PortText_Width(&f, s, font_k(font));
 }
 
 float EdUI_FontH(int font)
@@ -212,22 +207,21 @@ float EdUI_FontH(int font)
     return (float)g_eduiFontLine[font] * font_k(font);
 }
 
+static void glyph_quad(void* user, const PortGlyph* g,
+                       float x, float y, float w, float h)
+{
+    EdUiRect src;
+    src.x = g->x; src.y = g->y; src.w = g->w; src.h = g->h;
+    EdUiDraw_Quad(&src, EdR(x, y, w, h), *(const unsigned int*)user);
+}
+
 // y is the TOP of the line box, not the baseline: laying out rows against a
 // baseline means every call site has to know the font's ascent.
 void EdUI_Text(int font, const char* s, float x, float y, unsigned int argb)
 {
     if (s == NULL || *s == '\0') return;
-    const float k = font_k(font);
-    for (; *s; s++) {
-        const EdUiGlyph* g = glyph_of(font, (unsigned char)*s);
-        if (g->w > 0 && g->h > 0) {
-            EdUiRect src;
-            src.x = g->x; src.y = g->y; src.w = g->w; src.h = g->h;
-            EdUiDraw_Quad(&src, EdR(x + (float)g->bx * k, y + (float)g->by * k,
-                                    (float)g->w * k, (float)g->h * k), argb);
-        }
-        x += (float)g->adv * k;
-    }
+    const PortFont f = font_of(font);
+    PortText_Draw(&f, s, x, y, font_k(font), glyph_quad, &argb);
 }
 
 void EdUI_TextIn(int font, const char* s, EdRect box, int align,
@@ -243,20 +237,9 @@ void EdUI_TextIn(int font, const char* s, EdRect box, int align,
     if (full > box.w) {
         // Ellipsise. A name too long for its column is common enough in the
         // outliner that cutting it mid-glyph would look like a bug.
-        const float k = font_k(font);
-        const float dots = EdUI_TextW(font, "...");
-        float acc = 0.0f;
-        int n = 0;
-        while (s[n] != '\0' && n < (int)sizeof(cut) - 4) {
-            const float adv = (float)glyph_of(font, (unsigned char)s[n])->adv * k;
-            if (acc + adv + dots > box.w) break;
-            acc += adv;
-            n++;
-        }
-        memcpy(cut, s, (size_t)n);
-        cut[n] = '.'; cut[n + 1] = '.'; cut[n + 2] = '.'; cut[n + 3] = '\0';
+        const PortFont f = font_of(font);
+        w = PortText_Ellipsise(&f, s, font_k(font), box.w, cut, (int)sizeof(cut));
         draw = cut;
-        w = acc + dots;
     }
 
     float x = box.x;

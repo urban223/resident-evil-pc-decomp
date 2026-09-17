@@ -378,6 +378,8 @@ def main():
     L.append("// emits the metrics the UI toolkit indexes that texture with.")
     L.append("#pragma once")
     L.append("")
+    L.append('#include "../../PortText.h"')
+    L.append("")
     L.append("#define EDUI_ATLAS_W    %d" % ATLAS_W)
     L.append("#define EDUI_ATLAS_H    %d" % ATLAS_H)
     L.append("#define EDUI_BAKE       %d   // baked px per design px" % BAKE)
@@ -385,10 +387,8 @@ def main():
     L.append("// A rectangle in atlas pixels.")
     L.append("struct EdUiRect { short x, y, w, h; };")
     L.append("")
-    L.append("// One baked glyph. bx/by offset the glyph box from the pen position")
-    L.append("// (by measured DOWN from the line top); adv is the advance. All in")
-    L.append("// BAKED pixels - the toolkit multiplies by its own scale.")
-    L.append("struct EdUiGlyph { short x, y, w, h; short bx, by; short adv; };")
+    L.append("// The font tables below are PortGlyph (PortText.h), in BAKED pixels -")
+    L.append("// the toolkit multiplies by its own scale.")
     L.append("")
     L.append("static const EdUiRect g_eduiWhite = { %d, %d, 4, 4 };"
              % (white_pos[0], white_pos[1]))
@@ -425,7 +425,7 @@ def main():
     for cname, design, glyphs, asc, desc, line in fonts:
         L.append("// %s: Saira Condensed at %d design px, baked at %d."
                  % (cname, design, design * BAKE))
-        L.append("static const EdUiGlyph g_eduiFont%s[EDUI_FONT_CHARS] = {" % cname)
+        L.append("static const PortGlyph g_eduiFont%s[EDUI_FONT_CHARS] = {" % cname)
         for code, g in zip(range(FIRST_CHAR, LAST_CHAR + 1), glyphs):
             ch = chr(code)
             shown = "space" if ch == " " else ("'%s'" % ch if ch != "'" else "quote")
@@ -433,7 +433,7 @@ def main():
                      % (g[0], g[1], g[2], g[3], g[4], g[5], g[6], shown))
         L.append("};")
         L.append("")
-    L.append("static const EdUiGlyph* const g_eduiFonts[EDUI_FONT_COUNT] = {")
+    L.append("static const PortGlyph* const g_eduiFonts[EDUI_FONT_COUNT] = {")
     for cname, design, glyphs, asc, desc, line in fonts:
         L.append("    g_eduiFont%s," % cname)
     L.append("};")

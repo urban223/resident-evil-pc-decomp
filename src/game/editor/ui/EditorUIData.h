@@ -4,6 +4,8 @@
 // emits the metrics the UI toolkit indexes that texture with.
 #pragma once
 
+#include "../../PortText.h"
+
 #define EDUI_ATLAS_W    1024
 #define EDUI_ATLAS_H    576
 #define EDUI_BAKE       2   // baked px per design px
@@ -11,10 +13,8 @@
 // A rectangle in atlas pixels.
 struct EdUiRect { short x, y, w, h; };
 
-// One baked glyph. bx/by offset the glyph box from the pen position
-// (by measured DOWN from the line top); adv is the advance. All in
-// BAKED pixels - the toolkit multiplies by its own scale.
-struct EdUiGlyph { short x, y, w, h; short bx, by; short adv; };
+// The font tables below are PortGlyph (PortText.h), in BAKED pixels -
+// the toolkit multiplies by its own scale.
 
 static const EdUiRect g_eduiWhite = { 0, 0, 4, 4 };
 
@@ -173,7 +173,7 @@ static const EdUiRect g_eduiIcons[EDUI_ICON_COUNT] = {
 #define EDUI_FONT_COUNT    4
 
 // Ui: Saira Condensed at 17 design px, baked at 34.
-static const EdUiGlyph g_eduiFontUi[EDUI_FONT_CHARS] = {
+static const PortGlyph g_eduiFontUi[EDUI_FONT_CHARS] = {
     {    0,    0,   0,   0,    0,    0,   7 },  // space
     {  132,  264,   8,  24,    0,   15,   8 },  // '!'
     {  142,  264,  11,  24,    0,   15,  11 },  // '"'
@@ -272,7 +272,7 @@ static const EdUiGlyph g_eduiFontUi[EDUI_FONT_CHARS] = {
 };
 
 // Bold: Saira Condensed at 17 design px, baked at 34.
-static const EdUiGlyph g_eduiFontBold[EDUI_FONT_CHARS] = {
+static const PortGlyph g_eduiFontBold[EDUI_FONT_CHARS] = {
     {    0,    0,   0,   0,    0,    0,   6 },  // space
     {  607,  330,   9,  24,    0,   15,   9 },  // '!'
     {  618,  330,  13,  24,    0,   15,  13 },  // '"'
@@ -371,7 +371,7 @@ static const EdUiGlyph g_eduiFontBold[EDUI_FONT_CHARS] = {
 };
 
 // Small: Saira Condensed at 14 design px, baked at 28.
-static const EdUiGlyph g_eduiFontSmall[EDUI_FONT_CHARS] = {
+static const PortGlyph g_eduiFontSmall[EDUI_FONT_CHARS] = {
     {    0,    0,   0,   0,    0,    0,   5 },  // space
     {  103,  400,   6,  20,    0,   12,   6 },  // '!'
     {  111,  400,   9,  20,    0,   12,   9 },  // '"'
@@ -470,7 +470,7 @@ static const EdUiGlyph g_eduiFontSmall[EDUI_FONT_CHARS] = {
 };
 
 // Title: Saira Condensed at 22 design px, baked at 44.
-static const EdUiGlyph g_eduiFontTitle[EDUI_FONT_CHARS] = {
+static const PortGlyph g_eduiFontTitle[EDUI_FONT_CHARS] = {
     {    0,    0,   0,   0,    0,    0,   8 },  // space
     {  352,  433,  11,  31,    0,   19,  11 },  // '!'
     {  365,  433,  15,  31,    0,   19,  15 },  // '"'
@@ -568,7 +568,7 @@ static const EdUiGlyph g_eduiFontTitle[EDUI_FONT_CHARS] = {
     {  190,  519,  20,  17,    0,   33,  20 },  // '~'
 };
 
-static const EdUiGlyph* const g_eduiFonts[EDUI_FONT_COUNT] = {
+static const PortGlyph* const g_eduiFonts[EDUI_FONT_COUNT] = {
     g_eduiFontUi,
     g_eduiFontBold,
     g_eduiFontSmall,

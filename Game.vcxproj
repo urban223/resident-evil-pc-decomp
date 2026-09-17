@@ -200,6 +200,7 @@
     <ClCompile Include="src\game\WeaponDamage.cpp" />
     <ClCompile Include="src\game\Achievements.cpp" />
     <ClCompile Include="src\game\PortAtlas.cpp" />
+    <ClCompile Include="src\game\PortText.cpp" />
     <ClCompile Include="src\game\UiAtlas.cpp" />
     <ClCompile Include="src\game\UiSkin.cpp" />
     <ClCompile Include="src\game\Rendering.cpp" />
@@ -224,6 +225,7 @@
     <ClInclude Include="src\Globals.h" />
     <ClInclude Include="src\game\Achievements.h" />
     <ClInclude Include="src\game\PortAtlas.h" />
+    <ClInclude Include="src\game\PortText.h" />
     <ClInclude Include="src\game\UiAtlas.h" />
     <ClInclude Include="src\game\UiSkin.h" />
     <ClInclude Include="src\game\AchievementAtlasData.h" />

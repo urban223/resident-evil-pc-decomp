@@ -274,32 +274,21 @@ static void achv_blit(const AchvRect* r, float x, float y, float w, float h,
                       MARNI_SAMPLER_LINEAR, MARNI_BLEND_ALPHA);
 }
 
-static const AchvGlyph* achv_glyph(const AchvGlyph* font, unsigned char c)
+static const PortFont s_achvFontTitle = { g_achvFontTitle, ACHV_FONT_FIRST, ACHV_FONT_LAST };
+static const PortFont s_achvFontBody  = { g_achvFontBody,  ACHV_FONT_FIRST, ACHV_FONT_LAST };
+
+static void achv_glyph_blit(void* user, const PortGlyph* g,
+                            float x, float y, float w, float h)
 {
-    if (c < ACHV_FONT_FIRST || c > ACHV_FONT_LAST) c = '?';
-    return &font[c - ACHV_FONT_FIRST];
+    AchvRect r;
+    r.x = g->x; r.y = g->y; r.w = g->w; r.h = g->h;
+    achv_blit(&r, x, y, w, h, *(const unsigned int*)user);
 }
 
-static float achv_text_width(const AchvGlyph* font, const char* s, float k)
-{
-    float w = 0.0f;
-    for (; *s; s++) w += (float)achv_glyph(font, (unsigned char)*s)->adv * k;
-    return w;
-}
-
-static void achv_draw_text(const AchvGlyph* font, const char* s,
+static void achv_draw_text(const PortFont* font, const char* s,
                            float x, float y, float k, unsigned int color)
 {
-    for (; *s; s++) {
-        const AchvGlyph* g = achv_glyph(font, (unsigned char)*s);
-        if (g->w > 0 && g->h > 0) {
-            AchvRect r;
-            r.x = g->x; r.y = g->y; r.w = g->w; r.h = g->h;
-            achv_blit(&r, x + (float)g->bx * k, y + (float)g->by * k,
-                      (float)g->w * k, (float)g->h * k, color);
-        }
-        x += (float)g->adv * k;
-    }
+    PortText_Draw(font, s, x, y, k, achv_glyph_blit, &color);
 }
 
 static void achv_fill(float x, float y, float w, float h, unsigned int color)
@@ -512,9 +501,9 @@ void Achievements_Draw(void)
     const float tx = px + 96.0f * k;
     const char* label = (toast->kind == ACHV_KIND_PROGRESS) ? "PROGRESS"
                                                             : "ACHIEVEMENT UNLOCKED";
-    achv_draw_text(g_achvFontBody, label, tx, py + 8.0f * k, k,
+    achv_draw_text(&s_achvFontBody, label, tx, py + 8.0f * k, k,
                    achv_fade(0xFF56AAA6u, textAlpha));
-    achv_draw_text(g_achvFontTitle, def->name, tx, py + 26.0f * k, k,
+    achv_draw_text(&s_achvFontTitle, def->name, tx, py + 26.0f * k, k,
                    achv_fade(0xFFE4FFFCu, textAlpha));
 
     if (toast->kind == ACHV_KIND_PROGRESS && def->target > 0) {
@@ -532,10 +521,10 @@ void Achievements_Draw(void)
 
         char count[32];
         snprintf(count, sizeof(count), "%d / %d", value, (int)def->target);
-        achv_draw_text(g_achvFontBody, count, barX + barW + 12.0f * k,
+        achv_draw_text(&s_achvFontBody, count, barX + barW + 12.0f * k,
                        py + 58.0f * k, k, achv_fade(0xFFC6FF4Au, textAlpha));
     } else {
-        achv_draw_text(g_achvFontBody, def->sub, tx, py + 60.0f * k, k,
+        achv_draw_text(&s_achvFontBody, def->sub, tx, py + 60.0f * k, k,
                        achv_fade(0xFF7ABAB8u, textAlpha));
     }
 }

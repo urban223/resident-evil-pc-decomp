@@ -679,7 +679,7 @@ def main():
         return "{ %d, %d, %d, %d }" % r
 
     def glyph_table(name, glyphs, asc, line):
-        out = ["static const AchvGlyph %s[ACHV_FONT_CHARS] = {" % name]
+        out = ["static const PortGlyph %s[ACHV_FONT_CHARS] = {" % name]
         for g in glyphs:
             out.append("    { %d, %d, %d, %d, %d, %d, %d }," % g)
         out.append("};")
@@ -692,6 +692,8 @@ def main():
     lines.append("// below, which Achievements.cpp indexes that texture with.")
     lines.append("#pragma once")
     lines.append("")
+    lines.append('#include "PortText.h"')
+    lines.append("")
     lines.append("#define ACHV_ATLAS_W      %d" % ATLAS_W)
     lines.append("#define ACHV_ATLAS_H      %d" % ATLAS_H)
     lines.append("#define ACHV_FONT_FIRST   %d" % FIRST_CHAR)
@@ -701,10 +703,7 @@ def main():
     lines.append("// Atlas rectangle, in atlas pixels.")
     lines.append("struct AchvRect { short x, y, w, h; };")
     lines.append("")
-    lines.append("// One baked glyph. bx/by are the glyph box's offset from the pen position")
-    lines.append("// (by is measured DOWN from the line's top, i.e. the PIL bbox origin);")
-    lines.append("// adv is the horizontal advance.")
-    lines.append("struct AchvGlyph { short x, y, w, h; short bx, by; short adv; };")
+    lines.append("// The font tables at the bottom are PortGlyph (PortText.h), in atlas pixels.")
     lines.append("")
     lines.append("static const AchvRect g_achvPanel = %s;" % rect(panel_rect))
     lines.append("static const AchvRect g_achvWhite = %s;" % rect(white_rect))

@@ -88,51 +88,53 @@ void UiAtlas_FillPushed(float x, float y, float w, float h,
 // ---------------------------------------------------------------------------
 // Text
 // ---------------------------------------------------------------------------
-static const AchvGlyph* glyph_of(int font, unsigned char c)
+static const PortFont s_fontTitle = { g_achvFontTitle, ACHV_FONT_FIRST, ACHV_FONT_LAST };
+static const PortFont s_fontBody  = { g_achvFontBody,  ACHV_FONT_FIRST, ACHV_FONT_LAST };
+
+static const PortFont* font_of(int font)
 {
-    const AchvGlyph* table = (font == UI_FONT_TITLE) ? g_achvFontTitle
-                                                     : g_achvFontBody;
-    if (c < ACHV_FONT_FIRST || c > ACHV_FONT_LAST) c = '?';
-    return &table[c - ACHV_FONT_FIRST];
+    return (font == UI_FONT_TITLE) ? &s_fontTitle : &s_fontBody;
 }
 
 float UiAtlas_TextWidth(int font, const char* s, float k)
 {
-    float w = 0.0f;
-    if (s == NULL) return 0.0f;
-    for (; *s; s++) w += (float)glyph_of(font, (unsigned char)*s)->adv * k;
-    return w;
+    return PortText_Width(font_of(font), s, k);
 }
 
 // The two text calls differ only in which draw path they hand each glyph to.
-static void text_common(int font, const char* s, float x, float y, float k,
-                        unsigned int color, int pushed, unsigned int depth)
+struct GlyphPaint {
+    unsigned int color;
+    unsigned int depth;
+};
+
+static void glyph_blit(void* user, const PortGlyph* g,
+                       float x, float y, float w, float h)
 {
-    if (s == NULL) return;
-    for (; *s; s++) {
-        const AchvGlyph* g = glyph_of(font, (unsigned char)*s);
-        if (g->w > 0 && g->h > 0) {
-            AchvRect r;
-            r.x = g->x; r.y = g->y; r.w = g->w; r.h = g->h;
-            const float gx = x + (float)g->bx * k;
-            const float gy = y + (float)g->by * k;
-            const float gw = (float)g->w * k;
-            const float gh = (float)g->h * k;
-            if (pushed) UiAtlas_Push(&r, gx, gy, gw, gh, color, depth);
-            else        UiAtlas_Blit(&r, gx, gy, gw, gh, color);
-        }
-        x += (float)g->adv * k;
-    }
+    const GlyphPaint* p = (const GlyphPaint*)user;
+    AchvRect r;
+    r.x = g->x; r.y = g->y; r.w = g->w; r.h = g->h;
+    UiAtlas_Blit(&r, x, y, w, h, p->color);
+}
+
+static void glyph_push(void* user, const PortGlyph* g,
+                       float x, float y, float w, float h)
+{
+    const GlyphPaint* p = (const GlyphPaint*)user;
+    AchvRect r;
+    r.x = g->x; r.y = g->y; r.w = g->w; r.h = g->h;
+    UiAtlas_Push(&r, x, y, w, h, p->color, p->depth);
 }
 
 void UiAtlas_Text(int font, const char* s, float x, float y, float k,
                   unsigned int color)
 {
-    text_common(font, s, x, y, k, color, 0, 0);
+    GlyphPaint p = { color, 0 };
+    PortText_Draw(font_of(font), s, x, y, k, glyph_blit, &p);
 }
 
 void UiAtlas_TextPushed(int font, const char* s, float x, float y, float k,
                         unsigned int color, unsigned int depth)
 {
-    text_common(font, s, x, y, k, color, 1, depth);
+    GlyphPaint p = { color, depth };
+    PortText_Draw(font_of(font), s, x, y, k, glyph_push, &p);
 }

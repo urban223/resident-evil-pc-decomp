@@ -4,6 +4,8 @@
 // below, which Achievements.cpp indexes that texture with.
 #pragma once
 
+#include "PortText.h"
+
 #define ACHV_ATLAS_W      512
 #define ACHV_ATLAS_H      640
 #define ACHV_FONT_FIRST   32
@@ -13,10 +15,7 @@
 // Atlas rectangle, in atlas pixels.
 struct AchvRect { short x, y, w, h; };
 
-// One baked glyph. bx/by are the glyph box's offset from the pen position
-// (by is measured DOWN from the line's top, i.e. the PIL bbox origin);
-// adv is the horizontal advance.
-struct AchvGlyph { short x, y, w, h; short bx, by; short adv; };
+// The font tables at the bottom are PortGlyph (PortText.h), in atlas pixels.
 
 static const AchvRect g_achvPanel = { 0, 0, 500, 92 };
 static const AchvRect g_achvWhite = { 503, 1, 2, 2 };
@@ -94,7 +93,7 @@ static const AchvRect g_achvMarkFlarering = { 300, 408, 96, 96 };
 #define ACHV_BODY_ASCENT  20
 #define ACHV_BODY_LINE    28
 
-static const AchvGlyph g_achvFontTitle[ACHV_FONT_CHARS] = {
+static const PortGlyph g_achvFontTitle[ACHV_FONT_CHARS] = {
     { 0, 0, 0, 0, 0, 0, 4 },
     { 0, 539, 6, 17, 0, 11, 6 },
     { 8, 539, 9, 17, 0, 11, 9 },
@@ -192,7 +191,7 @@ static const AchvGlyph g_achvFontTitle[ACHV_FONT_CHARS] = {
     { 117, 589, 11, 9, 0, 19, 11 },
 };
 
-static const AchvGlyph g_achvFontBody[ACHV_FONT_CHARS] = {
+static const PortGlyph g_achvFontBody[ACHV_FONT_CHARS] = {
     { 0, 0, 0, 0, 0, 0, 3 },
     { 130, 589, 4, 12, 0, 8, 4 },
     { 136, 589, 6, 12, 0, 8, 6 },
