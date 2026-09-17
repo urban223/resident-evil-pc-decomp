@@ -20,6 +20,9 @@ Outputs:
 Everything in the pack is white/greyscale art meant to be tinted at draw time,
 so the atlas keeps it white and the runtime multiplies in the colour.
 
+The packer, the font baker and both writers are tools/atlas_lib.py, shared with
+build_editor_ui.py; what is here is this sheet's own art.
+
 Run from the repo root:  python3 tools/build_achievement_ui.py
 """
 
@@ -28,6 +31,10 @@ import struct
 import sys
 
 from PIL import Image, ImageDraw, ImageFont
+
+from atlas_lib import (FIRST_CHAR, LAST_CHAR, ROOT, Packer, bake_font, bleed,
+                       glyph_table, gui, header_start, write_blob,
+                       write_header)
 
 # --- atlas geometry ---------------------------------------------------------
 ATLAS_W = 512
@@ -61,8 +68,6 @@ ICONS = [
 
 FONT_TITLE_PX = 24
 FONT_BODY_PX = 17
-FIRST_CHAR = 32
-LAST_CHAR = 126
 
 # --- colours (the pack's palette, read off the kit's own screens) -----------
 FILL_TOP = (12, 42, 46)
@@ -70,14 +75,6 @@ FILL_BOTTOM = (5, 20, 24)
 FILL_ALPHA = 236
 STROKE = (46, 196, 182, 200)
 BRACKET = (120, 240, 226, 255)
-
-
-def repo_root():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def gui(*parts):
-    return os.path.join(repo_root(), "assets", "SpaceGUI", "sources", *parts)
 
 
 # ---------------------------------------------------------------------------
@@ -543,74 +540,7 @@ def tint(img, rgba):
 # ---------------------------------------------------------------------------
 # atlas assembly
 # ---------------------------------------------------------------------------
-def bleed(atlas, x, y, w, h):
-    """Duplicate the right column and bottom row one pixel further out.
-
-    Everything here is drawn with a LINEAR sampler (the toast is scaled to the
-    window, not blitted texel for texel), so a sample taken exactly on a
-    sub-rect's right or bottom edge blends with whatever sits in the gap
-    beyond it. Without this the panel's border and the icon slot's frame fade
-    out along those two edges.
-    """
-    px = atlas.load()
-    for j in range(h):
-        px[x + w, y + j] = px[x + w - 1, y + j]
-    for i in range(w + 1):
-        px[x + i, y + h] = px[x + i, y + h - 1]
-
-
-class Packer(object):
-    """Trivial shelf packer - the content is small and known, so rows suffice."""
-
-    def __init__(self, atlas, y):
-        self.atlas = atlas
-        self.x = 0
-        self.y = y
-        self.row_h = 0
-
-    def add(self, img, edge_bleed=False):
-        w, h = img.size
-        # +2: one pixel for the bleed column/row, one to keep a real gap
-        if self.x + w + 2 > ATLAS_W:
-            self.x = 0
-            self.y += self.row_h + 2
-            self.row_h = 0
-        if self.y + h + 2 > ATLAS_H:
-            raise SystemExit("atlas overflow: %dx%d does not fit" % (w, h))
-        pos = (self.x, self.y)
-        self.atlas.alpha_composite(img, pos)
-        if edge_bleed:
-            bleed(self.atlas, pos[0], pos[1], w, h)
-        self.x += w + 2
-        self.row_h = max(self.row_h, h)
-        return pos
-
-
-def bake_font(path, px, packer):
-    font = ImageFont.truetype(path, px)
-    ascent, descent = font.getmetrics()
-    glyphs = []
-    for code in range(FIRST_CHAR, LAST_CHAR + 1):
-        ch = chr(code)
-        adv = int(round(font.getlength(ch)))
-        box = font.getbbox(ch)          # (x0, y0, x1, y1) relative to the origin
-        gw = max(0, box[2] - box[0])
-        gh = max(0, box[3] - box[1])
-        if gw == 0 or gh == 0:          # space and friends
-            glyphs.append((0, 0, 0, 0, 0, 0, adv))
-            continue
-        img = Image.new("RGBA", (gw, gh), (0, 0, 0, 0))
-        ImageDraw.Draw(img).text((-box[0], -box[1]), ch, font=font,
-                                 fill=(255, 255, 255, 255))
-        x, y = packer.add(img)
-        # bx/by are the offset from the pen position (baseline at by=0 means the
-        # glyph box's top is box[1] below the line's top, not the baseline).
-        glyphs.append((x, y, gw, gh, box[0], box[1], adv))
-    return glyphs, ascent, descent, ascent + descent
-
-
 def main():
-    root = repo_root()
     atlas = Image.new("RGBA", (ATLAS_W, ATLAS_H), (0, 0, 0, 0))
 
     panel = build_panel()
@@ -639,7 +569,7 @@ def main():
     for name, im in skin_marks():
         pos = packer.add(im, edge_bleed=True)
         mark_rects.append((name, pos + im.size))
-    for name, im in (title_words() + native_title_words(root)
+    for name, im in (title_words() + native_title_words(ROOT)
                      + extra_words() + extra_marks()):
         pos = packer.add(im, edge_bleed=True)
         mark_rects.append((name, pos + im.size))
@@ -652,48 +582,17 @@ def main():
     body, b_asc, b_desc, b_line = bake_font(
         gui("fonts", "SairaCondensed-SemiBold.ttf"), FONT_BODY_PX, packer)
 
-    # --- write the texture ---
-    blob = b"AUI1" + struct.pack("<II", ATLAS_W, ATLAS_H) + atlas.tobytes("raw", "RGBA")
-
-    # assets/ is the source of truth, but config.ini's [Assets] Path is empty
-    # by default, which means the game reads its data tree from NEXT TO THE
-    # EXECUTABLE - bin/Debug/USA and bin/Release/USA, each its own copy. Baking
-    # only into assets/ leaves those two behind, and the symptom is silent:
-    # the header the build compiles in has the new rects while the atlas the
-    # game loads still has transparent pixels there, so the new art simply
-    # does not appear. Write every tree that exists.
-    targets = [os.path.join(root, "assets", "USA", "Data", "achvui.bin")]
-    for cfg in ("Debug", "Release"):
-        d = os.path.join(root, "bin", cfg, "USA", "Data")
-        if os.path.isdir(d):
-            targets.append(os.path.join(d, "achvui.bin"))
-
-    for out_bin in targets:
-        os.makedirs(os.path.dirname(out_bin), exist_ok=True)
-        with open(out_bin, "wb") as fp:
-            fp.write(blob)
-        print("wrote %s (%d bytes)" % (out_bin, os.path.getsize(out_bin)))
+    write_blob("achvui.bin", b"AUI1", atlas)
 
     # --- write the generated header ---
     def rect(r):
         return "{ %d, %d, %d, %d }" % r
 
-    def glyph_table(name, glyphs, asc, line):
-        out = ["static const PortGlyph %s[ACHV_FONT_CHARS] = {" % name]
-        for g in glyphs:
-            out.append("    { %d, %d, %d, %d, %d, %d, %d }," % g)
-        out.append("};")
-        return "\n".join(out)
-
-    lines = []
-    lines.append("// AchievementAtlasData.h - GENERATED by tools/build_achievement_ui.py")
-    lines.append("// Do not edit by hand: re-run the generator instead. It bakes the Space GUI")
-    lines.append("// pack (assets/SpaceGUI/) into assets/USA/Data/achvui.bin and emits the rects")
-    lines.append("// below, which Achievements.cpp indexes that texture with.")
-    lines.append("#pragma once")
-    lines.append("")
-    lines.append('#include "PortText.h"')
-    lines.append("")
+    lines = header_start("AchievementAtlasData.h", "build_achievement_ui.py", [
+        "// Do not edit by hand: re-run the generator instead. It bakes the Space GUI",
+        "// pack (assets/SpaceGUI/) into assets/USA/Data/achvui.bin and emits the rects",
+        "// below, which Achievements.cpp indexes that texture with.",
+    ], "PortText.h")
     lines.append("#define ACHV_ATLAS_W      %d" % ATLAS_W)
     lines.append("#define ACHV_ATLAS_H      %d" % ATLAS_H)
     lines.append("#define ACHV_FONT_FIRST   %d" % FIRST_CHAR)
@@ -733,18 +632,15 @@ def main():
     lines.append("#define ACHV_BODY_ASCENT  %d" % b_asc)
     lines.append("#define ACHV_BODY_LINE    %d" % b_line)
     lines.append("")
-    lines.append(glyph_table("g_achvFontTitle", title, t_asc, t_line))
+    lines.extend(glyph_table("g_achvFontTitle", "ACHV_FONT_CHARS", title))
     lines.append("")
-    lines.append(glyph_table("g_achvFontBody", body, b_asc, b_line))
+    lines.extend(glyph_table("g_achvFontBody", "ACHV_FONT_CHARS", body))
     lines.append("")
 
-    out_h = os.path.join(root, "src", "game", "AchievementAtlasData.h")
-    with open(out_h, "w") as fp:
-        fp.write("\n".join(lines))
-    print("wrote %s" % out_h)
+    write_header(os.path.join("src", "game", "AchievementAtlasData.h"), lines)
 
     if "--preview" in sys.argv:
-        atlas.save(os.path.join(root, "achvui_preview.png"))
+        atlas.save(os.path.join(ROOT, "achvui_preview.png"))
         print("wrote achvui_preview.png")
 
 

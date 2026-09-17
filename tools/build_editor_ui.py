@@ -21,15 +21,21 @@ Inputs (from the Space GUI pack in assets/SpaceGUI/, OFL/CC-BY as shipped):
 Outputs:
   assets/USA/Data/edui.bin          'EUI1' + w + h + RGBA8 rows
   src/game/editor/ui/EditorUIData.h generated rects, glyph metrics, icon ids
+  (the .bin also into bin/Debug and bin/Release, where those trees exist)
+
+The packer, the font baker and both writers are tools/atlas_lib.py, shared with
+build_achievement_ui.py; what is here is the editor's own art.
 
 Run from the repo root:  python3 tools/build_editor_ui.py
 """
 
 import os
-import struct
-import sys
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter
+
+from atlas_lib import (FIRST_CHAR, LAST_CHAR, ROOT, Packer, bake_font,
+                       glyph_table, gui, header_start, write_blob,
+                       write_header)
 
 # --- atlas geometry ---------------------------------------------------------
 ATLAS_W = 1024
@@ -40,9 +46,6 @@ ATLAS_H = 576
 # sharpest a filtered blit gets; at 1440p and 4K the same sheet scales up
 # instead of turning into a grid of fat pixels.
 BAKE = 2
-
-FIRST_CHAR = 32
-LAST_CHAR = 126
 
 # design px (what the C++ side lays out in, before the DPI scale)
 FONTS = [
@@ -62,71 +65,6 @@ TILES = [
     ("Line3",  3, 1),
     ("Line5",  5, 1),
 ]
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def gui(*parts):
-    return os.path.join(ROOT, "assets", "SpaceGUI", "sources", *parts)
-
-
-# ---------------------------------------------------------------------------
-# Packing
-# ---------------------------------------------------------------------------
-class Packer(object):
-    """Shelf packer. The content is small and known, so rows suffice."""
-
-    def __init__(self, atlas):
-        self.atlas = atlas
-        self.x = 0
-        self.y = 0
-        self.row_h = 0
-
-    def add(self, img):
-        w, h = img.size
-        if w == 0 or h == 0:
-            return (0, 0)
-        if self.x + w + 2 > ATLAS_W:
-            self.x = 0
-            self.y += self.row_h + 2
-            self.row_h = 0
-        if self.y + h + 2 > ATLAS_H:
-            raise SystemExit("atlas overflow at %dx%d (row y=%d)" % (w, h, self.y))
-        pos = (self.x, self.y)
-        self.atlas.alpha_composite(img, pos)
-        self.x += w + 2
-        self.row_h = max(self.row_h, h)
-        return pos
-
-
-# ---------------------------------------------------------------------------
-# Fonts
-# ---------------------------------------------------------------------------
-def bake_font(path, design_px, packer):
-    px = design_px * BAKE
-    font = ImageFont.truetype(path, px)
-    ascent, descent = font.getmetrics()
-    glyphs = []
-    for code in range(FIRST_CHAR, LAST_CHAR + 1):
-        ch = chr(code)
-        adv = int(round(font.getlength(ch)))
-        box = font.getbbox(ch)
-        gw = max(0, box[2] - box[0])
-        gh = max(0, box[3] - box[1])
-        if gw == 0 or gh == 0:
-            glyphs.append((0, 0, 0, 0, 0, 0, adv))
-            continue
-        img = Image.new("RGBA", (gw, gh), (255, 255, 255, 0))
-        ImageDraw.Draw(img).text((-box[0], -box[1]), ch, font=font,
-                                 fill=(255, 255, 255, 255))
-        # The sheet is sampled linearly, so a glyph packed hard against its
-        # neighbour bleeds into it when the quad lands off a texel centre. The
-        # packer's 2px gutter is what keeps that from happening; the glyph
-        # itself is stored tight so the metrics stay honest.
-        x, y = packer.add(img)
-        glyphs.append((x, y, gw, gh, box[0], box[1], adv))
-    return glyphs, ascent, descent, ascent + descent
-
 
 # ---------------------------------------------------------------------------
 # Plates: the rounded rectangles every panel, button and field is built from.
@@ -355,31 +293,23 @@ def main():
 
     fonts = []
     for cname, ttf, design in FONTS:
-        glyphs, asc, desc, line = bake_font(gui("fonts", ttf), design, packer)
+        # White under the glyphs, not black - see bake_font.
+        glyphs, asc, desc, line = bake_font(gui("fonts", ttf), design * BAKE,
+                                            packer, bg=(255, 255, 255, 0))
         fonts.append((cname, design, glyphs, asc, desc, line))
 
     used = packer.y + packer.row_h + 2
     print("atlas rows used: %d of %d" % (used, ATLAS_H))
 
     # --- the blob ----------------------------------------------------------
-    out_bin = os.path.join(ROOT, "assets", "USA", "Data", "edui.bin")
-    os.makedirs(os.path.dirname(out_bin), exist_ok=True)
-    with open(out_bin, "wb") as f:
-        f.write(b"EUI1")
-        f.write(struct.pack("<II", ATLAS_W, ATLAS_H))
-        f.write(atlas.tobytes())
-    print("wrote %s (%d bytes)" % (out_bin, os.path.getsize(out_bin)))
+    write_blob("edui.bin", b"EUI1", atlas)
 
     # --- the header --------------------------------------------------------
-    L = []
-    L.append("// EditorUIData.h - GENERATED by tools/build_editor_ui.py")
-    L.append("// Do not edit by hand: re-run the generator instead. It bakes the")
-    L.append("// editor's fonts, plates and icons into assets/USA/Data/edui.bin and")
-    L.append("// emits the metrics the UI toolkit indexes that texture with.")
-    L.append("#pragma once")
-    L.append("")
-    L.append('#include "../../PortText.h"')
-    L.append("")
+    L = header_start("EditorUIData.h", "build_editor_ui.py", [
+        "// Do not edit by hand: re-run the generator instead. It bakes the",
+        "// editor's fonts, plates and icons into assets/USA/Data/edui.bin and",
+        "// emits the metrics the UI toolkit indexes that texture with.",
+    ], "../../PortText.h")
     L.append("#define EDUI_ATLAS_W    %d" % ATLAS_W)
     L.append("#define EDUI_ATLAS_H    %d" % ATLAS_H)
     L.append("#define EDUI_BAKE       %d   // baked px per design px" % BAKE)
@@ -425,13 +355,8 @@ def main():
     for cname, design, glyphs, asc, desc, line in fonts:
         L.append("// %s: Saira Condensed at %d design px, baked at %d."
                  % (cname, design, design * BAKE))
-        L.append("static const PortGlyph g_eduiFont%s[EDUI_FONT_CHARS] = {" % cname)
-        for code, g in zip(range(FIRST_CHAR, LAST_CHAR + 1), glyphs):
-            ch = chr(code)
-            shown = "space" if ch == " " else ("'%s'" % ch if ch != "'" else "quote")
-            L.append("    { %4d, %4d, %3d, %3d, %4d, %4d, %3d },  // %s"
-                     % (g[0], g[1], g[2], g[3], g[4], g[5], g[6], shown))
-        L.append("};")
+        L.extend(glyph_table("g_eduiFont%s" % cname, "EDUI_FONT_CHARS", glyphs,
+                             annotate=True))
         L.append("")
     L.append("static const PortGlyph* const g_eduiFonts[EDUI_FONT_COUNT] = {")
     for cname, design, glyphs, asc, desc, line in fonts:
@@ -447,11 +372,7 @@ def main():
              % ", ".join(str(f[5]) for f in fonts))
     L.append("")
 
-    out_h = os.path.join(ROOT, "src", "game", "editor", "ui", "EditorUIData.h")
-    os.makedirs(os.path.dirname(out_h), exist_ok=True)
-    with open(out_h, "w", newline="\n") as f:
-        f.write("\n".join(L))
-    print("wrote %s" % out_h)
+    write_header(os.path.join("src", "game", "editor", "ui", "EditorUIData.h"), L)
 
     # A look at what was baked, for the eye rather than for the build.
     prev = os.path.join(ROOT, "tools", "editor_ui_atlas_preview.png")
