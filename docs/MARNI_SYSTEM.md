@@ -56,7 +56,7 @@ The game entry point is `main` at `0x00441350`.
 
 **Files:** `src/marni/MarniSystem.h`, `src/marni/MarniSystem.cpp`  
 **Original VTable Address:** `0x004af230`  
-**Object Size:** `0x21DC` bytes (8676 bytes)  
+**Object Size:** `0x21DC` bytes (8668 bytes)  
 **Global Instance:** `g_pMarniDirect3D` at `0x00ac4028`
 
 ### VTable (12 Entries)
@@ -99,10 +99,7 @@ static int VTable_Present(void* self) {
 | 0x10 | DWORD | `m_width` | **Physical** backbuffer/surface width (set once at construction; updated on display-mode change / WM_SIZE) |
 | 0x14 | DWORD | `m_height` | **Physical** backbuffer/surface height |
 | 0x18 | DWORD | `m_bitDepth` | Color bit depth |
-| 0x2C | DWORD | `m_halfLogicalWidth` | `m_logicalWidth / 2` (set in base ctor 0x0044efc0) |
-| 0x30 | DWORD | `m_halfLogicalHeight` | `m_logicalHeight / 2` (set in base ctor 0x0044efc0) |
-| 0x34 | float | `m_scaleX` | Scale factor (physical/logical, *=2 for 320, *=0.5 for 640 in SetVideoResolution) |
-| 0x38 | float | `m_scaleY` | Scale factor (physical/logical, *=2 for 320, *=0.5 for 640 in SetVideoResolution) |
+| 0x1C–0x3B | BYTE[0x20] | `m_pad1` | — the four entries this table used to list here (`m_halfLogicalWidth`, `m_halfLogicalHeight`, `m_scaleX`, `m_scaleY`) do not exist; `MarniSystem.h:47` covers the whole span as padding |
 | 0x3C | BOOL | `m_isInitialized` | Initialization flag |
 | 0x68 | BOOL | `m_isFullScreen` | Fullscreen mode flag |
 | 0x74 | BOOL | `m_isActive` | Window active flag |
@@ -122,13 +119,21 @@ The original CMarniDirect3D maintains TWO resolution pairs:
 
 At draw time, the original Marni layer built a D3D transform matrix with the ratio `physical/logical` (FUN_0042ba60 in the original). This is why game-space (logical 320×240) correctly fills a 640×480 window: every primitive is scaled ×2 at render time.
 
-**`SetVideoResolution`** (0x00497f30) is the function that toggles the logical resolution for FMV transitions. It **never** touches the physical dims — it only writes `m_logicalWidth/m_logicalHeight` (0x08/0x0C) and adjusts `m_scaleX/m_scaleY` (0x34/0x38) by ×2 for 320×240 or ×0.5 for 640×480. Ports of this function must be careful not to write `m_width/m_height` (0x10/0x14), which are the physical surface dimensions.
+**`SetVideoResolution`** (0x00497f30) is the function that toggles the logical resolution for FMV transitions. It **never** touches the physical dims — it only writes `m_logicalWidth/m_logicalHeight` (0x08/0x0C) and, in the ORIGINAL, adjusted scale factors at 0x34/0x38 by ×2 for 320×240 or ×0.5 for 640×480 — `CMarniDirect3D` has no such members here, that span is padding. Ports of this function must be careful not to write `m_width/m_height` (0x10/0x14), which are the physical surface dimensions.
 
 The decomp's `MarniGetRenderScale()` helper computes the same `physical/logical` ratio from these fields and is called by `AddTintSprite`, `draw_rect`, `QueueTexturedSprite`, `FlushSpriteCommands`, and `OT_InsertPrimitive` to scale sprite coordinates from game-space to screen-space.
 
 ### VTable Calling Convention
 
-### Modern D3D11 Members (attached at high offsets)
+### Modern D3D11 Members (attached at high offsets) — *gone*
+
+> Of the nineteen members listed below, only `m_FontTexWidth` still exists.
+> `MarniSystem.h:68-70` says it plainly: "All D3D11 state moved to a
+> heap-allocated MarniDX owned by `m_pDX`", and the header is contractually
+> forbidden from seeing an `ID3D11*` type at all. The real fields are
+> `MarniDX::Impl::{device,swapChain,rtv,quadVS,...}` in `MarniDX.cpp:128-197`,
+> and the shaders are compiled there (`D3DCompile` at :269/:279/:318), not in
+> `MarniSystem.cpp`. Kept as a record of the pre-split shape.
 
 These replace the original DirectDraw/Direct3D 5 interface pointers (`m_lpDD`, `m_lpDD2`, `m_lpDDS_Front`, `m_lpDDS_Back`, etc.):
 
@@ -307,7 +312,7 @@ static void* CMarniBits_vtable[7] = {
 | 0x4C | DWORD | `m_ownsPalette` | Palette ownership flag |
 | 0x50 | DWORD | `m_flag50` | Additional flag |
 
-### Non-Virtual Methods (14 Total)
+### Non-Virtual Methods (15 Total)
 
 | Address | Ghidra Name | C++ Method | Signature |
 |---------|-------------|------------|-----------|
@@ -330,7 +335,7 @@ static void* CMarniBits_vtable[7] = {
 ### Key Method Descriptions
 
 #### Blt (vtable[0]) — `0x00403090`
-Copies pixels from a source surface with clipping. Uses target rectangle defined by the `m_clip*` fields. Validates dimensions and delegates pixel copy.
+Copies pixels from a source surface with clipping. Uses the target rectangle defined by `PSXTexture`'s `m_clipX/Y/W/H` — `CMarniBits` has no `m_clip*` fields; its 0x38/0x3C slots are `m_field38`/`m_field3C`. Validates dimensions and delegates pixel copy.
 
 #### BltFast (vtable[1]) — `0x00402020`
 Pixel-format-converting blit with support for:
@@ -419,15 +424,20 @@ The inline array also bloated `sizeof(PSXTexture)` to 0xAC8, so `Store()` on `g_
 | 0x2C | DWORD | `m_WidthPixels` | Width in pixels (image‑specific formula, not always pixel count — depends on bpp) |
 | 0x30 | DWORD | `m_Height` | Height in pixels |
 | 0x34 | DWORD | `m_RowStride` | Bytes per row (imgW × 2) |
-| 0x40 | DWORD | `m_IsValid` (CMarniBits) / lock flag (PSXTexture alias) |
+| 0x40 | DWORD | `m_IsLocked` (`PSXTexture.h:73`) |
 | 0x44 | DWORD | `m_DataSource` | 0=in‑place, 1=owned copy |
 | 0x48 | DWORD | `m_HasCLUT` | Has colour lookup table |
 | 0x4C | DWORD | `m_Flag4C` | Overlaps CMarniBits::m_ownsPalette; set to 1 by Store |
-| 0x54 | WORD | `m_CLUT_X` | CLUT X origin in VRAM |
-| 0x56 | WORD | `m_CLUT_Y` | CLUT Y origin in VRAM |
-| 0x58 | WORD | `m_CLUT_W` | CLUT width (colours per palette) |
-| 0x5A | WORD | `m_CLUT_H` | CLUT height (palette rows, 1–8 for 8bpp) |
-| 0x5C-0x63 | WORD[4] | `m_CLUT_W2/H2/W3/H3` | Extra CLUT dimension fields (original stores W at 0x5C as DWORD) |
+| 0x54 | DWORD | `m_CLUT_X` | CLUT X origin in VRAM |
+| 0x58 | DWORD | `m_CLUT_Y` | CLUT Y origin in VRAM |
+| 0x5C | DWORD | `m_ImgFlagsLo` | |
+| 0x60 | DWORD | `m_ImgFlagsHi` | |
+| 0x64 | DWORD | `m_Flag64` | |
+
+> These are **DWORDs** (`PSXTexture.h:83-87`), which is what the invariants
+> table below also says. Packing them as WORDs — as this table used to — is
+> recorded in the source as the bug that stopped any TMD ever matching a texture
+> page. `m_CLUT_W/H/W2/H2/W3/H3` do not exist.
 
 ### TIM File Format — CLUT Parse Corrections
 
@@ -526,9 +536,9 @@ Full chain for one entity joint:
 
 | Step | Function | File | What it does |
 |------|----------|------|--------------|
-| 1 | `render_entity` (0x0048c350) / `options_render_entity` (0x004775b0) | EngineStubs.cpp / OptionsMenu.cpp | Per joint: composes the camera matrix with `joint->world` (`ApplyLVAndMul0Matrix`), pushes it through `SetLightMatrix` + `SetRotAndTransMatrix`, then calls `FUN_00483250` with the joint's `anim_object` |
-| 2 | `FUN_00483250` (0x00483250) | EngineStubs.cpp | Thin forwarder: `FUN_00483080(animObject, depthShift)` |
-| 3 | `FUN_00483080` (0x00483080) | EngineStubs.cpp | Bails if `g_gteRotTransMatrix.t[2] < 0` (behind camera) or `data[1] == 0` (no textured prims). Calls `AsyncCreateTmdObject` → builds the model→view float matrix from `g_gteRotTransMatrix` → `FUN_00486190` folds the view in → `Transform` |
+| 1 | `render_entity` (0x0048c350) / `options_render_entity` (0x004775b0) | TmdRenderer.cpp / OptionsMenu.cpp | Per joint: composes the camera matrix with `joint->world` (`ApplyLVAndMul0Matrix`), pushes it through `SetLightMatrix` + `SetRotAndTransMatrix`, then calls `FUN_00483250` with the joint's `anim_object` |
+| 2 | `FUN_00483250` (0x00483250) | TmdRenderer.cpp | Thin forwarder: `FUN_00483080(animObject, depthShift)` |
+| 3 | `FUN_00483080` (0x00483080) | TmdRenderer.cpp | Bails if `g_gteRotTransMatrix.t[2] < 0` (behind camera) or `data[1] == 0` (no textured prims). Calls `AsyncCreateTmdObject` → builds the model→view float matrix from `g_gteRotTransMatrix` → `FUN_00486190` folds the view in → `Transform` |
 | 4 | `CreateTmdObjectInternal` (0x00483910) | TmdAnimation.cpp | Finds/reuses a `CMarniDirect3DTMD` slot, calls `PSXObject_Store` to parse the TMD into the slot's embedded `CMarniViewport2` elements, then matches each parsed object against a texture page and calls `Create` |
 | 5 | `CMarniDirect3DTMD::Transform` (0x00415520) | Marni3DObject.cpp | Inserts every object into the queue via `vtable[10]`, **then** writes the 16-float matrix to `objData+0x08` |
 | 6 | `TmdQueueObject` | TmdRenderer.cpp | Records `(slot, objData, objIndex, depth)` only — never a copy of the render state |
@@ -629,7 +639,7 @@ Share the same memory layout as CDirect3DObject but with a different vtable and 
 |---------|--------|-------------|
 | 0x00426600 | `CopyFrom(src)` | Deep copy with strip↔flat conversion, normal recalculation |
 | 0x004262e0 | `Convert0(src)` | Convert strip indices to flat triangle lists |
-| 0x00425c10 | `TriangleDivide(arr,n)` | Subdivide triangle polyhedra (free function) |
+| 0x00425c10 | `TriangleDivide(arr,n)` | Subdivide triangle polyhedra — **original only, no counterpart in `src/`** |
 
 **Member Layout (additional fields beyond CDirect3DObject):**
 | Offset | Type | Field | Description |
@@ -710,36 +720,40 @@ The original PS1 used an "ordering table" (OT) where GPU packets were linked by 
 
 | Variable | Type | Address | Description |
 |----------|------|---------|-------------|
-| `g_SpriteCommandBuffer` | `SpriteCommand[300]` | `0x008ec900` (approx) | Sprite draw command queue |
+| `g_SpriteCommandBuffer` | `TextureDraw[300]` | `0x008ec900` (approx) | Sprite draw command queue |
 | `g_OT` | `OTEntry[32]` | `0x008ed000` (approx) | Ordering table entries |
 | `g_RenderBufferIndex` | int | `0x004c3310` | Current render buffer index |
 | `g_RenderDisableFlags` | int | `0x004c3314` | Render state flags |
-| `g_SubpixelOffsetX` | int | `0x004c3358` | Sub-pixel scroll offset X |
-| `g_SubpixelOffsetY` | int | `0x004c335c` | Sub-pixel scroll offset Y |
+| `g_SubpixelOffsetX` | int | `0x004d2bd0` | Sub-pixel scroll offset X |
+| `g_SubpixelOffsetY` | int | `0x004d2bd4` | Sub-pixel scroll offset Y |
+| `g_displayImageOriginX/Y` | int | `0x004c335c` / `0x004c3360` | what used to be listed above as the subpixel offsets (`SpriteRenderer.cpp:20-23`) |
 | `g_MaxFadeValue` | int | `0x004c3368` | Maximum fade value (4095) |
 | `g_DepthSortOverride` | int | `0x004c2d14` | Depth sorting override |
-| `g_ColorScaleFactor` | float | `0x004af2ac` | Color conversion factor (1.0f / 255.0f) |
+| `g_ColorScaleFactor` | float | `0x004af2ac` | Color conversion factor (**2.0f / 255.0f**, `SpriteRenderer.cpp:26`) |
 
-### SpriteCommand Structure
+### `TextureDraw` structure (was documented here as `SpriteCommand`)
+
+`sizeof(TextureDraw) == 0x54`, pinned by `static_assert`
+(`src/game/SpriteRenderer.h:75`). `g_SpriteCommandBuffer` is `TextureDraw[300]`.
 
 | Offset | Type | Field | Description |
 |--------|------|-------|-------------|
-| 0x00 | int | `type` | Primitive type (10 = sprite) |
-| 0x04 | float | `r` | Render flags / red component |
-| 0x08 | float | `g` | Green / brightness |
-| 0x0C | float | `b` | Blue |
-| 0x10 | float | `blend` | Alpha blend |
-| 0x14 | float | `x0` | Left screen X |
-| 0x18 | float | `y0` | Top screen Y |
-| 0x1C | float | `x1` | Right screen X |
-| 0x20 | float | `y1` | Bottom screen Y |
-| 0x24 | int | `depthSort` | Depth sorting key |
-| 0x28 | short | `u0` | Left texture U coordinate |
-| 0x2A | short | `v0` | Top texture V coordinate |
-| 0x2C | short | `u1` | Right texture U coordinate |
-| 0x2E | short | `v1` | Bottom texture V coordinate |
-| 0x30 | int | `texturePage` | Texture page handle |
-| 0x34 | int | `extraFlags` | Extra flags / D3D SRV slot index |
+| 0x00 | uint  | `type` | 10 = textured quad, 12 = 4-corner quad |
+| 0x04 | uint  | `renderFlags` | filled by the `SetTexture` vtable call |
+| 0x08 | short | `x0` `y0` `x1` `y1` | screen corners (0x08..0x0e) |
+| 0x10 | short | `u0` `v0` `u1` `v1` | texture coords (0x10..0x16) |
+| 0x18 | uint  | `depthSort` | depth sorting key |
+| 0x1c | uint  | `spriteFlags` | `SPRITE_FLAG_*` from `BuildSpriteRenderFlags`/`GetTextureVariant`. A plain integer, though the neighbouring r/g/b are floats — which is why the decompiler shows a float cast |
+| 0x20 | float | `r` `g` `b` | 0x20..0x28 |
+| 0x2c | float | `variantAlpha` | **per-primitive semi-transparency level, and it is a FLOAT** |
+| 0x30 | uint  | `extraFlags` | extra flags |
+
+> The old table here typed 0x2c as `short u1`/`v1` and 0x30 as `int
+> texturePage`. That `int` is the mis-port `SpriteRenderer.h:36-38` exists to
+> record: the original stores a float built by `fild` + `fmul [1/256]`, so read
+> as an int, 0x80/256 = 0.5 truncated to 0 and **every sprite lost its
+> translucency**. 0.0 there means OPAQUE, not invisible. The doc was still
+> presenting the broken layout as the format.
 
 ### Sprite Functions
 
@@ -748,13 +762,13 @@ The original PS1 used an "ordering table" (OT) where GPU packets were linked by 
 | `0x0046d960` | `BuildSpriteRenderFlags` | `BuildSpriteRenderFlags` | `void(uint texFlags, uint* out)` |
 | `0x0046d940` | `GetTextureVariant` | `GetTextureVariant` | `int(uint texFlags)` |
 | `0x0046d990` | `SpriteQueue_Reset` | `SpriteQueue_Reset` | `void()` |
-| `0x0046e5a0` | `draw_texture` | `draw_texture` | `int(uint* pak, ushort depth)` |
-| `0x0046df60` | `AddSprite` | `AddSprite` | `int(uint* pak, short depth, int tpage, int fade)` |
-| `0x0046e200` | `AddTintSprite` | `AddTintSprite` | `int(uint* pak, ushort fade)` |
-| `0x0046dc00` | `SubmitEffectSprite` | `SubmitEffectSprite` | `int(void* buf, int depth, int texId, byte r, byte g, byte b, int scaleX, int scaleY, int blend, short bright)` |
+| `0x0046e5a0` | `draw_texture` | `draw_texture` | `int(TextureDesc*, unsigned short depth)` |
+| `0x0046df60` | `AddSprite` | `AddSprite` | `int(TextureDesc*, short depth, int tpage, int fade)` |
+| `0x0046e200` | `AddTintSprite` | `AddTintSprite` | `int(TextureDesc*, unsigned short brightness)` |
+| `0x0046dc00` | `SubmitEffectSprite` | `SubmitEffectSprite` | `int(TextureDesc*, int depth, int texId, byte r, byte g, byte b, int scaleX, int scaleY, int blend, short bright)` |
 | `0x0046edb0` | `SubmitEffectSprite_Ex` | (variant) | Extended effect sprite |
 | `0x0046f280` | `AddSprite_Ex` | (variant) | Extended sprite with sub-pixel scrolling |
-| `0x0046f8a0` | `AddTintSprite_Ex` | (variant) | Extended tint sprite |
+| `0x0046f8a0` | `AddTintSprite_Ex` | — | **no counterpart in `src/`** (the other four `*_Ex` entries do exist) |
 | — | (new) | `FlushSpriteCommands` | Converts buffer → D3D11 draw calls |
 
 ### Polygon Functions
@@ -901,14 +915,21 @@ void destroy_texture_page(int id) {
 
 ---
 
-## 6. Global Arrays (Static Initialization)
+## 6. Global Arrays (Static Initialization) — *original binary only*
+
+> **Nothing in this section exists in `src/`.** `g_TextureArray`,
+> `g_ViewportArray`, `DAT_008eca00` and all twelve of the init/cleanup functions
+> named below (`TextureArray_*`, `ViewportArray_*`, `PageTableArray_*`,
+> `GlobalMarniBits_*`, `GlobalViewport_*`) are the original's static-init
+> machinery, which the port does not reproduce. Kept as a description of the
+> original; do not go looking for these symbols.
 
 ### Texture Array (`g_TextureArray`)
 
 | Property | Value |
 |----------|-------|
 | Address | `0x008ed4d0` |
-| Size | 51 elements × 892 bytes each (PSXTexture) |
+| Size | 51 elements × 840 bytes each (`sizeof(PSXTexture)`, `static_assert` at `PSXTexture.cpp:17`) |
 | Init Chain | `TextureArray_Init` → `TextureArray_ConstructElements` → `_eh_vector_constructor_iterator_` |
 | Cleanup | Registered via `_atexit(TextureArray_Cleanup)` |
 
@@ -926,7 +947,7 @@ void destroy_texture_page(int id) {
 | Property | Value |
 |----------|-------|
 | Address | `0x008eca00` |
-| Size | 9 elements × 176 bytes each (2 × CMarniBits per element) |
+| Size | 9 elements × 168 bytes each (2 × `sizeof(CMarniBits)` = 2 × 0x54) |
 | Init Chain | `PageTableArray_Init` → `PageTableArray_ConstructElements` |
 
 ### Initialization Functions Grouped
@@ -982,7 +1003,7 @@ D3D11 Texture2D + SRV → g_TexturePageSRV[256]
 Game Logic (Tasks) per frame
     ↓
 AddSprite / draw_texture / AddTintSprite / SubmitEffectSprite
-    ↓ PS1 GPU packet → SpriteCommand
+    ↓ PS1 GPU packet → TextureDraw
 g_SpriteCommandBuffer[300]
     ↓ Queue all sprites for this frame
 FlushSpriteCommands()
@@ -1011,12 +1032,14 @@ Screen
 | `src/marni/Marni3DObject.cpp` | 3D object class implementations (all vtable + non-virtual methods) |
 | `src/marni/MarniInput.cpp` | DirectInput keyboard/joystick polling |
 | `src/game/TextureLoader.cpp` | Texture page creation, async workers, page management |
-| `src/game/SpriteRenderer.h` | SpriteCommand struct, OT entry, sprite functions |
-| `src/game/SpriteRenderer.cpp` | PSYQ GPU sprite emulation (19 functions) |
+| `src/game/SpriteRenderer.h` | `TextureDraw` struct, OT entry, sprite functions |
+| `src/game/SpriteRenderer.cpp` | PSYQ GPU sprite emulation (~30 functions) |
 | `src/Globals.h` | Global variable declarations for all Marni subsystems |
 | `src/marni/MarniDX.h` | Backend interface: device/shader setup, texture create/destroy, DrawRect/DrawTriangles*, adapter enumeration |
 | `src/marni/MarniDX.cpp` | The actual DX11 implementation behind every vtable method |
-| `src/marni/MarniSound.h/.cpp` | DirectSound-compatible sound API on XAudio2 (banks, play_sfx, fade/decay live in `src/game/SoundSystem.*`) |
+| `src/marni/MarniSound.{h,cpp}` | DirectSound-compatible sound API on XAudio2 |
+| `src/game/SoundApi.cpp` | the platform-neutral half, split out in Phase 6: `UpdateSoundFade`, `SndCompactCallback`, `findAndOpenFile`, the `g_pDirectSound` wrappers |
+| `src/game/SoundSystem.*` | banks, `play_sfx`, fade/decay |
 
 Every original address in the `0x0041xxxx-0x0049xxxx` Marni region is either
 implemented above or triaged out of scope (compiler SEH/static-init glue,
