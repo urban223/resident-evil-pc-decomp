@@ -18,8 +18,10 @@ Notation:
   stack. All non-condition commands return `1` (continue).
 - `0x51`–`0xFF` are not valid opcodes: the original table ends at `0x50` with
   no padding (the next bytes are the string `"DOOR_AT_SET "`). The decomp pads
-  the 256-entry array with `nullptr`, turning out-of-range dispatch into a
-  null-pointer crash.
+  the 256-entry array with `nullptr`, and `scd_dispatch` tests for it: an
+  out-of-range opcode logs `[scd] NULL command 0xNN` and returns 0, which aborts
+  the stream rather than crashing (`RoomEvents.cpp:116-120`). The opcode is a
+  symptom — a null here means the stream itself is wrong.
 
 ---
 
@@ -101,7 +103,7 @@ Notation:
 | Offset | Key | Type | Description |
 |---|---|---|---|
 | +0 | opcode | u8 | `0x04` |
-| +1 | bank | u8 | `0`=g_ScenarioFlags, `1`=g_ScenarioFlags2, `2`=g_LocksFlags, `3`=g_EnemiesFlags, `4`=g_SysFlags, `5`=g_main_state_flags, `6`=g_message_flags, `7`=g_roomItemsFlags, `8`=g_RoomFlags, `9`=g_itemUseFlags (per-frame item-use flags) |
+| +1 | bank | u8 | `0`=g_ScenarioFlags, `1`=g_ScenarioFlags2, `2`=g_LocksFlags, `3`=g_EnemiesFlags, `4`=g_SysFlags, `5`=g_MainStateFlagBank (both dwords; sel 0x20+ selects msf2), `6`=g_message_flags, `7`=g_roomItemsFlags, `8`=g_RoomFlags, `9`=g_itemUseFlags (per-frame item-use flags) |
 | +2 | sel | u8 | Bits 0–4: bit index within the dword. Bits 5–7: dword byte offset (`(sel & 0xE0) >> 3`). |
 | +3 | expect | u8 | Expected bit state: `0` = expect set, `1` = expect clear. |
 
@@ -815,7 +817,7 @@ Obstacle record layout (starts at opcode stream `+2`, so record offset = stream 
 | Record offset | Key | Type | Description |
 |---|---|---|---|
 | +0x00 | unused0 | u8[8] | Not read by the handler; the record is referenced whole via the entry pointer. |
-| +0x08 | itemType | u8 | Item type character (`0x54` cut-off for visibility mask shape; special cases for `'R'`/`'P'` palettes and `'/'` with Jill). |
+| +0x08 | itemType | u8 | Item type character. Two boundaries, not one: `> ITEM_MAP_LAST` (0x53) → mask `0xD`, `< ITEM_MAP_FIRST` (0x4E) → mask `4`, in between → mask `0xF` (CmdFunctions.cpp:634-645). Special cases for `'R'`/`'P'` palettes and `'/'` with Jill). |
 | +0x0A | modelIdx | u8 | Index into `g_item_model_table` / RDT `item_models`; also event entry word `+4`. |
 | +0x0B | scaParent | u8 | Whose matrix the item hangs off — this is what the posX/Y/Z below are *relative to*. `0xFF` none (absolute room coords), `0xFE` player, else `g_omodel_table[value]`. See [SCA parent](#0x18-sca-parent) below. |
 | +0x0C | posX | s16 | Position X (also object `+0x34`/`+0x6C`). |
@@ -1245,7 +1247,16 @@ Parameter block layout (starts at opcode stream `+0x0C`, so block offset = strea
 | +0 | opcode | u8 | `0x2A` |
 | +1 | type | u8 | Effect type id. |
 | +2 | parentIdx | u8 | Low byte of the parent word; passed to `Effect_CreateBillboard` as its second argument. |
-| +3 | parentType | u8 | High byte of the parent word. `0` identity matrix, `1` player matrix, `2..0x7F` effect-pool matrix (`g_effectPool[type * 3 + 0x3D]`, past the 64-slot pool — the original overruns here too), `0x80..0xFF` omodel matrix `g_omodel_table[type & 0x7F]`. The `0x8000` test is on this parent word, not on the trailing flags word. |
+| +3 | parentType | u8 | High byte of the parent word. `0` identity matrix, `1` player matrix, `2..0x7F` **enemy** matrix — `g_EnemiesList[parentType - 2].scaMatrixData.localMatrix` — `0x80..0xFF` omodel matrix `g_omodel_table[type & 0x7F]`. The `0x8000` test is on this parent word, not on the trailing flags word. |
+
+> **Not the effect pool.** Ghidra renders that middle branch as
+> `g_effectPool[parentType * 3 + 0x3D]` because it folded the base into the
+> wrong containing symbol — three effect slots happen to be the size of one
+> `Entity`. Taking it literally reads a matrix out of whatever the port's `.bss`
+> ordering put there, which is what made ROOM7060's first-slash blood vanish:
+> the billboard landed outside every camera zone and was culled. The 30-line
+> derivation from the original assembly is at `CmdFunctions.cpp:1552-1582`; read
+> it before "correcting" this row back.
 | +4 | posX | s16 | Spawn X. |
 | +6 | posY | s16 | Spawn Y. |
 | +8 | posZ | s16 | Spawn Z. |
