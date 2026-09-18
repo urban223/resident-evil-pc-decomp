@@ -18,7 +18,6 @@
 int            g_coopConfigMode = 0;      // 0 off, 1 local debug, 2 host, 3 client
 char           g_coopConfigHost[64] = "";
 unsigned short g_coopConfigPort = 27015;
-int            g_coopBootToRaid = 0;
 #define MAX_LINE    1024
 #define MAX_LINES   512
 
@@ -432,7 +431,6 @@ BOOL ConfigFile_Load(void)
         g_coopConfigHost[sizeof(g_coopConfigHost) - 1] = 0;
     }
     g_coopConfigPort = (unsigned short)ReadInt(path, "Coop", "Port", 27015);
-    g_coopBootToRaid = ReadInt(path, "Coop", "BootToRaid", 0);
 
     char version[16];
     if (ReadValue(path, "Assets", "Version", version, sizeof(version))) {
