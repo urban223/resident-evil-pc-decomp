@@ -17,7 +17,7 @@ Files: `src/game/Achievements.{h,cpp}`, the generated
 `src/game/AchievementAtlasData.h`, `tools/build_achievement_ui.py`,
 `tools/build_achievement_sfx.py`, and the binary assets `Data/achvui.bin` and
 `Sound/achv.wav`.
-Touched: `Rendering.cpp`, `WeaponDamage.cpp`, `SaveLoadScreen.cpp`,
+Touched: `Rendering.cpp`, `WeaponDamage.cpp`, `SaveLoadScreen.cpp`, `MainMenu.cpp`,
 `marni/MarniSystem.{h,cpp}`, `CMakeLists.txt`, `Game.vcxproj`.
 
 A candidate list to grow into lives in `docs/RETROACHIEVEMENTS_REFERENCE.md`

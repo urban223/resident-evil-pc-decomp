@@ -41,10 +41,12 @@ DERIVED = [
     ("USA/Data/raideye.bin",   "tools/build_raid_eye.py"),
 ]
 
-# These two generators PATCH THE GAME'S OWN FILES IN PLACE - W12.EMW gains a
-# barrel, ROOM110{0,1}.RDT become the RAID arena - so the path exists whether or
-# not the tool has ever run and no check here can tell the two apart. They can
-# only be stated.
+# These two generators write OVER a path the game already ships - W12.EMW gains
+# a barrel, ROOM110{0,1}.RDT stop being an empty four-byte stub and become the
+# RAID arena - so the path exists whether or not the tool has ever run and no
+# check here can tell the two apart. They can only be stated. (Only the W12.EMW
+# one destroys anything; stage 1 room 0x10 is filename filler that the game
+# never enters. docs/ASSETS.md has the detail.)
 IN_PLACE = [
     ("USA/players/W12.EMW",          "tools/build_beretta_barrel.py"),
     ("USA/Stage1/ROOM110{0,1}.RDT",  "tools/build_raid_room.py"),

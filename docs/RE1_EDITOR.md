@@ -5,9 +5,11 @@ one renderer. The viewport is the game drawn into part of that window; the
 panels around it are drawn by the same renderer in the same frame; Play runs
 the level inside that same viewport without loading anything.
 
-This replaces the browser editor (`tools/raid_editor_server.py` + its browser
-server). That is superseded and no longer developed; `tools/raid_editor.bat`
-now only says where the editor went.
+This replaces the browser editor — a `tools/raid_editor.html` page served by
+`tools/raid_editor_server.py`. That is superseded and no longer developed, and
+the page itself has since been deleted, so the server can no longer serve
+anything (it answers 404 and says so). `tools/raid_editor.bat` only says where
+the editor went.
 
 ## Why it is arranged this way
 

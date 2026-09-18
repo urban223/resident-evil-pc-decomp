@@ -44,14 +44,15 @@ not sizes or dates, and it is the only thing here that would have caught it.
 
 ```
 1. git clone …
-2. Copy your own game data into assets/USA/  (Data, Enemy, Item_m2, Movie,
-   Sound, players) and assets/config.ini from config.ini.template
+2. Copy your own game data into assets/USA/ — the whole tree, which is Data,
+   Effspr, Enemy, Item_m1, Item_m2, Movie, Objspr, Players, Sound, Stage1..7
+   and Voice — and assets/config.ini from config.ini.template
 3. Build once — build.bat / build_debug.bat, or the CMake commands in
    docs/LINUX_PORT.md — which creates bin/Debug and bin/Release
 4. Copy your game data into bin/Debug/USA/ and bin/Release/USA/ as well
 5. python3 tools/deploy_portdata.py      ← the port's own assets, all 3 trees
 6. Rebuild whatever is derived from the game's own art (below) — and read the
-   warning there first: two of those tools overwrite the game's own files
+   warning there first: build_beretta_barrel.py overwrites W12.EMW in place
 7. Accept that players/{w1f,w2f,w3f}.emw cannot be rebuilt at all (below)
 ```
 
@@ -70,17 +71,24 @@ audio, so they are not tracked either. Their generators are:
 | `USA/Data/titlelogo.bin` | `tools/build_title_bg.py` | the wordmark cut out of `title.pix` |
 | `USA/Data/raideye.bin` | `tools/build_raid_eye.py` | a frame of `Movie/ou.avi` |
 | `USA/players/W12.EMW` | `tools/build_beretta_barrel.py` | the stock file, **patched in place** |
-| `USA/Stage1/ROOM110{0,1}.RDT` | `tools/build_raid_room.py` | nothing, but it **overwrites two real rooms** |
+| `USA/Stage1/ROOM110{0,1}.RDT` | `tools/build_raid_room.py` | nothing — it fills an empty slot |
 
 `deploy_portdata.py --check` names the missing ones at the end of its run.
 
-**Two of these overwrite the game's own files and keep no backup.**
-`build_beretta_barrel.py` reads `players/W12.EMW`, adds the barrel and writes it
-back over itself in all three trees; running it twice trips its own assertions
-rather than doubling the barrel, but the stock file is gone either way.
-`build_raid_room.py` writes `Stage1/ROOM1100.RDT` and `ROOM1101.RDT`, which are
-**real rooms in the retail game**. Re-copy both from your own install before
-re-running either tool, and never point them at a tree you cannot restore.
+**`build_beretta_barrel.py` overwrites the game's own file and keeps no backup.**
+It reads `players/W12.EMW`, adds the barrel and writes it back over itself in
+all three trees. Running it twice trips its own assertions rather than doubling
+the barrel, but the stock file is gone either way, so re-copy `W12.EMW` from
+your install before re-running it.
+
+`build_raid_room.py` is the safe one and worth understanding, because it looks
+alarming and is not. Stage 1 room 0x10 ships as a **four-byte stub**
+(`00 00 00 00`) — filename filler that keeps the `room<S><RR><V>.rdt` pattern
+dense. Nothing enters it: no door leads there, no script names it, and
+`DebugMenu.cpp::DebugRoomSelectable` excludes it outright, exactly as it
+excludes the other stage-1 stub, 0x19. (The elevator stairway that *is* room
+0x10 lives in stage 6, as `ROOM6100.RDT`, and is untouched.) You can tell which
+you have by size: 4 bytes is the stub, 65536 is the RAID arena.
 
 ## The one gap a fresh clone cannot fill
 
@@ -106,7 +114,7 @@ comparison against `I00V.IVM` matches 162 bytes out of 66080, i.e. chance.
 ## The Space GUI pack
 
 `assets/SpaceGUI/` is a purchased interface kit. A licence like that covers
-using the art **in a product**; it does not cover redistributing the kit's 844
+using the art **in a product**; it does not cover redistributing the kit's 830
 source files so that others can extract them. So the pack is not tracked, and
 the two atlases baked from it — `edui.bin` and `achvui.bin` — are, because they
 are the product.

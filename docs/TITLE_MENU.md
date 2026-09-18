@@ -219,7 +219,7 @@ core's level.
   px and the top 52, while the left and bottom barely move. An even expansion
   would drag the bright middle with it. The core is drawn as its **own quad
   about the letter**, not about the middle of the halo.
-- The halo **gains alpha as it spreads** (69 → 132). A radial falloff stretched
+- The halo **gains alpha as it spreads** (32 → 78). A radial falloff stretched
   over a bigger quad puts less light through each of its pixels, so holding the
   alpha while the quad grows makes the light *fade* — the opposite of growing.
 - It **whitens** as it grows (`title_warm`, 85% of the way to white). A light
@@ -457,7 +457,7 @@ the INVENTORY. `weapon_reload()` (PlayerAnimations.cpp) is that same transfer on
 a button combination.
 
 It is the menu's arithmetic, not a new rule. Capacity comes from
-`g_ItemMaxQty[weaponId * 4]` and the weapon→ammo pairing is the game's own:
+`g_ItemMaxQty[(weaponId + 9) * 4]` and the weapon→ammo pairing is the game's own:
 `weapon_fire_check` already asks for `equippedWeaponId + 9` (BERETTA 0x02 →
 CLIP 0x0B, up to the acid bazooka 0x09 → 0x12). **Bit 7 of the quantity byte is
 a flag, not part of the count**, so it is masked out and put back.
@@ -508,20 +508,32 @@ Two things the parse does that matter: **it expands** (each triangle gets three
 fresh vertices, so the slide is 36 buffer vertices, not 8), and **it negates Y**,
 so a slide travelling rearwards is a POSITIVE y offset.
 
-**Finding the slide.** Measured off the shipped file: its TMD splits by shared
-vertices into fist (34 tris, verts 0–18) and slide (12 tris, verts 19–26), which
-maps to buffer vertices 102..137. The runtime test is
-`x >= 47 && y <= -80 && |z| <= 32`, applied PER TRIANGLE — all three corners or
-none — with the trip count checked against 12 before anything moves.
+**Finding the slide.** Measured off the **stock** `W12.EMW`: its TMD splits by
+shared vertices into fist (34 tris, verts 0–18) and slide (12 tris, verts
+19–26), which maps to buffer vertices 102..137. (`tools/build_beretta_barrel.py`
+has since patched that file in place — it now reads 58 prims and 35 verts across
+three components, the third being the barrel. The split above is what the tool
+starts from and asserts, not what is on disk.) The runtime test is
 
-Two numbers had to be wrong once to be got right: **travel is 100 model units**
+```c
+x >= SLIDE_MIN_X && |y| >= SLIDE_MIN_ABS_Y
+                 && |z| >= SLIDE_MIN_ABS_Z && |z| <= SLIDE_MAX_ABS_Z
+// 47, 80, 18, 32
+```
+
+applied PER TRIANGLE — all three corners or none — with the trip count checked
+against 12 before anything moves. Both the Y and Z tests are on the **absolute
+value**, and the `|z| >= 18` floor is what keeps the barrel out of the selection
+now that there is one.
+
+Two numbers had to be wrong once to be got right: **travel is 150 model units**
 (a real Beretta's seventh-of-its-length is invisible at fifty pixels across), and
 **the cycle is 6 frames**, not 4, because the muzzle smoke covers a shorter one.
 
 **The empty hold needs a latch.** `while (ammo == 0)` is a state that exists and
 is never seen: firing the last round with ammo in the inventory drops straight
 into behaviour 0x18. So the hold is armed when the count reaches zero and runs
-down on its own (14 frames).
+down on its own (`SLIDE_EMPTY_HOLD`, 26 frames).
 
 **Where it has to run: the render flush, not `update_player_anim`.** That was
 where it went first, and it did nothing. `render_entity` re-runs `PSXObject_Store`

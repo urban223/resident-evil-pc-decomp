@@ -3,7 +3,11 @@
 
 CUSTOM. Not part of the original game.
 
-WHY THIS EXISTS
+SUPERSEDED. The editor is in the game now (RAID mode, F2 - see
+docs/RE1_EDITOR.md), and raid_editor.html has been deleted from the tree, so
+this serves a 404 and nothing else. Kept for the notes below.
+
+WHY THIS EXISTED
 
 tools/raid_editor.html is a browser page, and a browser page cannot start a
 program. Unreal's Play button is the one thing an editor really cannot fake, so

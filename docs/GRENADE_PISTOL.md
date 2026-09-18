@@ -213,7 +213,7 @@ of damage plus a fire billboard, and nothing on the enemy remembers it was ever
 alight.
 
 **What the shot does now**: the damage override is set to `ITEM_BERETTA`, so the
-hit is an ordinary handgun hit, and `g_weaponIgniteTarget` is read inside
+hit is an ordinary handgun hit, and `g_weaponStatusEffect` is read inside
 `apply_weapon_damage` right after the post-hit callback. It has to be read
 there: that is the only place that knows *which* enemy was hit.
 
@@ -234,7 +234,7 @@ The useful record is the *inventory* of what a second weapon costs, and the
 three things that did not generalise for free.
 
 **One id test became a macro.** `ITEM_IS_CUSTOM_PISTOL(id)` covers the sites
-that only need to know the item is one of ours (six of them); six sites that
+that only need to know the item is one of ours (12 of them); the sites that
 genuinely need to tell them apart keep an explicit id test.
 
 **Tables extended by one.** The two description tables, and

@@ -19,7 +19,7 @@ splitting them is exact:
 
 ```python
 # union-find over triangles that share a vertex index
-comps = connected_components(tris)     # for Jill's w12.emw: exactly 2
+comps = connected_components(tris)     # for the STOCK w12.emw: exactly 2
 hand, weapon = sorted(comps, key=len, reverse=True)   # 34 tris, 12 tris
 ```
 
@@ -28,12 +28,17 @@ picking "skin-coloured" triangles finds only the 8 exposed-skin ones out of 34
 and the rest of the fist gets deleted with the weapon, leaving a few shreds of
 skin floating next to the gun.
 
-Jill's Beretta (`players/w12.emw`) splits as:
+The **stock** Jill Beretta (`players/w12.emw`) splits as:
 
 | part | tris | verts | bbox |
 |---|---|---|---|
 | fist | 34 | 0-18 | X -62..48, Y 1..262, Z -50..69, centre (7.9, 146.8, -1.9) |
 | weapon | 12 | 19-26 | X 47..127, Y 84..424, Z -27..27 |
+
+Do not expect the file in the tree to match that table any more:
+`tools/build_beretta_barrel.py` patches `W12.EMW` in place and it now carries 58
+prims and 35 verts in three components, the third being the barrel it adds. The
+two-component split is what the tool starts from and asserts against.
 
 Note how crude the weapon half is: a plain box. It is only the slide — the grip
 is not modelled at all, because the fist covers it. That is also what makes
@@ -55,7 +60,8 @@ animation data is copied verbatim, so every pose stays exactly as it was.
 The file is read into **`g_animationBuffer[37888]`**, another fixed global with
 no bounds check (see the `.ivm` doc for the same trap on the item viewer, where
 overrunning it corrupted unrelated globals and crashed elsewhere). Keep the
-whole file well under that: the flare pistol's is ~31 KB with ~2 KB of margin.
+whole file well under that: the flare pistol's `w1f.emw` is 31116 bytes, which
+leaves 6772 to spare.
 
 ## The weapon has no texture of its own
 
