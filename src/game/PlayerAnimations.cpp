@@ -1,5 +1,6 @@
 // PlayerAnimations.cpp - Player animation state machines (decompiled from Ghidra)
 #include "../Globals.h"
+#include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "../marni/MarniSystem.h"
 #include <cstdio>
 #include <cstdlib>
@@ -4791,7 +4792,15 @@ static void player_behavior_14_autoaim_fire(void)
                                      : (customPistol == ITEM_ACID_PISTOL)    ? WEAPON_STATUS_ACID
                                                                              : WEAPON_STATUS_FREEZE;
             }
-            apply_weapon_damage(dmgWeaponId);
+            // CUSTOM: co-op friendly fire. Tested BEFORE the enemy search and,
+            // on a hit, instead of it: the bullet stops in the body standing in
+            // the lane, so a teammate between you and a zombie shields it. The
+            // aiming assist can never have put him there - both target scans
+            // walk g_EnemiesList and a player is not in it - so this only ever
+            // fires on a shot someone aimed by hand.
+            if (!Coop_FriendlyFire(dmgWeaponId)) {
+                apply_weapon_damage(dmgWeaponId);
+            }
             g_weaponDamageIdOverride = 0;
             g_weaponStatusEffect = 0;
         }

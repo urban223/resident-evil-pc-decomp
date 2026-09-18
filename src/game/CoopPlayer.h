@@ -65,3 +65,23 @@ extern int g_coopPadSource;
 // Set up player 2 next to player 1's spawn. Called from Raid_EnterRoom once the
 // level's own spawn has been applied to player 1.
 void Coop_SpawnPlayer2(void);
+
+// ---------------------------------------------------------------------------
+// Friendly fire
+//
+// Requirement: you can shoot your teammate, deliberately, and a magnum can take
+// his head off - but the aiming assist must never acquire him.
+//
+// The second half is already true and needs no code: both target scans walk
+// g_EnemiesList (PlayerAnimations.cpp:4197, :4234) and a player is not in that
+// array. Nothing can lock onto him, so every teammate hit is aimed by hand.
+//
+// The first half cannot reuse the gun's own cone: weapon_hit_detect_gun stages
+// it in g_svecScratch and checkEntityInRangeCone mutates the shared
+// g_playerDisplacement accumulator, so calling it for a second body outside that
+// staging would corrupt the enemy search running in the same shot. This is a
+// separate, narrower test instead - which also makes hitting a teammate feel
+// deliberate rather than incidental.
+//
+// Returns 1 if the shot was spent on the teammate.
+int Coop_FriendlyFire(unsigned char weaponId);

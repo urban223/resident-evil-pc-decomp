@@ -5,6 +5,7 @@
 // projectile distance) to find the closest target in range+FOV, then
 // subtracts damage from the enemy's health and sets the hit reaction state.
 #include "../Globals.h"
+#include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include <cstdlib>                   // rand() - MSVC got this via <windows.h>
 #include "entities/EntityCommon.h"   // ENEMY_* / NPC_* type ids
 #include "Achievements.h"             // CUSTOM: kill-count achievements
@@ -2108,4 +2109,91 @@ static void weapon_post_hit_blood3(Entity* enemy)
         }
         weapon_post_hit_blood2(enemy);
     }
+}
+
+// ============================================================================
+// CUSTOM: co-op friendly fire.
+//
+// Lives here, not in CoopPlayer.cpp, because everything it needs is file-local
+// to this translation unit: g_scaled_down_dist (the weapon class the shot was
+// fired with), the hit-record table, and compute_2d_cross_product.
+//
+// The requirement is "you can shoot your teammate, and a magnum can take his
+// head off, but the aiming assist must never acquire him". The second half is
+// already structural: both target scans walk g_EnemiesList (PlayerAnimations.cpp
+// :4197, :4234) and a player is not in that array, so nothing can lock on. Every
+// teammate hit is therefore aimed by hand, and this is the test for it.
+//
+// It deliberately does NOT reuse the gun's own cone. weapon_hit_detect_gun
+// stages that in g_svecScratch and checkEntityInRangeCone mutates the shared
+// g_playerDisplacement accumulator, so running it for a second body would
+// corrupt the enemy search happening in the same shot.
+//
+// The shape is a CORRIDOR along the aim line rather than a cone: the teammate
+// has to be in front of the shooter and within COOP_FF_CORRIDOR units of the
+// line he is facing down, whatever the range. A cone widens with distance, which
+// would make a far-away teammate easier to hit by accident than a near one -
+// the opposite of "deliberate". Cross and dot against the facing vector, so no
+// atan is needed and the whole test is integer.
+// ============================================================================
+#define COOP_FF_CORRIDOR   260   // half-width of the lane, world units
+#define COOP_FF_ENEMY_ROW  0     // damage uses the weapon's zombie row
+
+int Coop_FriendlyFire(unsigned char weaponId)
+{
+    if (!g_coopActive) return 0;
+
+    const int me = (g_pCurPlayer == &g_players[1]) ? 1 : 0;
+    PlayerEntity* shooter = &g_players[me];
+    PlayerEntity* mate    = &g_players[me ^ 1];
+
+    if (mate->health < 0) return 0;          // already down
+
+    const int dx = (int)mate->scaMatrixData.localMatrix.t[0]
+                 - (int)shooter->scaMatrixData.localMatrix.t[0];
+    const int dz = (int)mate->scaMatrixData.localMatrix.t[2]
+                 - (int)shooter->scaMatrixData.localMatrix.t[2];
+
+    const unsigned char adj = (unsigned char)(weaponId - 1);
+    if (adj >= 10) return 0;
+    const unsigned int range = weapons_ranges[adj + (unsigned int)(shooter->id & 1) * 10];
+    const unsigned int dist  = SquareRoot0(dx * dx + dz * dz);
+    if (dist == 0 || dist > range) return 0;
+
+    // Facing vector, 4096 = one turn, table values scaled by 4096.
+    const int fx = GteSin(shooter->directionAngle);
+    const int fz = GteCos(shooter->directionAngle);
+
+    // In front of him at all.
+    if (((fx * dx) + (fz * dz)) <= 0) return 0;
+
+    // Perpendicular distance from the aim line. |cross| / 4096 undoes the table
+    // scale and leaves world units.
+    int side = compute_2d_cross_product(fx, fz, dx, dz) / 4096;
+    if (side < 0) side = -side;
+    if (side > COOP_FF_CORRIDOR) return 0;
+
+    // Nothing solid in between. The ray origin is the global ENTITY, which is
+    // the shooter for the whole fire sequence.
+    VECTOR mateT;
+    mateT.x = (int)mate->scaMatrixData.localMatrix.t[0];
+    mateT.y = (int)mate->scaMatrixData.localMatrix.t[1];
+    mateT.z = (int)mate->scaMatrixData.localMatrix.t[2];
+    if (check_weapon_line_of_sight(&mateT)) return 0;
+
+    // The head shot is the engine's own inference, not a per-joint test:
+    // shotgun point-blank or a magnum class, plus the shooter aiming up. Taken
+    // from enemy_hit_reaction_zombie above (:1794-1798) so a magnum takes a
+    // teammate's head off exactly when it would take a zombie's.
+    const int magnumClass = (g_scaled_down_dist == 3 || g_scaled_down_dist == 4);
+    const int shotgunNear = (g_scaled_down_dist == 2 && dist < 3000);
+    if ((shotgunNear && (shooter->flags & 0xC0) != 0)
+        || (magnumClass && (shooter->flags & 0x40) != 0)) {
+        mate->health = (short)0xfed4;        // -300, the engine's own instant kill
+        return 1;
+    }
+
+    const unsigned int row = (unsigned int)adj + (unsigned int)COOP_FF_ENEMY_ROW * 10;
+    mate->health = (short)(mate->health - g_weaponHitRecordsFirstRun[row].dmg);
+    return 1;
 }
