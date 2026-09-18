@@ -262,6 +262,18 @@ void Coop_ReserveZombies(void)
         memset(z, 0, sizeof(Entity));
         z->id = ENEMY_ZOMBIE;
 
+        // The SCA collision volumes, the way RaidEnemies_Spawn gives them to
+        // every enemy it places (RaidEnemies.cpp:116-118). Without them
+        // pSca_hit_data is 0, and ResolveEntityScaCollision reads its world
+        // geometry straight off that pointer (EntityCommon.cpp:625) - a null
+        // deref the first time this zombie touches anybody, which is what
+        // "volAWorld was nullptr" is. Sca_info is the VALUE from the table, not
+        // the table's address.
+        z->Sca_info = g_scaDataTable[0];
+        z->pSca_hit_data = g_scaPoolPtr;
+        g_scaPoolPtr += 8 * 6;          // the same 8 parts RAID enemies reserve
+        z->death_event_id = 0xFF;       // no script event to raise on its death
+
         // Marked active only for the duration of the load, because
         // coop_free_enemy_slot picks by that bit and the second reservation
         // must not pick the same slot.
