@@ -697,7 +697,7 @@ corrupts memory rather than merely misbehaving.
 
 ## SCD integration
 
-Zombies are spawned by `cmd_omodel_set`; cutscene actors by `cmd_enemy_set`. The
+Zombies are spawned by `cmd_enemy_set` (0x1B) — it writes `g_EnemiesList[slot]`, `behavior_flags`, `animationId` and bumps `g_enemy_count` (CmdFunctions.cpp:842, 862-885, 914). `cmd_omodel_set` (0x1F) builds the 0xA4-byte ROOM-OBJECT record instead. The
 entity's `id` selects `enemies_update_functions_tbl[id]` (**48** entries — ids
 0–21 monsters, 22–47 the shared human driver in `CharacterNpc.cpp`).
 `death_event_id` at `+0x163` is the `g_EnemiesFlags` bit raised on death.
@@ -769,7 +769,7 @@ grenade shot and the rocket. It also zero-extends the enemy radius
 
 ### Aim cone
 
-Two triangular wedges (near depth 50, far depth 200 + range), each bounded by a
+Two triangular wedges — near tier `z = enemyRadius + 200`, far tier `z = enemyRadius + range`, cone height 50 in `g_svecScratch.x`, far lateral 0x28A (WeaponDamage.cpp:866-884) — each bounded by a
 left/right vector, tested by `checkEntityInRangeCone` (`0x0043d590`) with three
 2D cross products. The vertical offset in `g_svecScratch.x` picks the SCA volume:
 
@@ -785,7 +785,8 @@ left/right vector, tested by `checkEntityInRangeCone` (`0x0043d590`) with three
 |---|---|---|
 | 0 | Torso | Standard stagger / fall backward |
 | 1 | Back | Reverse stagger |
-| 3 | Legs | Leg cut / crawl |
+| 2 | Legs | `zombie_damage_action_tbl[2] = 5` → `explode_leg_and_drop`, sprays joints +0x4D8/+0x554 (Zombie.cpp:610, 636-637) |
+| 3 | Arm | severs joint +0x1F0 in `short_push_back` (Zombie.cpp:3037-3051) — the "blown-off arm" |
 | 4 | Head | Head explosion / headless death |
 
 Two paths produce a head hit: the damage table (the Python has `hit_state = 4`
@@ -802,7 +803,7 @@ enemy->hit_state = hitState;
 ```
 
 `zombie_damaged` then reads low 3 bits as direction/type, bits 3–6 as the
-reaction phase, and bit 7 (from the weapon shift) in `short_push_back`'s joint
+reaction phase. `short_push_back` never tests bit 7 — its severing gate is `(hit_state & 7) == 3` (Zombie.cpp:3037) and its only other read is `hit_state & 1` (:3094) — in its joint
 severing.
 
 ### Other weapon tables
@@ -816,8 +817,8 @@ All verified byte-for-byte against the exe when the aim/fire system landed
 | `g_enemy_hit_reactions` | `0x004bb580` | 20 fn ptrs, indexed by enemy id (`g_weaponHitEnemyType`) |
 | `g_enemyHitJointLists` | `0x004bb5d0` | 20 enemy types × 6 joint indices for the blood spurts |
 | `weapons_ranges` | **`0x004bb648`** (DWORDs) | 10 weapons × 2 characters, `weaponAdj + (id&1)*10` |
-| `weapon_hit_records_easy` | `0x004bb698` | 200 × 12B: `{short kx,ky,kz; short dmg@+6; byte type@+8, data@+9, hit@+10, pad}` — kx/ky/kz (knockback → `g_playerPosScratch`), type/data (→ `0x00be0dec`/`0x00be0df0`) and the health snapshot (`0x00be0df4`) are used for **both** difficulties |
-| `weapon_hit_records_normal` | `0x004bbffe` | 200 × 12B: `{short dmg@+0; short unk@+2; byte hit@+4; short kx,ky,kz}` |
+| `g_weaponHitRecordsFirstRun` | `0x004bb698` | 200 × 12B: `{short kx,ky,kz; short dmg@+6; byte type@+8, data@+9, hit@+10, pad}` — kx/ky/kz (knockback → `g_playerPosScratch`), type/data (→ `0x00be0dec`/`0x00be0df0`) and the health snapshot (`0x00be0df4`) are used for **both** difficulties |
+| `g_weaponHitRecordsSecondRun` | `0x004bbffe` | 200 × 12B: `{short dmg@+0; short unk@+2; byte hit@+4; short kx,ky,kz}` |
 
 `apply_weapon_damage` (0x0043c020) writes `g_weaponHitEnemyType` (0x00be0de4)
 = enemy id before the post-hit callback, which the callbacks and reactions
@@ -828,7 +829,8 @@ layout and were removed.
 
 ## Effect sprite FX — how the head explosion reaches the screen
 
-> Source: `src/game/EffectSystem.cpp`, `src/game/RoomStubs.cpp`,
+> Source: `src/game/EffectSystem.cpp`, `src/game/EffectSprites.cpp` (was
+> `RoomStubs.cpp` until commit 5aba439 split it up),
 > `src/game/SpriteRenderer.cpp`
 
 The head explosion spawns effect types **0** (blood puff, a core00 sprite) and

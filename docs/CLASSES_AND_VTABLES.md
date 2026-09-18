@@ -16,7 +16,7 @@ The game uses a custom wrapper system called **Marni System** that wraps DirectD
 
 **Class Name:** `MarniSystem::Direct3D` (or `CMarniDirect3D`)
 
-**Object Size:** `0x21dc` bytes (8676 bytes)
+**Object Size:** `0x21dc` bytes (8668 bytes)
 
 **Global Instance:** `g_VideoDriver` at `0x00ac4028`
 
@@ -165,8 +165,8 @@ The game uses a custom wrapper system called **Marni System** that wraps DirectD
 |-------|---------|------------------|-------------|
 | 0 | `0x00432b90` | `Release` | Releases the viewport |
 | 1 | `0x00432530` | `Initialize` | Initializes viewport |
-| 2 | `0x00401ee0` | `Lock` | Locks viewport |
-| 3 | `0x00401ef0` | `Unlock` | Unlocks viewport |
+| 2 | `0x00401ee0` | `UnlockStub` (§2; NOT Lock) | Locks viewport |
+| 3 | `0x00401ef0` | `PalBlt` (§2; NOT Unlock) | Unlocks viewport |
 | 4 | `0x00432d50` | `SetViewport` | Sets viewport parameters |
 | 5 | `0x00432f70` | `GetViewport` | Gets viewport parameters |
 | 6 | `0x0041f990` | `Clear` | Clears viewport |
@@ -213,6 +213,13 @@ The game uses a custom wrapper system called **Marni System** that wraps DirectD
 
 **Class Name:** `CMarniViewport3` (or similar)
 
+> **Do not trust the method names below.** All eight addresses in this table are
+> byte-for-byte the CMarniViewport2 vtable from §5, which `Marni3DObject.h:104-112`
+> names Release / CreateWork / GetVertex / SetVertex / GetList / SetList / Lock /
+> Unlock — not Initialize / SetViewport / GetViewport / TransformVertices /
+> LightVertices / SetBackground / GetBackground. Either this is the same vtable
+> under a second address or the names were guessed; §5 is the one backed by source.
+
 #### Virtual Functions:
 
 | Index | Address | Name (Suggested) | Description |
@@ -240,8 +247,8 @@ The game uses a custom wrapper system called **Marni System** that wraps DirectD
 |-------|---------|------------------|-------------|
 | 0 | `0x00432b90` | `Release` | Releases the viewport |
 | 1 | `0x00432530` | `Initialize` | Initializes viewport |
-| 2 | `0x00401ee0` | `Lock` | Locks viewport |
-| 3 | `0x00401ef0` | `Unlock` | Unlocks viewport |
+| 2 | `0x00401ee0` | `UnlockStub` (§2; NOT Lock) | Locks viewport |
+| 3 | `0x00401ef0` | `PalBlt` (§2; NOT Unlock) | Unlocks viewport |
 | 4 | `0x00432d50` | `SetViewport` | Sets viewport parameters |
 | 5 | `0x00432f70` | `GetViewport` | Gets viewport parameters |
 | 6 | `0x00432d10` | `Clear` | Clears viewport |
@@ -252,9 +259,13 @@ The game uses a custom wrapper system called **Marni System** that wraps DirectD
 
 ### DirectSound Class
 
-**Class Name:** `CMarniDirectSound`
+**Class Name:** `DirectSound` (`src/marni/MarniSound.h:15`)
 
-**Constructor:** `InitDirectSoundSystem` at `0x0041f3b0`
+**Size:** `0x32DDC`, pinned by `static_assert` (MarniSound.h:51).
+
+**Note:** despite the "Non-Virtual" heading above, the class declares `void** vtable;` at **+0x00**. The init flag `m_bInitialized` is at **+0x14**; the layout below (HWND at 0x18, WAVEFORMAT at 0x20-0x2E, 0x93c) does not exist — the source has `pad[0x04-0x13]`, `pad[0x18-0x146F]`, then `m_bankSlots[80]` at 0x1470.
+
+**Constructor:** `DirectSound::DirectSound(HWND)` at `0x0041f3b0` (MarniSound.h:30). There is no `InitDirectSoundSystem`.
 
 **Object Size:** `0x32dc0` bytes (208,192 bytes) - includes embedded buffers
 
@@ -322,11 +333,12 @@ This structure stores display mode information:
 
 | Address | Type | Name | Description |
 |---------|------|------|-------------|
-| `0x00ac4028` | CMarniDirect3D* | `g_VideoDriver` | Main video driver object |
-| `0x007d9148` | DWORD | `g_dwSelectedDisplayModeID` | Selected display mode |
+| `0x00ac4028` | CMarniDirect3D* | `g_pMarniDirect3D` | Main video driver object (`src/Globals.h:171`) |
+| `0x007d9148` | DWORD | `g_dwSelectedDisplayAdapterID` | Selected adapter (`Globals.cpp:44`) |
+| `0x007d914c` | DWORD | `g_dwSelectedDisplayModeID` | Selected display mode (`Globals.cpp:47`) |
 | `0x007e0e08` | DWORD | `g_NumD3DRenderersAvailable` | Number of D3D renderers |
 | `0x007e0e10` | D3DRendererInfo | `g_D3DRenderers` | Array of D3D renderer info |
-| `0x007e139c` | HRESULT | `g_lastDirectDrawError` | Last DirectDraw error |
+| — | — | (`g_lastDirectDrawError` at 0x007e139c has no counterpart in this port) | |
 
 ---
 
@@ -401,9 +413,9 @@ explicitly. Omitting `self` causes the wrapper to read garbage from the stack:
 
 The game uses a task-based architecture for game logic:
 
-### TaskEntry Structure
+### TaskControlBlock Structure
 
-**Size:** Unknown (at least 4 bytes for state)
+**Size:** `0x7C`, with `short state` at 0x00 and `short sleepCounter` at 0x02 (`src/game/Types.h:800-804`). The array is `g_TasksTable[3]` at `0x00d1fde4` (`src/Globals.h:295`) — three slots, not open-ended.
 
 | Offset | Type | Name | Description |
 |--------|------|------|-------------|
@@ -415,9 +427,9 @@ The game uses a task-based architecture for game logic:
 
 | Address | Name | Description |
 |---------|------|-------------|
-| `0x0041d0e0` | `Task_suspend` | Suspend a task by ID |
-| `0x0041d100` | `Task_Resume` | Resume a suspended task |
-| `0x004200c0` | `TaskScheduler_Update` | Update all active tasks |
+| `0x00420260` | `Task_suspend` | Suspend a task by ID |
+| `0x00420270` | `Task_Resume` | Resume a suspended task |
+| `0x004200E0` | `TaskScheduler_Update` | Update all active tasks |
 
 ---
 
@@ -458,7 +470,7 @@ Used for drawing operations:
 | 0x0C | DWORD | `dwRefreshRate` | Refresh rate |
 | 0x10 | DWORD | `dwFlags` | Mode flags |
 
-**Global Array:** `g_DisplayModeBuffer[100]` at `0x007dfd28`
+**Global Array:** `g_DisplayModeBuffer[100]` at `0x007d8f28` (`Globals.cpp:70`). Its element `DisplayModeInfo` is 5 DWORDs = **20 bytes** (`Types.h:727-733`) — the "0x114 bytes per entry" given above for the same address is wrong.
 
 ---
 
@@ -468,9 +480,9 @@ Used for drawing operations:
 
 | Address | Type | Name | Description |
 |---------|------|------|-------------|
-| `g_RawPadPressed` | DWORD | Raw pad input state |
+| `g_RawPadHeld` | DWORD | Raw pad input state (`src/Globals.h:233`) |
 | `g_main_state_flags2` | DWORD | Input state flags |
-| `button_pressed_id` | unsigned short | Button identifier |
+| `g_button_pressed_id` | unsigned short | Button identifier |
 
 ### Input Functions
 

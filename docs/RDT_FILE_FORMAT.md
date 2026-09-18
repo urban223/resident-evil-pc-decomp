@@ -103,7 +103,11 @@ dword from 0x48 to 0x94 by adding the load base minus 3.
    relative to the *table itself* and are relocated with plain
    `offset += table_base` (no -3), terminated by a zero dword.
 
-The -3 bias means a stored value of 3 points at the start of the file; a null
+**There is no -3 bias in this port.** `LoadRoomRdt` relocates with a plain
+`*ptrField += (int)g_RdtPointer` for the header block, the camera pointers and
+both model-pair tables (`RoomInit.cpp:627-659`), and `EffectSprites.cpp:845`
+says why in as many words: "(RDT+3)-3 in the decompile: the offsets are relative
+to the RDT base." So a stored value of **0** points at the start of the file; a null
 pointer stays null and is skipped by every pass.
 
 ### Cameras (0x94 +)
@@ -194,9 +198,9 @@ build shipped them.
 
 Both are flat arrays of 8-byte `{ TMD*, TIM* }` pairs (either half may be null).
 The omodel pairs are consumed by SCD command 0x1F `cmd_omodel_set`
-(`object_models + slot * 8`, `CmdFunctions.cpp:914`) to build the pushable/
+(`object_models + slot * 8`, `CmdFunctions.cpp:995`) to build the pushable/
 climbable room objects; the item pairs by `cmd_item_model_set` (0x18)
-(`item_models + index * 8`, `CmdFunctions.cpp:611`) that builds pick-ups and
+(`item_models + index * 8`, `CmdFunctions.cpp:664`) that builds pick-ups and
 searchable room models (containers, lids, desks, ...) and fills
 `g_RoomActionTable`. Counts come from the header: omodel pair count is
 **`omodel_slot_count`**, item pair count is **`item_count`** — each table
@@ -239,7 +243,7 @@ ushort flags
 ```
 
 Screen position = `(originX - 0xA0 + xDelta, originY - 0x78 + yDelta)`
-(centred on the 320×240 frame). `texBits & 0x3F` selects the texture page;
+(centred on the 320×240 frame). `texBits & 0x3F` is the CLUT X, shifted left 4 (`Room.cpp:241`) — the texture page comes from the sprite's own flags, `(flags & 0x1f) + bankID` (`Room.cpp:251`);
 `flags` bits 0-4 add to the texture bank depth, bits 5-6 pick the blend mode,
 bits 7-8 the transparency mode, bit 11 toggles a render flag, and when bit 15
 region is non-zero the sprite size comes from `(flags & 0xF1FF) >> 9` (square)
@@ -295,10 +299,14 @@ per `LoadRoomRdt`.
 
 | Offset | Size | Type   | Description |
 |--------|------|--------|-------------|
-| 0x00   | 2    | short  | xMax |
-| 0x02   | 2    | short  | zMax |
-| 0x04   | 2    | short  | xMin |
-| 0x06   | 2    | short  | zMin |
+| 0x00   | 2    | **unsigned** short | xMax |
+| 0x02   | 2    | **unsigned** short | zMax |
+| 0x04   | 2    | **unsigned** short | xMin |
+| 0x06   | 2    | **unsigned** short | zMin |
+
+> Unsigned is load-bearing, not incidental. `boundary_classify` zero-extends
+> these (`RoomCollision.cpp:96-102`), and 222 of the 5380 shipped records carry a
+> coordinate above 32767 — read as signed, those boxes invert. `Types.h:545-550`.
 | 0x08   | 2    | ushort | Shape / step: low byte = shape index, bits 8-14 = floor step magnitude, bit 15 = step is downward |
 | 0x0A   | 2    | ushort | Flags: low byte = step fine value, bit 8 = blocks movement, bit 9 = participates in the "still stuck" re-test |
 
@@ -405,7 +413,11 @@ The endpoints' Y components (+0x96, +0x9E) are never written — not by the port
 and not by the original — so they hold whatever was in the buffer. Harmless: a
 Y rotation cannot mix Y into X or Z, and the boundary test is 2D.
 
-`tools/parse_init_scd.py` decodes 0x1F one byte late (it reads position from
+(A `tools/parse_init_scd.py` was once named here as decoding 0x1F one byte late.
+No such tool has ever existed in this repository, so the warning is moot; the
+authoritative operand table is `docs/SCD_COMMAND_OPCODES.md`, which agrees with
+the one below. The nearest real tools, `dump_init_scd.py` and `mine_room_scd.py`,
+do not decode 0x1F's operands at all.) The obsolete warning read: it reads position from
 +5/+7/+9); use the table above, not that script's output.
 
 #### The runtime record
@@ -464,7 +476,7 @@ counter at 8, not 0, so it climbs back to 9 on every subsequent frame and the
 whole block re-runs for the duration of the push.
 
 After the loop, a started push raises `g_main_state_flags` bit 0x40, and that
-bit is the sole trigger for `action_behavior` 0x10 (`behavior_10_push`,
+bit is the sole trigger for `action_behavior` 0x10 (`player_behavior_10_push`,
 0x00457230). Releasing forward clears the bit, which is how the push animation
 knows to end. The grunt SFX it plays on animation frame 1 comes from bit 0x40 of
 byte +0x01 of the pushed record (0x17 heavy / 0x16 light).
