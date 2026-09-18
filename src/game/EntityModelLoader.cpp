@@ -636,6 +636,33 @@ void LoadEquippedWeaponAnimation(unsigned char weapon_id, unsigned char param_2,
     SetSpriteBufferFlag();
 
     unsigned int fileSize = LoadFile(FILE_PATH, (void*)anim_buffer, 32);
+
+    // CUSTOM: the three custom pistols' .emw are not in the repository and no
+    // tool here rebuilds them (docs/ASSETS.md), so a clone reaches this with the
+    // file simply absent - and Jill starts with all three, so it is the first
+    // thing that happens. LoadFile answers (size_t)-1 for a miss, and the
+    // trailer read below would then index anim_buffer - 12 and hand the
+    // animation system a pointer assembled from whatever was there: not a
+    // missing model, a corrupt one, crashing later and elsewhere.
+    //
+    // Fall back to the Beretta these pistols already alias to. weapon_id was
+    // forced to ITEM_BERETTA above, so the table entry is w12.emw and the hands
+    // and every pose are right; only the gun in them is wrong. g_loadedCustomPistol
+    // deliberately keeps the id we tried, so the caller does not ask for the
+    // missing file again on every equip check.
+    if (fileSize == (unsigned int)-1 && customPistol != 0) {
+        sprintf(FILE_PATH, "%s%s", GAME_DATA_ROOT,
+                g_weaponPathTable[g_playerEntity.id & 3][weapon_id]);
+        fileSize = LoadFile(FILE_PATH, (void*)anim_buffer, 32);
+    }
+
+    // Nothing loaded at all - a stock weapon file is missing, which is a broken
+    // install rather than our gap. Leave the buffer and the joint pointers as
+    // they were; drawing last frame's weapon beats computing a pointer from -1.
+    if (fileSize == (unsigned int)-1) {
+        return;
+    }
+
     g_playerEntity.jointMoveData0 = anim_buffer;
 
     unsigned int* puVar1 = (unsigned int*)(((fileSize & 0xFFFFFFFC) - 8) + (int)anim_buffer);

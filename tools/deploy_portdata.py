@@ -55,8 +55,9 @@ IN_PLACE = [
 # The one gap nothing can close: the custom pistols' in-hand models have no
 # generator in this tree, and cannot be tracked either (each is Jill's W12.EMW
 # with the weapon TMD swapped, so the animation half is the game's own data).
-# Missing, LoadFile returns (size_t)-1 and EntityModelLoader indexes off the
-# front of its buffer, so this is a crash and not a missing model. Say so.
+# EntityModelLoader falls back to w12.emw when they are absent, so this is a
+# visibly wrong gun rather than a crash - but it is still worth naming, because
+# nothing on screen says WHY the gun is wrong.
 UNOBTAINABLE = [
     "USA/players/w1f.emw",
     "USA/players/w2f.emw",
@@ -134,9 +135,9 @@ def main():
             if not any(os.path.exists(os.path.join(t, u.replace("/", os.sep)))
                        for t in trees)]
     if gone:
-        print("\n  %s\n  are MISSING and no tool here can build them. Equipping a"
-              " custom pistol\n  without them corrupts memory - see docs/ASSETS.md."
-              % ", ".join(gone))
+        print("\n  %s\n  are MISSING and no tool here can build them. The game"
+              " falls back to Jill's\n  w12.emw, so a custom pistol shows up as a"
+              " BERETTA in her hands - see\n  docs/ASSETS.md." % ", ".join(gone))
 
 
 if __name__ == "__main__":

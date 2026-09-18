@@ -98,13 +98,19 @@ weapon TMD swapped out, so most of the file is Capcom's animation data byte for
 byte and it cannot be tracked here; but the swapped-in mesh was authored by hand
 and was never written back out as a script, so it cannot be rebuilt either.
 
-This is not a cosmetic gap. Jill starts with all three pistols
-(`GameStart.cpp::SetInitialItems`), and `EntityModelLoader.cpp` loads the `.emw`
-with no check on the result — a missing file makes `LoadFile` return
-`(size_t)-1`, and the very next line indexes `anim_buffer - 12`. Equipping a
-custom pistol on a clone that lacks these three files corrupts memory and
-crashes. Until a generator exists, either supply the files or keep Jill's custom
-pistols out of `initial_items[]`.
+Jill starts with all three pistols (`GameStart.cpp::SetInitialItems`), so on a
+clone this is the first thing that happens rather than an edge case. It used to
+be fatal: `LoadFile` answers `(size_t)-1` for a miss and the next line indexed
+`anim_buffer - 12`, handing the animation system a pointer built out of whatever
+was there — memory corruption that surfaced later and elsewhere.
+
+`LoadEquippedWeaponAnimation` now falls back to Jill's `w12.emw`, which these
+pistols already alias to, so a clone without the files gets **a Beretta in her
+hands instead of the flare pistol** and keeps running. Every pose is right,
+because the fallback is the file the animation half was copied from in the first
+place; only the gun is wrong. That is a visible defect, not a hidden one — which
+is the point. If you are looking at a Beretta where a flare pistol belongs, the
+three `.emw` are missing.
 
 The **examine** models (`Item_m2/{IFLR,IACD,IFRZ}.ivm`) are a different story
 and are tracked in `portdata/`: they were built from scratch, each with its own
