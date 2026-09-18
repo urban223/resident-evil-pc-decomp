@@ -1,6 +1,7 @@
 // SoundSystem.cpp - Sound system implementation
 // All functions decompiled from Ghidra with original addresses
 #include "../Globals.h"
+#include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "../platform/platform.h"
 #include "../marni/MarniSound.h"
 #include "Entities.h"
@@ -164,7 +165,8 @@ void play_sfx(int bank, int soundId)
 
     case 3:
         if (soundId > 15) return;
-        handle = g_CharacterSfxBanks[soundId * 2];
+        // CUSTOM: co-op - that player's own voice set.
+        handle = g_CharacterSfxBanks[Coop_CharSfxBase() + soundId * 2];
         break;
 
     case 4:
@@ -534,7 +536,10 @@ static const char** g_charactersSfxTable[] = {
 void load_character_sfx(unsigned char charId)
 {
     int iVar6 = 0;
-    int* piVar7 = g_CharacterSfxBanks;
+    // CUSTOM: co-op - load into the CURRENT player's half of the array. Outside
+    // co-op the base is 0, i.e. exactly g_CharacterSfxBanks, so the story
+    // campaign is untouched.
+    int* piVar7 = &g_CharacterSfxBanks[Coop_CharSfxBase()];
 
     do {
         // destroy existing bank if loaded
@@ -572,7 +577,7 @@ void load_character_sfx(unsigned char charId)
         // Note sounds_reset / DestroyAllSoundBanks / UpdateSoundFade stop at
         // 0xac9998 in the original and so only cover the first 9 - that is a
         // Capcom bug (records 9-15 leak); see docs/SCD_SCRIPT_SYSTEM.md 6g.
-    } while (piVar7 <= (int*)&g_CharacterSfxBanks[30]);
+    } while (piVar7 <= (int*)&g_CharacterSfxBanks[Coop_CharSfxBase() + 30]);
 }
 
 // ============================================================================
@@ -1060,7 +1065,8 @@ void Play3DSnd(int bank, int soundId, int vol, int pos) // 0x0047f9c0
 
     case 3:
         if (soundId > 0x0F) return;
-        handle = g_CharacterSfxBanks[soundId * 2];
+        // CUSTOM: co-op - that player's own voice set.
+        handle = g_CharacterSfxBanks[Coop_CharSfxBase() + soundId * 2];
         break;
 
     case 4:

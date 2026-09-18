@@ -57,6 +57,14 @@ void Coop_ChooseTargets(void);
 // Number of players actually in play: 1 outside co-op, RAID_PLAYERS inside it.
 int Coop_PlayerCount(void);
 
+// Which half of g_CharacterSfxBanks belongs to the current player. The array is
+// declared [64] but load_character_sfx fills only the first 16 records (ints
+// 0..31) and both play sites index soundId <= 15, so records 16..31 have always
+// been allocated, always zeroed and never read. That is where player 2's voice
+// goes - no new array, and sounds_reset already walks all 64 ints, so his banks
+// are destroyed on reset without a line of extra code.
+int Coop_CharSfxBase(void);
+
 // Which input source ReadPadBoth should answer with: 0 = player 1, 1 = player 2,
 // -1 = the original's keyboard|joystick merge. Only Coop_UpdatePads sets it, and
 // it is back to -1 before anything else runs.

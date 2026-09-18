@@ -15,6 +15,7 @@ static int s_reservedSlot[RAID_PLAYERS] = { -1, -1 };
 // (RaidEnemies.cpp:40-43): the unsigned-int form of SetupJointStructures is the
 // one that returns the advanced arena pointer, and it is deliberately NOT the
 // void* overload in Globals.h - see the overload note in CharacterNpc.h.
+extern void load_character_sfx(unsigned char charId);          // SoundSystem.cpp
 extern void LoadEntityEMD(Entity* em, unsigned char entity_id);
 extern void Entity_SetJoints(Entity* em, unsigned int stride);
 extern void InitAnimStructure(void* animHeaderValue);
@@ -80,6 +81,11 @@ static void pad_load(int i)
     g_PlayerDpadHeld    = p->dpadHeld;
     g_PlayerDpadPressed = p->dpadPressed;
     g_PlayerDpadHeldPrev= p->dpadHeldPrev;
+}
+
+int Coop_CharSfxBase(void)
+{
+    return (g_coopActive && g_pCurPlayer == &g_players[1]) ? 32 : 0;
 }
 
 int Coop_PlayerCount(void)
@@ -353,6 +359,16 @@ void Coop_SpawnPlayer2(void)
     // pSca_hit_data, so the assignment above survives it. Re-asserted here
     // because the order is load-bearing and silent if it changes.
     p2->pSca_hit_data = (DWORD)s_player2ScaHitData;
+
+    // His own voice. load_character_sfx fills whichever half of
+    // g_CharacterSfxBanks the CURRENT player owns, so it has to run with him
+    // current - otherwise he borrows player 1's banks, which is why Chris
+    // screamed in Jill's voice. The banks themselves are handles from
+    // loadSndBankFromWav, not offsets into a shared arena, so a second set
+    // costs nothing but the records.
+    Coop_BeginPlayer(1);
+    load_character_sfx((unsigned char)(p2->id & 1));
+    Coop_EndPlayer();
 
     const int x = (int)p1->scaMatrixData.localMatrix.t[0] + COOP_SPAWN_OFFSET;
     const int z = (int)p1->scaMatrixData.localMatrix.t[2];
