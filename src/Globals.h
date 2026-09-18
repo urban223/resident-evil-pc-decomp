@@ -1624,6 +1624,12 @@ BYTE*  Coop_ModelRegion(void);       // -> that player's EntityModelStorage.firs
 BYTE*  Coop_ModelRegion2(void);      // -> .second
 BYTE*  Coop_AnimBuffer(void);        // -> that player's g_animationBuffer
 DWORD* Coop_AnimObjBuffer(void);     // -> that player's g_animObjectBuffer
+// The VRAM page and bank SetupCharacterData hands the current player
+// (EntityModelLoader.cpp:750). Anything that textures a part of THAT player
+// afterwards has to ask instead of assuming player 1's 0x16 / 7 the way the
+// original could. Outside co-op both answer the original's own constants.
+unsigned char Coop_PlayerTexBank(void);
+unsigned char Coop_PlayerTexPage(void);
 
 // 0x00c0b9c0
 extern BYTE       (&g_animationBuffer)[37888];        // 0x00c0b9c0 - player 0's

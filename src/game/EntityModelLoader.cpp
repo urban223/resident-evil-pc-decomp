@@ -682,11 +682,18 @@ void LoadEquippedWeaponAnimation(unsigned char weapon_id, unsigned char param_2,
         joint->anim_object = (void*)g_playerEntity.weaponPartAnimObject;
     } else {
         joint->anim_slot_ptr = (puVar1[1] & 0xFFFFFFFC) + (int)anim_buffer;
+        // CUSTOM: the original hardcodes 0x16 / 7 here because there is only
+        // ever one player and SetupCharacterData always gives him that page.
+        // Player 2 lives on 0x18 / 8, so his weapon mesh was being offset onto
+        // Jill's page. Outside co-op these return 0x16 and 7, i.e. the
+        // original's own constants.
+        const unsigned char wpnBank = Coop_PlayerTexBank();
+        const unsigned char wpnPage = Coop_PlayerTexPage();
         unsigned char prevPage = g_TextureCurrentPage;
         unsigned char prevBank = g_TextureBankID;
-        g_TextureCurrentPage = 7;
-        g_TextureBankID = 0x16;
-        ProcessTmdTextures(2, (unsigned int*)joint->anim_slot_ptr, 0x16, 7);
+        g_TextureCurrentPage = wpnPage;
+        g_TextureBankID = wpnBank;
+        ProcessTmdTextures(2, (unsigned int*)joint->anim_slot_ptr, wpnBank, wpnPage);
         g_TextureBankID = prevBank;
         g_TextureCurrentPage = prevPage;
         joint->anim_slot_ptr += 0xc;
