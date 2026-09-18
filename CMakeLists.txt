@@ -144,6 +144,7 @@ set(RE1_SOURCES
 # Linux platform layer + renderer backend.
 # ---------------------------------------------------------------------------
 list(APPEND RE1_SOURCES
+    src/platform/linux/sockets.cpp
     src/platform/linux/platform.cpp
     src/platform/linux/input.cpp
     src/platform/linux/audio.cpp

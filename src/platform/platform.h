@@ -190,3 +190,53 @@ BOOL plat_single_instance_check(void);
 // Windows implements these in system/CrashLog.cpp; see crash.cpp here.
 void crashlog_install(void);
 void crashlog_mark(const char* step);
+
+// ---------------------------------------------------------------------------
+// Datagram sockets (Phase 5 - RAID co-op)
+//
+// This is the one place in the interface that is not replacing a call the
+// original made: the original has no networking. The rule at the top of this
+// file says only add what a game file calls directly today, and co-op is that
+// exception, taken deliberately rather than by drift - sockets are an OS
+// service exactly like input and files, and src/game must not see one.
+// tests/check_platform_boundary.py enforces that for networking too, since
+// most socket names are identical on Windows and Linux.
+//
+// UDP only, and unconnected: the transport is host-authoritative snapshots at
+// the game's 30 Hz tick, which wants "send this now, drop it if it is late"
+// rather than a stream that blocks the frame. There is no reliability layer
+// here on purpose; what needs to survive loss is the snapshot's own design.
+//
+// Handles are opaque ints. -1 is "no socket"; every call takes that and returns
+// a failure rather than faulting, so a caller may hold one across a failed open.
+
+#define PLAT_NET_INVALID  (-1)
+
+// A 4-byte IPv4 address and a port, in host order. Kept as plain integers so
+// nothing in src/game ever names a sockaddr.
+typedef struct {
+    unsigned int   addr;     // 0x7F000001 is 127.0.0.1
+    unsigned short port;
+    unsigned short pad;
+} PlatNetAddr;
+
+// Open a UDP socket. `bindPort` 0 asks the OS to pick one, which is what a
+// client wants; a host passes the port it is listening on. Non-blocking:
+// plat_net_recv must never stall the 30 Hz tick.
+// Returns PLAT_NET_INVALID on failure.
+int  plat_net_open(unsigned short bindPort);
+
+void plat_net_close(int sock);
+
+// Send one datagram. Returns the number of bytes sent, or -1. A full send
+// buffer is a -1, not a block.
+int  plat_net_send(int sock, const PlatNetAddr* to, const void* data, int len);
+
+// Take one datagram if one is waiting. Returns its length, 0 if nothing is
+// queued, -1 on error. `from` is filled in on a positive return.
+int  plat_net_recv(int sock, PlatNetAddr* from, void* data, int cap);
+
+// Parse "1.2.3.4:5000" into an address. Returns 1 on success, 0 otherwise.
+// Here rather than in game code because the parse is the only part of naming a
+// host that differs between platforms once inet_pton exists on both.
+int  plat_net_parse(const char* text, PlatNetAddr* out);
