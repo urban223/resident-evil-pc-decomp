@@ -6,6 +6,15 @@
 
 int g_coopActive = 0;
 unsigned char g_enemyTarget[30] = {};
+// The model loaders, declared the way RaidEnemies.cpp declares them
+// (RaidEnemies.cpp:40-43): the unsigned-int form of SetupJointStructures is the
+// one that returns the advanced arena pointer, and it is deliberately NOT the
+// void* overload in Globals.h - see the overload note in CharacterNpc.h.
+extern void LoadEntityEMD(Entity* em, unsigned char entity_id);
+extern void Entity_SetJoints(Entity* em, unsigned int stride);
+extern void InitAnimStructure(void* animHeaderValue);
+extern unsigned int SetupJointStructures(unsigned int base);
+
 
 // Player 2's SCA hit-data block. Player 1 uses g_entityDataBlock (0x200 bytes,
 // 0x00d211d0); this is the same size for the same reason.
@@ -324,6 +333,30 @@ void Coop_CheckDeaths(void)
         z->angle = g_players[i].directionAngle;
 
         if (slot >= g_enemy_count) g_enemy_count = slot + 1;
+
+        // He needs a MODEL, the same way RaidEnemies_Spawn gives one to every
+        // enemy it places (RaidEnemies.cpp:133-150). Without it animHeader stays
+        // 0, and the first thing that reads it crashes - snap_player_to_grab_position
+        // dereferences ENTITY->animHeader the moment this zombie grabs somebody
+        // (EntityCommon.cpp:845), which is an access violation at
+        // entity_extract_anim_vertex+0x31 with EAX=0.
+        //
+        // The loaders all read the global ENTITY, so it has to be aimed at him
+        // for the duration and put back afterwards.
+        {
+            Entity* saveEntity = ENTITY;
+            void*   saveDest   = g_loadDataDestPointer;
+
+            ENTITY = z;
+            LoadEntityEMD(z, (unsigned char)(z->id + 4));
+            Entity_SetJoints(z, 0x7c);
+            InitAnimStructure((void*)z->modelLoadBuffer);
+            g_loadDataDestPointer =
+                (void*)SetupJointStructures((unsigned int)g_loadDataDestPointer);
+
+            ENTITY = saveEntity;
+            (void)saveDest;   // the joint setup advances the arena on purpose
+        }
 
         g_coopZombieSlot[i] = slot;
 
