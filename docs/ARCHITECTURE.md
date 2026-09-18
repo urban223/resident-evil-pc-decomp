@@ -262,7 +262,7 @@ The vertex shader transforms positions with an orthographic projection matrix (s
 │     ├─ 5c. Sort g_pendingSprites by depth                        │
 │     │      5d. Phase 1: pending sprites depth >= 500                  │
 │     │        (background, pause overlays)                     │
-│     │      5e. Phase 2: FlushSpriteCommands()                          │
+│     │      5e. Phase 2: FlushSpriteCommandsRange()                     │
 │     │                                                        │
 │     └─ 5f. Phase 3: pending sprites depth < 500                                    │
 │            (fade overlays, color tinting, room lighting)                                 │
@@ -279,8 +279,8 @@ The vertex shader transforms positions with an orthographic projection matrix (s
 3. **Scaling**: Game coordinates (320×240 base resolution) are scaled to screen resolution inside each sprite-builder function (`AddTintSprite`, `draw_rect`, `display_texture`) before queueing.
 
 4. **Depth-split rendering**: `FrameRateGovernor` renders in three phases to match the original game's depth-sorted ordering:
-   - **Phase 1** (depth ≥ 500): Background and scene elements from `g_pendingSprites` (e.g., title BG at 0xFFF, pause overlays at 2100)
-   - **Phase 2**: Game objects and text from `g_SpriteCommandBuffer` via `FlushSpriteCommands` (e.g., title text at 532)
+   - **Phase 1** (depth ≥ `PENDING_SCENE_DEPTH` = 0x400 = 1024): Background and scene elements from `g_pendingSprites` (e.g., title BG at 0xFFF, pause overlays at 2100)
+   - **Phase 2**: Game objects and text from `g_SpriteCommandBuffer` via `FlushSpriteCommandsRange` (e.g., title text at 532). There is also a fourth, *interleaved* pass for the 500..1023 band (`Rendering.cpp:594-609`) that this list used to omit.
    - **Phase 3** (depth < 500): Screen effects from `g_pendingSprites` (e.g., fade overlays at 450, color tinting at 490, room lighting at 470–499)
 
    This ensures fade overlays correctly cover text and game objects, matching the original game where all sprites shared one depth-sorted command buffer.
@@ -292,37 +292,38 @@ The vertex shader transforms positions with an orthographic projection matrix (s
 The `g_pendingSprites[]` queue is a depth-sorted array used by `AddTintSprite` (text), `draw_rect` (menu rectangles, fade overlays), and `OT_InsertPrimitive` (title screen background). Sprites are sorted by `depth` in `FrameRateGovernor` and rendered in split passes (see rule 4 above).
 
 ```cpp
-#define MAX_PENDING_SPRITES 300
+#define MAX_PENDING_SPRITES 1024
 
 struct PendingSprite {
     float x, y, w, h;            // Screen-space position & size
     float u0, v0, u1, v1;         // Texture UV coordinates
     DWORD color;                  // RGBA color (A in high byte)
-    ID3D11ShaderResourceView* srv;// Texture to sample
+    MarniHandle tex;              // Texture to sample (no ID3D11* above the Marni seam)
+    MarniSampler sampler;         // point or linear
     BOOL valid;                   // Set to TRUE when queued
     unsigned int depth;           // OT depth sort value (lower = closer = on top)
 };
 
 static PendingSprite g_pendingSprites[MAX_PENDING_SPRITES];
-static int 5e. Phase 2: FlushSpriteCommands();
+static int g_pendingSpriteCount = 0;
 ```
 
 ### GDI/Sprite Command Buffer
 
 **File:** `src/game/SpriteRenderer.cpp`
 
-The original `g_SpriteCommandBuffer[600]` (double-buffered) handles textured quads via `FlushSpriteCommands()`. Each command has type=10 (textured quad) and includes position, UV, color, depth sorting, and texture page references. Commands are rendered through `MarniDrawSprite` after the `g_pendingSprites` queue.
+`g_SpriteCommandBuffer` holds `MAX_SPRITE_COMMANDS` = 300 entries and is single, not double-buffered (`SpriteRenderer.h:6`). It handles textured quads, flushed by `FlushSpriteCommandsRange()`. Each command has type=10 (textured quad) and includes position, UV, color, depth sorting, and texture page references. Commands are rendered through `MarniDrawSprite` after the `g_pendingSprites` queue.
 
 ### MarniClear / MarniPresent
 
 - `MarniClear` → `CMarniDirect3D::vtable[3]` → `ClearRenderTargetView()` with `g_debugClearR/G/B` (dark blue-gray, ~5% brightness)
-- `MarniPresent` → `CMarniDirect3D::vtable[4]` → `IDXGISwapChain::Present(1, 0)` (VSync)
+- `MarniPresent` → `CMarniDirect3D::vtable[4]` → `IDXGISwapChain::Present(g_bVSync ? 1 : 0, 0)` (`MarniDX.cpp:979`)
 
 ---
 
 ## Sprite System
 
-The original game uses a sprite command buffer (`g_SpriteCommandBuffer[600]`, double-buffered) to queue 2D primitives. Each sprite command (type 10 = textured quad) is built by builder functions, then submitted via vtable[10] (`SetTexture`).
+The original game uses a sprite command buffer (`g_SpriteCommandBuffer`, 300 entries, single) to queue 2D primitives. Each sprite command (type 10 = textured quad) is built by builder functions, then submitted via vtable[10] (`SetTexture`).
 
 In the modern port, this is replaced by the `PendingSprite` queue. The builder functions have been reimplemented to follow the original Ghidra decompilation while targeting the new queue.
 
@@ -334,7 +335,7 @@ The primary tinted-sprite builder. Used by all font rendering functions.
 
 **Parameters:** `(void* pak, unsigned short brightness)`
 
-Reads from the [`TexturePrintState`](#textureprintstate-struct) struct to determine:
+Reads from the `TextureDesc` struct (`src/game/Types.h:748`, global `g_TextureDesc`) to determine:
 - Screen position (`printPosX/Y + g_ScreenOffsetX/Y`)
 - Character size (`vramWidth × vramHeight`, e.g. 8×14 for 8x14 font)
 - Texture UV position (`vramAreaX/Y` in font atlas)
@@ -357,7 +358,7 @@ Draws a solid-color rectangle. Used for menu backgrounds, fade overlays, color t
   - **Variant 3** (textureId = `0x60000000`): Black fade — r=g=b=0, alpha = max(r,g,b) from brightness — used by `fade_type_id=2`
   - When alpha = 0, the draw is skipped (background shows through)
 - **blend**: Controls OT depth sort — `flags==0` → `blend + 450`, else `blend * 16 + 500`
-- **Depth < 500**: Rendered in Phase 3 (after game objects/text), so fade overlays cover everything beneath them
+- **Depth < 500**: Rendered in Phase 3 (after game objects/text), so fade overlays cover everything beneath them. The band 500..`PENDING_SCENE_DEPTH` draws interleaved with Phase 2, not in either phase.
 
 #### display_texture (0x0046e8d0)
 
@@ -375,7 +376,7 @@ Full-featured sprite builder with texture page variant selection, depth sorting,
 
 AddSprite supports:
 - Multiple texture page variants (via CLUT/page offset tables)
-- Reverse fade flag (`g_ReverseFadeFlag`)
+- Reverse fade flag
 - Depth sort override (`g_DepthSortOverride`)
 - Texture variant checking via `GetTextureVariant()`
 
@@ -401,8 +402,8 @@ Special chars: '(' = col 56,row 224   ')' = col 70,row 224
 ```
 
 1. Computes brightness from `color >> 4` (clamped to [2, 30])
-2. Sets `TexturePrintState` globals (char size 8×14, VRAM area, tint white)
-3. If `flags ≠ 0`: draws shadow pass (offset +1,+1, black tint, brightness=10)
+2. Sets `g_TextureDesc` fields (char size 8×14, VRAM area, tint white)
+3. If `flags ≠ 0`: ORs `0x40000000` into `g_TextureDesc.flags`. There is no second pass — no +1/+1 offset and no brightness 10 (`PrintText.cpp:185`).
 4. Iterates `PRINT_TEXT_BUFFER`, computing atlas position per char, calling `AddTintSprite()`
 5. Darkness override: `STAGE_ID==3 && ROOM_ID==17 && camera==4` → brightness=0 (invisible)
 
@@ -411,7 +412,7 @@ Special chars: '(' = col 56,row 224   ')' = col 70,row 224
 8×8 pixel mono-spaced font. Characters offset from ASCII 0x20 (space).
 
 ```
-Glyph layout:  col = (ch - 0x20) * 8  (byte-wrapped)
+Glyph layout:  texU = (u8)(ch * 8)   — no - 0x20; only texV subtracts it (`PrintText.cpp:136-140`)
                row = ((ch - 0x20) & 0xE3) >> 2   (≈ index / 4)
 Atlas cell:    8×8 pixels per glyph
 Shadow:        CLUT tint + 8 (darker palette index)
@@ -449,7 +450,7 @@ The struct is exactly `0x22` (34) bytes — verified to match the original binar
 // ... etc.
 ```
 
-**Global instance:** `extern TexturePrintState g_texPrintState;`
+**Global instance:** `extern TextureDesc g_TextureDesc;` (`src/Globals.h:1238`). Fields are `screenX/screenY/texU/texV/colorMulR/G/B` — there are no `g_TexturePrintX`-style macros.
 
 ### Font Loading
 
@@ -522,7 +523,7 @@ Auto-positioned loader for font/bank textures:
 
 Shadow/mask loader:
 1. Reads palette from image offset +0x14
-2. Replaces non-transparent, non-zero colors with black (0x3DEF)
+2. Flattens non-transparent, non-zero colours to `SHADOW_PAGE_COLOUR` 0x3DEF — which is **not** black but RGB555 (15,15,15) of 31, i.e. mid grey (`TextureLoader.cpp:942`)
 3. Creates texture pages with mode=1 (shadow/alpha blend)
 
 #### display_image (0x00470770)
@@ -530,8 +531,8 @@ Shadow/mask loader:
 Title screen background image loader:
 1. Takes raw 16-bit PS1 pixel data (ABGR1555)
 2. Converts to RGBA8888
-3. Creates D3D11 texture → `g_titleImageSRV`
-4. Rendered as full-screen background in `game_frame_present()` when debug overlay flag is clear
+3. Creates the texture → `g_displayImageSRV` (`Rendering.cpp:60`)
+4. Rendered as full-screen background by `FrameRateGovernor` (`Rendering.cpp:409`) when `MSF_SCREEN_STANDALONE` is clear
 
 ### CLUT Conversion (ABGR1555 → RGBA8888)
 
@@ -612,13 +613,13 @@ The game loop is implemented in `main_loop()` at `0x00428eb0`.
 
 | Bit | Mask | Description |
 |-----|------|-------------|
-| 16 | `0x10000` | Pause screen active |
-| 17 | `0x20000` | Menu active |
+| 16 | `0x10000` | `MSF_INTENSITY_RAMP` — ramp `g_spriteAnimIntensity` while set |
+| 17 | `0x20000` | `MSF_VOICE_PLAYING` — voice/SFX line playing; polled as "wait for it" |
 | 18 | `0x40000` | FMV playback active (triggers `UpdateVideoPlayback()` in main loop instead of `main_loop()`; FMV state machine polls its own input) |
 | 19 | `0x80000` | Reset screen panning |
-| 23 | `0x800000` | Special room lighting |
+| 23 | `0x800000` | `MSF_CHAR_VARIANT` — room RDT variant: 0 = Chris, 1 = Jill |
 | 29 | `0x20000000` | Fade/pause state transition |
-| 30 | `0x40000000` | Debug overlay mode (blocks title image rendering) |
+| 30 | `0x40000000` | `MSF_SCREEN_STANDALONE` — flat colour present; bg quad and world sprites suppressed. Not a debug flag |
 | 31 | `0x80000000` | Alternate overlay mode |
 
 ### Fading State Machine
@@ -638,14 +639,14 @@ The fading system uses signed integer arithmetic:
 
 ### Frame Timing
 
-The game targets approximately 60 FPS (16ms per frame). Frame skipping logic in `RunMessageLoop()` throttles the loop when the frame time is below the target.
+The game runs a dead-steady **30 ticks/s**: `kFrameIntervalMs = 33` (`src/platform/win32/main.cpp:540`), and `Rendering.cpp:430-434` says so in as many words. Frame skipping in `RunMessageLoop()` throttles the loop when the frame time is below that.
 
 ---
 
 ## Task Scheduler
 
 **File:** `src/game/TaskScheduler.cpp`
-**Documentation:** `docs/task_scheduler.md`
+**Documentation:** `docs/TASK_SCHEDULER.md`
 
 The task scheduler is the core of the game's cooperative multitasking system. Game logic runs as coroutine-like tasks that yield (via `Task_sleep`) and resume on subsequent frames.
 
@@ -687,7 +688,7 @@ init_and_start_game()
                     │
                     └─► Task_chain(title_state)
                           │
-                          ├─ LoadSoundBank(BANK_EVIL, g_DataBuffer)
+                          ├─ LoadSoundBank(BANK_TITLE, g_DataBuffer)
                           ├─ Title menu loop (attract → main menu)
                           │
                           └─► Task_chain(game_start)
@@ -778,7 +779,7 @@ leaving comments and other sections alone. The registry is still read once at
 startup so an install that predates the switch keeps its bindings, but it is no
 longer written. The file is gitignored — it is runtime state, not source.
 
-In debug builds (`USE_ASSET_PATH_REMAP=1`):
+In debug builds:
 - Remaps asset paths: `.\usa\data\*` → `.\assets\USA\data\*`
 - Skips CD-ROM and installation checks
 - Skips shared memory for display config
@@ -806,7 +807,7 @@ The CMarniDirect3D object is dynamically allocated:
 
 ```c
 // operator_new(size_t size) → malloc(size)
-void* pNewObject = operator_new(0x21DC);  // 8676 bytes
+void* pNewObject = operator_new(0x21DC);  // 8668 bytes
 g_pMarniDirect3D = CMarniDirect3D_Constructor(pNewObject, ...);
 ```
 
@@ -820,7 +821,9 @@ static BYTE g_ItemsImageBuffer[86400];  // 86400 allocated bytes for items image
 
 ### PSXTexture Ownership
 
-`PSXTexture::Store(buffer, 1)` allocates pixel data via `operator_new()` and owns the memory. The destructor cleans up. Ownership flags (`m_dataSource`, `m_ownsPalette`) are guarded against double-free in the destructor.
+`PSXTexture::Store(buffer, 1)` allocates pixel data via `operator_new()` and owns the memory. The destructor cleans up.
+
+The ownership flags are the trap here, because **the two classes overlay each other**: `PSXTexture` has `m_DataSource` at 0x44 and `m_Flag4C` at 0x4C, while `CMarniBits` has `m_dataSource` at 0x44 and `m_ownsPalette` at 0x4C. `Store()` setting `m_Flag4C` therefore sets `m_ownsPalette` as far as `~CMarniBits()` is concerned, and `CopyFrom` propagates it to the sub-objects at 0x68..0x2D8 — which is a double-free waiting to happen. `PSXTexture.cpp:117-122` spells the whole thing out.
 
 ---
 
@@ -854,7 +857,7 @@ defects fixed in 2026-09 — is in **`docs/GAMEPAD_INPUT.md`**.
 │                                  │                          │
 │                                  ▼                          │
 │                        ┌─────────────────┐                  │
-│                        │ g_RawPadPressed │                  │
+│                        │ g_RawPadHeld    │                  │
 │                        │ g_main_state_flags2    │                  │
 │                        │ button_pressed  │                  │
 │                        └─────────────────┘                  │
@@ -913,7 +916,7 @@ defects fixed in 2026-09 — is in **`docs/GAMEPAD_INPUT.md`**.
 │  Bank IDs: BANK_KNIFE(0) ... BANK_WIN95(15).                 │
 │                                                              │
 │  Volume mapping: -1=max, -9999=min, -10000=mute.             │
-│  → XAudio2: vol = 1.0 - (-marniVol / 10000.0)               │
+│  → XAudio2: amplitude = 10^(mB / 2000)  (DsVolumeToAmplitude)│
 │                                                              │
 │  Async execution: ExecAsync(callback) queues operations      │
 │  via the TaskScheduler. ⚠️ Never call ExecAsync functions     │
@@ -947,53 +950,6 @@ The `debug_state` task function provides an interactive sound test menu that lau
 - Bank loading calls `LoadSoundBank()` which triggers `set_volume()` (async), but only on key-press edge, not every frame.
 - Two-column display shows 16 SFX entries (0-7 left, 8-15 right) with handle IDs and loaded status.
 - Background rect uses `draw_rect(bg, 100, 1)` matching the title screen pattern (depth=2100 behind text).
-┌─────────────────────────────────────────────────────────────┐
-│                    Sound Subsystem                           │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │           DirectSound class                          │    │
-│  │  src/marni/MarniSound.h, src/marni/MarniSound.cpp     │    │
-│  │                                                      │    │
-│  │  Preserves original Ghidra method names:              │    │
-│  │  - DirectSound(HWND)     constructor                  │    │
-│  │  - DestroySound(bank)    free bank + WAV data        │    │
-│  │  - StopSound(bank)       stop playback               │    │
-│  │  - PlaySound(bank,slot)  start playback              │    │
-│  │  - SetVol(bank,vol)      set volume (+0x928)         │    │
-│  │  - SetPan(bank,pan)      set pan   (+0x924)         │    │
-│  │  - GetVol(bank)          get stored volume           │    │
-│  │  - CreateSound(wavName)  WAV loader + RIFF parser    │    │
-│  │  - ErrorRoutine(code)    maps HRESULT → debug string │    │
-│  │  - GetStatus(bank)       query buffer status          │    │
-│  │  - compact()             defrag device memory         │    │
-│  │  - Release() / Reload()  pause/resume all audio      │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                                                              │
-│  Bank structure (per bank, 0xA2C bytes each):               │
-│  +0x1C: WAV raw data pointer    +0x924: pan value           │
-│  +0x20: sample data size        +0x928: volume value        │
-│  +0x24: sample rate             +0x92C: slot number          │
-│  +0x28: channels                +0x930: playing status       │
-│  +0x2A: bits per sample         +0x93C: DS buffer ptr        │
-│  +0x920: playback rate          +0x940: filename              │
-│  +0xA44: active flag                                        │
-│                                                              │
-│  Sound bank groups (game-level):                            │
-│  g_BgmSoundBank      - Background music                    │
-│  g_SfxBanks[]        - Sound effects                       │
-│  g_RoomSfxBanks[]    - Room-specific sounds                │
-│  g_CharacterSfxBanks[] - Character sounds                  │
-│  g_emSndBanks[]      - Enemy sounds                        │
-│  g_SndBank[]         - General purpose banks               │
-│                                                              │
-│  g_SoundBanksTable[16][16] - SFX filename tables            │
-│                                                              │
-│  Async execution: ExecAsync(callback) queues operations     │
-│  via the TaskScheduler for non-blocking audio ops.          │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
 
 ### Font Sampler (Point vs Linear)
 
@@ -1001,7 +957,7 @@ The D3D11 pipeline uses two samplers:
 - **`m_pSamplerLinear`** (`D3D11_FILTER_MIN_MAG_MIP_LINEAR`): Used for all textured sprites, backgrounds, and UI elements. Provides smooth bilinear filtering.
 - **`m_pSamplerPoint`** (`D3D11_FILTER_MIN_MAG_MIP_POINT`): Used for font rendering only. Provides sharp pixelated text matching the original PS1 appearance.
 
-`MarniDrawSprite` automatically selects the point sampler when detecting the font SRV (`pBindSRV == pD3D->m_pFontSRV`).
+`MarniDrawSprite` passes `MARNI_SAMPLER_POINT` unconditionally, for everything (`MarniSystem.cpp:623-632`). The linear-filtered path is the separate `MarniDrawSpriteEx`.
 
 ### Video Playback Subsystem
 
@@ -1052,7 +1008,7 @@ The D3D11 pipeline uses two samplers:
 │                                                              │
 │  Note: During FMV playback, UpdateVideoPlayback() replaces │
 │  main_loop() in the main message loop (g_bMCINotifyEnabled │
-│  branch at main.cpp:600). State 1 and state 2 must poll   │
+│  branch at win32/main.cpp:625). States 1 and 2 must poll  │
 │  input themselves — InputUpdate() + PlayerPad_Update()    │
 │  are normally only called by main_loop().                  │
 │                                                              │
@@ -1063,14 +1019,14 @@ The D3D11 pipeline uses two samplers:
 
 ## Source File Map
 
-98 source files. Every module documents its original address range in its
+173 files, 127 of them `.cpp`. The tree below predates `src/platform/`, `src/game/editor/` and the port-only modules (Raid*, Achievements, UiSkin, UiAtlas, PortText) and does not list them. Every module documents its original address range in its
 header comment.
 
 ```
 src/
-├── main.cpp                    # WinMain entry point (0x00441350)
+├── platform/win32/main.cpp      # WinMain entry point (0x00441350)
 ├── Globals.h / Globals.cpp     # Global variables + structs (with original addresses)
-├── WindowProc.cpp              # Window message handler
+├── platform/win32/window_proc.cpp  # Window message handler
 ├── DebugPrint.h                # Debug output helper
 │
 ├── marni/                      # Marni System compatibility layer

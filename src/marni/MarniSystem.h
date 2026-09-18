@@ -17,7 +17,7 @@
 
 // ============================================================================
 // CMarniDirect3D - Capcom's original D3D wrapper class (vtable at 0x004af230)
-// Object size: 0x21DC (8676 bytes) — preserved via trailing padding.
+// Object size: 0x21DC (8668 bytes) — preserved via trailing padding.
 //
 // Field offsets MUST match the original binary exactly, because game-layer
 // code reads them by offset: WindowProc.cpp walks the vtable by index,

@@ -19,7 +19,7 @@ This document provides detailed documentation for all implemented functions in t
 
 ---
 
-## WinMain.cpp Functions
+## `src/platform/win32/main.cpp` Functions
 
 ### WinMain
 
@@ -42,12 +42,12 @@ int PASCAL WinMain(
 - `1` - Color depth error
 - `2` - No CD-ROM found
 - `3` - Game already running
-- `4` - Setup already running
-- `5` - Uninstall already running
-- `6` - User cancelled installation
 - `7` - Setup completed, restart needed
 - `9` - Software rendering memory error
-- `10` - Software rendering map error
+
+(The original also documented `4` setup-already-running, `5` uninstall-already-running,
+`6` user-cancelled and `10` software-rendering map error. None of them is reachable in
+this port — only 0, 1, 2, 3, 7 and 9 are ever returned.)
 
 **Dependencies:**
 - `GetFreeDiskSpaceMB()` - Check disk space
@@ -131,11 +131,9 @@ BOOL IsGraphicsSystemReadyForOperation(void)
 
 **Signature:**
 ```cpp
-void InitializeMarniSystem(
-    HWND hWnd,           // Window handle
-    int displayModeID,   // Selected display mode
-    int adapterID        // Display adapter ID (unused)
-);
+void InitializeMarniSystem(void);
+// Takes nothing: it reads g_hWnd, g_dwScreenWidth and g_dwSelectedDisplayModeID
+// from globals (MarniSystem.h:119, MarniSystem.cpp:475-490).
 ```
 
 **Parameters:**
@@ -270,7 +268,7 @@ PrintText8x14(16, 100, 128, 1);  // white text with shadow at (16,100)
 PrintText8x14(16, 116, 128, 0);  // white text without shadow
 ```
 
-**Rendering:** Calls `AddTintSprite()` per character through the `g_pendingSprites[]` queue. Characters rendered in insertion order; to ensure text appears above background rects, the rect must be drawn **before** the text.
+**Rendering:** Calls `AddTintSprite()` per character through the `g_pendingSprites[]` queue, which is **depth-sorted** before drawing (`Rendering.cpp:476-484`) — insertion order only holds within one depth, and `AddTintSprite` derives `depth = brightness*16 + 0x1C2`, so the brightness argument moves the text between layers. To be sure to ensure text appears above background rects, the rect must be drawn **before** the text.
 
 **Dependencies:** `PRINT_TEXT_BUFFER`, `AddTintSprite()`, `g_ScreenOffsetX/Y`, `g_stageId`, `g_roomId`, `g_roomCameraId`
 
@@ -304,7 +302,7 @@ void PrintText8x8(short x, short y, unsigned char color, char shadow);
 
 **Signature:**
 ```cpp
-void PrintFormattedText(short x, short y, unsigned char color, unsigned char* data);
+void PrintFormattedText(short x, short y, unsigned char color, const unsigned char* data);
 ```
 
 **Parameters:**
@@ -323,7 +321,7 @@ void PrintFormattedText(short x, short y, unsigned char color, unsigned char* da
 | `0xFF` | Advance X by 4 (half-width space) |
 | *default* | Direct char code, row = ch/18 + 2 |
 
-**Dependencies:** `g_TextureDepth`, `AddTintSprite()`
+**Dependencies:** `TextureDesc::texturePage`, `AddTintSprite()`
 
 ---
 
@@ -339,14 +337,14 @@ int AddTintSprite(TextureDesc* texDesc, unsigned short brightness);
 ```
 
 **Parameters:**
-- `texDesc` — Texture descriptor (global `g_texPrintState`) containing position, UV, color tint
+- `texDesc` — Texture descriptor (global `g_TextureDesc`, type `TextureDesc`) containing position, UV, color tint
 - `brightness` — 0–30 range (maps to alpha 0–255). Values ≤2 map to alpha 17 (faint)
 
 **Operations:**
 1. Reads `g_TexturePrintX/Y`, `g_TextureVramX/Y`, `g_PrintTintR/G/B` from globals
 2. Computes screen-space position with scaling: `(gameX * scaleX, gameY * scaleY)`
 3. Computes UV coordinates from font atlas dimensions
-4. Builds `DWORD color`: alpha = `brightness * 255/30`, RGB = `tint * 2` (clamped to 255)
+4. Builds `DWORD color`: for normal text alpha is a hard 255 and **brightness scales RGB** — brightness 0 and 2 are both forced to full 255 (`Rendering.cpp:158-169`). The `brightness * 255/30` alpha applies only to the all-zero-tint shadow branch (`:151-155`).
 5. Enqueues a `PendingSprite` in `g_pendingSprites[]` using `m_pFontSRV`
 
 **Dependencies:** `g_TexturePrintX/Y`, `g_TextureVramX/Y`, `g_PrintTintR/G/B`, `g_ScreenOffsetX/Y`, `CMarniDirect3D`
@@ -383,7 +381,8 @@ void draw_rect(RectDrawDesc* rect, int blend, int flags);
 |---------|-----------|----------|---------------|
 | 0 | `0` or no high bits | Fully opaque (alpha=255) | case 0 |
 | 1 | `0x40000000` | Semi-transparent tinted (alpha = max component) | case 1 |
-| 2 | `0x50000000` | White flash (r=g=b=255, alpha = brightness) | case 2 |
+| 2 | `0x50000000` | Identical to case 1 — the colour mask is deliberately NOT forced to white; forcing it destroyed coloured tints (room 2050's yellow veil), `Rendering.cpp:305-314` | case 2 |
+| 4 | `0x70000000` | Half-level tint (`Rendering.cpp:320-326`) | case 4 |
 | 3 | `0x60000000` | Black fade (r=g=b=0, alpha = brightness) | case 3 |
 
 **Important:** When alpha = 0 (brightness = 0), the draw is skipped entirely, allowing the background image to show through. Rects with `draw_rect` use `g_pendingSprites[]` with depth-sorted rendering in `FrameRateGovernor`.
@@ -400,7 +399,8 @@ void draw_rect(RectDrawDesc* rect, int blend, int flags);
 
 **Signature:**
 ```cpp
-void display_texture(TextureDesc* texture, unsigned short depth, int slot, int pageCount);
+int  display_texture(TextureDesc* texture, unsigned short depth, int slot, int pageCount,
+                     unsigned int sortClass = 1u);   // Globals.h:1773
 ```
 
 **Parameters:**
@@ -441,7 +441,7 @@ void OT_InsertPrimitive(void* prim, unsigned int depth);
 **Purpose:** Core frame timing, rendering, and presentation function. Called once per frame from `main_loop()`.
 
 **Flow:**
-1. **Frame timing**: Tracks frame deltas in a 4-slot circular buffer, computes target frame time
+1. **Frame timing**: NOT implemented, deliberately. Retail patches the measurement out, so `g_frameTargetTime` stays at its initial 100 forever and every tick presents; restoring it caused a regression. `Rendering.cpp:415-448` has the disassembly.
 2. **Budget check**: If `g_frameTimeAccumulator < g_frameTargetTime`, skips rendering (drops frame)
 3. **Rendering**: `MarniClear()` → `FUN_0040a8f0()` (insert title BG) → render in depth-split order → `MarniPresent()`
 4. **Post-present**: Resets sprite queues, updates timers, handles screen/render access flags
@@ -452,13 +452,13 @@ The original game puts all sprites (background, game objects, text, fade overlay
 
 | Phase | Depth Range | Contents | Rendered By |
 |-------|-------------|----------|-------------|
-| 1 — Background | ≥ 500 | Title BG image (0xFFF), pause overlays (2100) | `MarniDrawSprite` on `g_pendingSprites` |
-| 2 — Game objects | varies | Title text, game sprites, textures | `FlushSpriteCommands` on `g_SpriteCommandBuffer` |
+| 1 — Background | ≥ `PENDING_SCENE_DEPTH` (0x400) | Title BG image (0xFFF), pause overlays (2100) | `MarniDrawSprite` on `g_pendingSprites` |
+| 2 — Game objects | varies | Title text, game sprites, textures | `FlushSpriteCommandsRange` on `g_SpriteCommandBuffer` |
 | 3 — Screen effects | < 500 | Fade overlays (450), color tinting (490), room lighting (470–499) | `MarniDrawSprite` on `g_pendingSprites` |
 
 This ensures fade overlays correctly cover title text and game objects, matching the original game where the fade rect at depth 450 sorted on top of the title text at depth 532.
 
-**Dependencies:** `MarniClear()`, `MarniPresent()`, `FlushSpriteCommands()`, `MarniDrawSprite()`, `FUN_0040a8f0()`, `SpriteQueue_Reset()`
+**Dependencies:** `MarniClear()`, `MarniPresent()`, `FlushSpriteCommandsRange()`, `MarniDrawSprite()`, `FUN_0040a8f0()`, `SpriteQueue_Reset()`
 
 ---
 
@@ -517,7 +517,7 @@ void CleanupVideoConfigAndSaveAllSettings(void);
 
 **Operations:**
 1. Check guard flag to prevent double cleanup
-2. Save settings to registry
+2. Save settings to `config.ini` (the registry write is gone — `Cleanup.cpp:100`)
 3. Call CMarniDirect3D cleanup/destructor
 4. Free allocated memory
 5. Set global pointer to NULL
@@ -539,10 +539,11 @@ void CleanupVideoConfigAndSaveAllSettings(void);
 void DestroyAllSoundBanks(void);
 ```
 
-**Operations:**
-1. Destroy BGM sound bank
-2. Destroy all SFX banks
-3. Destroy room SFX banks
+**Operations:** none — the body is empty. It is an explicit stub (`Cleanup.cpp:79-86`,
+"actual XAudio2 cleanup to be implemented"). The original's six categories were:
+1. BGM sound bank
+2. All SFX banks
+3. Room SFX banks
 4. Destroy character SFX banks
 5. Destroy enemy SFX banks
 6. Destroy general sound banks
@@ -588,7 +589,7 @@ DWORD GetFreeDiskSpaceMB(
 ```
 
 **Parameters:**
-- `lpPath` - Path string; only the drive letter (first character) is used
+- `lpPath` - Full path. `GetDiskFreeSpaceExA(lpPath, ...)` is tried first and accepts one; only the root-path fallback uses the drive letter (`SystemChecks.cpp:12-37`)
 
 **Return Value:** Free disk space in megabytes
 
@@ -747,9 +748,11 @@ BOOL LoadInstallationConfiguration(
 
 ## DisplayConfig.cpp Functions
 
-### EnumDisplayModesCallback
+### EnumDisplayModesCallback — **does not exist in this port**
 
-**Address:** `0x00442930`
+**Address:** `0x00442930` (original only; the name survives in a stale header
+comment at `src/system/DisplayConfig.cpp:4`. DXGI enumerates modes directly, so
+there is no callback — see `EnumerateDisplayModes` in `marni/MarniSystem.cpp:519`.)
 
 **Purpose:** DirectDraw callback function for enumerating available display modes.
 
@@ -791,16 +794,16 @@ INT_PTR EnumerateAndSelectDisplayMode(void);
 - Dialog result from selection
 - `-1` on failure
 
-**Operations:**
-1. Create DirectDraw object
-2. Clear display mode buffer
+**Operations:** pure DXGI — no DirectDraw, no dialog, and it returns 0 on success
+(-1 only if the factory, adapter or output lookup fails). `DisplayConfig.cpp:47-113`.
+1. Clear display mode buffer
 3. Enumerate all display modes
 4. Release DirectDraw
 5. Display selection dialog
 
 **Dependencies:**
 - `EnumDisplayModesCallback()` - Enumeration callback
-- `DisplayModeDialogProc()` - Dialog procedure
+- (the original's `DisplayModeDialogProc()` has no counterpart here)
 
 ---
 
@@ -865,7 +868,7 @@ void GetDisplayModeRect(
 
 ---
 
-## WindowProc.cpp Functions
+## `src/platform/win32/window_proc.cpp` Functions
 
 ### WindowProc
 
@@ -977,7 +980,7 @@ cut points, so the same values are reused for both regions.
 
 Skip is per-FMV and gated by both a skip mask and a 100-call grace period.
 
-- **Per-FMV skip mask** — Each entry in `g_FMVTable` (declared in `src/video/VideoPlayback.cpp`, data sourced from Ghidra at `0x004c39dc`) carries a `field_4` WORD. `0x0fff` = skippable (all action buttons), `0x0000` = un-skippable. Verified against the original binary at `0x004c39d8` (8-byte stride, ptr + DWORD mask).
+- **Per-FMV skip mask** — Each entry in `g_FMVTableUSA` / `g_FMVTableJPN` (`src/video/VideoPlayback.cpp:22-25`, reached through `GetFmvTable()`; data sourced from Ghidra at `0x004c39dc`) carries an `isSkippable` WORD. `0x0fff` = skippable (all action buttons), `0x0000` = un-skippable. Verified against the original binary at `0x004c39d8` (8-byte stride, ptr + DWORD mask).
 - **Counter (`g_videoSkipCounter`)** — Initialized to 100 when state 1 starts, decremented each state-2 call. Must reach 0 before any skip is accepted (prevents accidental skip at video start).
 - **Edge detection** — State 1 seeds `g_videoSkipInput = (WORD)PlayerPad_Update()`. State 2 computes `currentInput = (WORD)PlayerPad_Update()` and checks `(skipMask & ~g_videoSkipInput & currentInput) != 0 && g_videoSkipCounter == 0`. Only a rising edge of a masked button while the counter is 0 triggers the skip.
 - **Accept key** — Default keymap binds PC bit 11 to `'C'` (action/confirm), which `g_JoyRemapTbl[0]` maps to PSX `0x0080` (R1). Any bit in `0x0fff` (Cross, Circle, Square, Triangle, L1, L2, R1, R2, Select, Start, L3, R3) will skip.
@@ -991,9 +994,10 @@ Skip is per-FMV and gated by both a skip mask and a 100-call grace period.
 **Dependencies:**
 - `ClearScreen()` - Clear display (alias for `MarniClear()`)
 - `OpenMCIAviVideo()` - Open MCI device
-- `MCI_OpenAndPlay()` - Open + start MCI playback
-- `MCI_CloseAll()` - Close MCI device
-- `MCISend()` - Send MCI command string
+- `plat_video_init/open_and_play/tick/stop/close/is_active()` — the real API
+  (`src/video/VideoPlayback.cpp:189-315`). `MCI_OpenAndPlay`/`MCI_CloseAll` never
+  existed here, and `MCISend` is a `static` helper inside
+  `src/platform/win32/video.cpp:28`, not part of this interface.
 - `CheckVideoFileExists()` - Verify video file
 - `setMenuScreenOffset()` - Set screen offset
 - `CenterScreenOrigin()` - Center screen
@@ -1017,17 +1021,17 @@ Skip is per-FMV and gated by both a skip mask and a 100-call grace period.
 | `0x0041d0b0` | `CleanupAsyncTasks` | Cleanup.cpp |
 | `0x00428eb0` | `main_loop` | MainLoop.cpp |
 | `0x004402f0` | `OT_InsertPrimitive` | Rendering.cpp |
-| `0x00441170` | `WindowProc` | WindowProc.cpp |
-| `0x00441350` | `WinMain` | WinMain.cpp |
+| `0x00441170` | `WindowProc` | platform/win32/window_proc.cpp |
+| `0x00441350` | `WinMain` | platform/win32/main.cpp |
 | `0x00442230` | `CleanupSharedMemory` | Cleanup.cpp |
 | `0x00442350` | `UpdateGameStatus` | Cleanup.cpp |
 | `0x00442870` | `EnumerateAndSelectDisplayMode` | DisplayConfig.cpp |
 | `0x00442930` | `EnumDisplayModesCallback` | DisplayConfig.cpp |
 | `0x00448770` | `GetDisplayModeCount` | DisplayConfig.cpp |
 | `0x004487a0` | `GetDisplayModeRect` | DisplayConfig.cpp |
-| `0x00455190` | `PrintFormattedText` | Rendering.cpp |
-| `0x00455420` | `PrintText8x8` | Rendering.cpp |
-| `0x00455520` | `PrintText8x14` | Rendering.cpp |
+| `0x00455190` | `PrintFormattedText` | PrintText.cpp |
+| `0x00455420` | `PrintText8x8` | PrintText.cpp |
+| `0x00455520` | `PrintText8x14` | PrintText.cpp |
 | `0x0046e0a0` | `AddTintSprite` | Rendering.cpp |
 | `0x0046e8d0` | `display_texture` | Rendering.cpp |
 | `0x00470350` | `draw_rect` | Rendering.cpp |
@@ -1037,7 +1041,7 @@ Skip is per-FMV and gated by both a skip mask and a 100-call grace period.
 | `0x00497060` | `IsGraphicsSystemReadyForOperation` | MarniSystem.cpp |
 | `0x004970c0` | `InitializeMarniSystem` | MarniSystem.cpp |
 | `0x004973d0` | `FrameRateGovernor` | Rendering.cpp |
-| `0x004976c0` | `EnumerateDisplayModes` | DisplayConfig.cpp |
+| `0x004976c0` | `EnumerateDisplayModes` | marni/MarniSystem.cpp |
 | `0x004977f0` | `EnumerateD3DRenderers` | MarniSystem.cpp |
 | `0x00497ea0` | `CleanupVideoConfigAndSaveAllSettings` | Cleanup.cpp |
 | `0x00497ee0` | `ShowMessageBox` | SystemChecks.cpp |
