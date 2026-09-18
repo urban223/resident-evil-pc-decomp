@@ -38,6 +38,7 @@
 #include <cstring>
 
 extern void LoadEntityEMD(Entity* em, unsigned char entity_id);   // EntityModelLoader.cpp
+extern void ResetJointTransforms(void);                          // 0x0048bad0
 extern void Entity_SetJoints(Entity* em, unsigned int stride);    // EntityModelLoader.cpp
 extern void InitAnimStructure(void* animHeaderValue);             // EntityModelLoader.cpp
 extern unsigned int SetupJointStructures(unsigned int base);      // EntityModelLoader.cpp
@@ -147,6 +148,16 @@ void RaidEnemies_Spawn(void)
         Entity_SetJoints(e, 0x7c);
         InitAnimStructure((void*)e->modelLoadBuffer);
         g_loadDataDestPointer = (void*)SetupJointStructures((unsigned int)g_loadDataDestPointer);
+
+        // CUSTOM: the rest pose. SetupJointStructures fills flags and mesh
+        // slots but never touches joint->transform, so the bone offsets stay
+        // whatever the arena held. A host does not notice - the enemy's own
+        // init state calls this on its first update_entities dispatch
+        // (zombie_init, Zombie.cpp:336) - but a co-op CLIENT never runs
+        // update_entities at all, so its enemies were posed from garbage and
+        // drew somewhere off in the distance. That is why a client saw no
+        // zombies. Harmless on a host: zombie_init does it again a frame later.
+        ResetJointTransforms();
         prev = e;
     }
 

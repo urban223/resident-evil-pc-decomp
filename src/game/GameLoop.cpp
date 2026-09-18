@@ -306,6 +306,13 @@ LAB_00480e89:
                     Coop_CheckDeaths();     // CUSTOM: a killed player gets up as a zombie
                     Coop_ChooseTargets();   // CUSTOM: who each enemy hunts
                     update_entities();
+                } else if (g_debugMenuOpen == 0 && !Editor_IsOpen()) {
+                    // CUSTOM: a client. It runs no state machine, so nothing
+                    // here chooses an animation - but the snapshot said which
+                    // one and which frame, and this is what turns that into a
+                    // posed skeleton. Without it everyone slid around the room
+                    // frozen in their rest pose.
+                    Coop_ClientPose();
                 }
 
                 // CUSTOM: co-op runs this whole block once per player. Outside

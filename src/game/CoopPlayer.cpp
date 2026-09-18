@@ -1,5 +1,6 @@
 // CoopPlayer.cpp - two players in the RAID arena. CUSTOM; see CoopPlayer.h.
 #include "CoopPlayer.h"
+#include "CoopNet.h"
 #include "entities/EntityCommon.h"
 // benddown_and_eat is zombie_action_tbl[4] (Zombie.cpp:2831), reached through
 // action_behavior - NOT behavior_flags. The table's own comment calls it
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <cstdio>
 #include "../platform/platform.h"
+#include "../DebugPrint.h"
 
 int g_coopActive = 0;
 unsigned char g_enemyTarget[30] = {};
@@ -571,6 +573,108 @@ void Coop_DriveZombie(int i)
     if (ENTITY->state != COOP_Z_STATE_RUN && ENTITY->state != COOP_Z_STATE_ATK) {
         ENTITY->state = COOP_Z_STATE_RUN;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Posing a client
+//
+// A client runs neither update_player_anim nor update_entities - both are
+// gated on Coop_IsAuthority, because a local simulation would fight the
+// snapshot for the same fields every tick. The cost was that nothing advanced
+// a skeleton: bodies slid around the room in their rest pose, because the
+// snapshot carries an animation id and a frame number and nothing was reading
+// them.
+//
+// Joint_move is the piece that turns those two numbers into joint transforms,
+// and it is separable from the state machine that normally chooses them: it
+// reads ENTITY->animationId and ENTITY->animation_frame_id and writes the
+// skeleton. So the client sets both from the wire and calls it directly. It
+// advances the frame by one on its way out, which is harmless - the next
+// snapshot overwrites it, and in the gap between snapshots that extra frame is
+// a free interpolation rather than a glitch.
+//
+// timing_control has to be 1: Joint_move returns early without posing anything
+// while it is above that, and a value that arrived mid-animation would stall
+// the pose for several frames.
+// ---------------------------------------------------------------------------
+// Which of the player's four animation sources a pose came from. The state
+// machine picks between them per animation - emdScratchPtr1/2 for most of the
+// movement set, jointMoveData0/1 for the weapon poses, jointMoveData2/3 and
+// animHeader/animBase for the rest - and a client that always used one of them
+// played a DIFFERENT animation from the host rather than none at all. The host
+// records what it actually used; the wire carries the choice.
+//
+// Derived by comparing pointers inside Joint_move rather than by touching its
+// fifty-odd call sites, none of which are port code.
+unsigned char g_coopJointSrc[RAID_PLAYERS]  = { 0, 0 };
+unsigned char g_coopJointMirror[RAID_PLAYERS] = { 0, 0 };
+
+static void coop_pair(const PlayerEntity* p, int sel,
+                      unsigned int* outHeader, unsigned int* outBase)
+{
+    switch (sel) {
+    case 1:  *outHeader = p->jointMoveData0;  *outBase = p->jointMoveData1;  break;
+    case 2:  *outHeader = p->jointMoveData2;  *outBase = p->jointMoveData3;  break;
+    case 3:  *outHeader = p->emdScratchPtr1;  *outBase = p->emdScratchPtr2;  break;
+    default: *outHeader = p->animHeader;      *outBase = p->animBase;        break;
+    }
+}
+
+void Coop_NoteJointSource(unsigned int animHeader, unsigned int animBase, char reverse)
+{
+    if (!g_coopActive) return;
+
+    for (int i = 0; i < RAID_PLAYERS; i++) {
+        if (ENTITY != (const Entity*)&g_players[i]) continue;
+        const PlayerEntity* p = &g_players[i];
+        for (int sel = 0; sel < 4; sel++) {
+            unsigned int h = 0, b = 0;
+            coop_pair(p, sel, &h, &b);
+            if (h == animHeader && b == animBase) {
+                g_coopJointSrc[i]    = (unsigned char)sel;
+                g_coopJointMirror[i] = (unsigned char)(reverse != 0);
+                return;
+            }
+        }
+        return;                  // a player, but no pair matched - leave the last
+    }
+}
+
+static void coop_pose_current(unsigned int animHeader, unsigned int animBase,
+                              unsigned char mirror)
+{
+    if (animHeader == 0 || animBase == 0) return;
+    ENTITY->timing_control = 1;
+    ENTITY->blend_counter  = 0;    // no blend: the wire frame IS the pose
+    Joint_move((char)mirror, animHeader, animBase, 0x400);
+}
+
+void Coop_ClientPose(void)
+{
+    if (!g_coopActive) return;
+
+    Entity* saveEntity = ENTITY;
+
+    for (int i = 0; i < Coop_PlayerCount(); i++) {
+        if (Coop_IsZombie(i)) continue;        // his body is an entity now
+        Coop_BeginPlayer(i);
+        unsigned int h = 0, b = 0;
+        coop_pair(&g_players[i], g_coopJointSrc[i], &h, &b);
+        coop_pose_current(h, b, g_coopJointMirror[i]);
+        Coop_EndPlayer();
+    }
+
+    // The same for whatever the arena is holding. Bounded by the slot count
+    // rather than g_enemy_count, and by the active bit, because a client's
+    // count comes from its own spawn and the liveness comes off the wire.
+    for (int s = 0; s < 30; s++) {
+        Entity* e = &g_EnemiesList[s];
+        if ((e->status_flags & ENTITY_STATUS_ACTIVE) == 0) continue;
+        ENTITY = e;
+        coop_pose_current(e->animHeader, e->animBase, 0);
+    }
+
+    ENTITY = saveEntity;
 }
 
 void Coop_SetRemotePad(int i, unsigned int padHeld,

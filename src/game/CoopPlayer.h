@@ -144,6 +144,13 @@ int  Coop_IsZombie(int i);
 // gone below zero into a zombie.
 void Coop_CheckDeaths(void);
 
+// Drive every skeleton from the animation id and frame the snapshot carried.
+// A client runs no state machine, so this is the only thing that poses it.
+extern unsigned char g_coopJointSrc[RAID_PLAYERS];
+extern unsigned char g_coopJointMirror[RAID_PLAYERS];
+void Coop_NoteJointSource(unsigned int animHeader, unsigned int animBase, char reverse);
+void Coop_ClientPose(void);
+
 // Steer slot `slot`'s zombie from player `i`'s pad. Called from update_entities
 // in place of the AI's own targeting, immediately before the state dispatch.
 void Coop_DriveZombie(int i);

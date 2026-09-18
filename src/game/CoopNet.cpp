@@ -43,10 +43,15 @@ typedef struct {
     int   x, y, z;          // localMatrix.t
     short angle;
     short health;
-    unsigned char animationId;
-    unsigned char animFrameId;
+    unsigned char animationId;  // PlayerEntity 0x84 - the state machine's pair
+    unsigned char animFrameId;  // PlayerEntity 0x85
+    unsigned char jointAnimId;  // Entity view 0xBD - the pair Joint_move reads
+    unsigned char jointFrameId; // Entity view 0xBE
+    unsigned char jointSrc;     // which of the four animation sources
+    unsigned char jointMirror;  // Joint_move's `reverse`
     unsigned char flags;        // aim bits and the rest of PlayerEntity.flags
     unsigned char isZombie;     // playing as a zombie: his body is an entity
+    unsigned char zombieSlot;   // which enemy slot that body is; 0xFF if none
 } CoopNetPlayer;
 
 typedef struct {
@@ -54,6 +59,8 @@ typedef struct {
     short angle;
     short health;
     unsigned char id;           // enemy type; 0xFF means "slot empty"
+    unsigned char statusFlags;  // the WHOLE byte, not just the liveness bit
+    unsigned char hdr2, hdr3;   // behavior_flags and has_enter_switch_zone
     unsigned char state;
     unsigned char animationId;
     unsigned char animFrameId;
@@ -62,6 +69,8 @@ typedef struct {
 typedef struct {
     unsigned int   magic;
     unsigned int   tick;
+    unsigned char  enemyCount;  // g_enemy_count, which bounds the DRAW loop
+    unsigned char  pad0, pad1, pad2;
     CoopNetPlayer  player[RAID_PLAYERS];
     CoopNetEnemy   enemy[COOP_NET_ENEMIES];
 } CoopNetSnapshot;
@@ -172,6 +181,12 @@ static void snap_build(CoopNetSnapshot* s)
     memset(s, 0, sizeof(*s));
     s->magic = COOP_MAGIC_SNAP;
     s->tick  = s_tick;
+    // The draw loop is bounded by this, and a host grows it when a dead player
+    // stands up as a zombie (Coop_CheckDeaths). A client that kept its own
+    // count from its own spawn could never draw that body at all - the loop
+    // stopped one entity short, which is exactly what "drawn=1 count=1" against
+    // the host's "drawn=2 count=2" was saying.
+    s->enemyCount = (unsigned char)g_enemy_count;
 
     for (int i = 0; i < RAID_PLAYERS; i++) {
         const PlayerEntity* p = &g_players[i];
@@ -183,8 +198,20 @@ static void snap_build(CoopNetSnapshot* s)
         w->health      = p->health;
         w->animationId = p->animationId;
         w->animFrameId = p->animFrameId;
+        // The pair the pose actually comes off. PlayerEntity carries two sets:
+        // 0x84/0x85 belong to the player state machine, and 0xBD/0xBE are what
+        // Joint_move reads through the Entity view. Sending only the first set
+        // left a client posing from an animation frame nothing had written -
+        // the rotation data read as zeroes and every body slid around the room
+        // in its rest pose.
+        w->jointAnimId  = ((const Entity*)p)->animationId;
+        w->jointFrameId = ((const Entity*)p)->animation_frame_id;
+        w->jointSrc     = g_coopJointSrc[i];
+        w->jointMirror  = g_coopJointMirror[i];
         w->flags       = p->flags;
         w->isZombie    = (unsigned char)Coop_IsZombie(i);
+        w->zombieSlot  = (g_coopZombieSlot[i] >= 0)
+                       ? (unsigned char)g_coopZombieSlot[i] : 0xFF;
     }
 
     for (int e = 0; e < COOP_NET_ENEMIES; e++) {
@@ -200,6 +227,9 @@ static void snap_build(CoopNetSnapshot* s)
         w->angle       = en->angle;
         w->health      = en->health;
         w->id          = en->id;
+        w->statusFlags = en->status_flags;
+        w->hdr2        = en->behavior_flags;
+        w->hdr3        = en->has_enter_switch_zone;
         w->state       = en->state;
         w->animationId = en->animationId;
         w->animFrameId = en->animation_frame_id;
@@ -216,6 +246,8 @@ static void snap_build(CoopNetSnapshot* s)
 // ---------------------------------------------------------------------------
 static void snap_apply(const CoopNetSnapshot* s)
 {
+    if (s->enemyCount <= 30) g_enemy_count = s->enemyCount;
+
     for (int i = 0; i < RAID_PLAYERS; i++) {
         PlayerEntity* p = &g_players[i];
         const CoopNetPlayer* w = &s->player[i];
@@ -229,7 +261,16 @@ static void snap_apply(const CoopNetSnapshot* s)
         p->health         = w->health;
         p->animationId    = w->animationId;
         p->animFrameId    = w->animFrameId;
+        ((Entity*)p)->animationId        = w->jointAnimId;
+        ((Entity*)p)->animation_frame_id = w->jointFrameId;
+        g_coopJointSrc[i]    = w->jointSrc;
+        g_coopJointMirror[i] = w->jointMirror;
         p->flags          = w->flags;
+        // Death is the host's call, and Coop_CheckDeaths only runs there. Without
+        // this a client never learned a player had died: it went on drawing the
+        // body frozen on the last frame of the animation that killed him, while
+        // the host had already stood a zombie up in his place.
+        g_coopZombieSlot[i] = w->isZombie ? (int)w->zombieSlot : -1;
     }
 
     for (int e = 0; e < COOP_NET_ENEMIES; e++) {
@@ -246,8 +287,20 @@ static void snap_apply(const CoopNetSnapshot* s)
         // would race the snapshot, so a newly-seen slot is marked active and
         // the id is taken from the wire; the model load happens the next time
         // the room does one.
-        en->status_flags |= ENTITY_STATUS_ACTIVE;
+        // The whole byte, not just the liveness bit: the upper bits gate
+        // things other than the draw loop's test, and a host's enemy reads F1
+        // where an OR-ed client read 01.
+        en->status_flags = w->statusFlags | ENTITY_STATUS_ACTIVE;
         en->id = w->id;
+        // Byte 3 decides whether the body is drawn at all. render_entity opens
+        // with g_animFrameIdSave = ((entity[3] & 0x7f) == 0) and puts its whole
+        // draw branch behind that being zero, so an entity whose byte 3 is 0
+        // runs the loop and emits nothing. A host's arena zombie carries 1; a
+        // client's copy was 0, and that one byte is why a client saw an empty
+        // room while every other number - joints, objects, model, count, the
+        // draw counter itself - matched the host exactly.
+        en->behavior_flags        = w->hdr2;
+        en->has_enter_switch_zone = w->hdr3;
         en->scaMatrixData.localMatrix.t[0] = w->x;
         en->scaMatrixData.localMatrix.t[1] = w->y;
         en->scaMatrixData.localMatrix.t[2] = w->z;

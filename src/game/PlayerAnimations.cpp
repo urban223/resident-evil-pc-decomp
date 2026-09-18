@@ -1238,6 +1238,11 @@ unsigned int Joint_move(char reverse, unsigned int animHeader, unsigned int anim
     // that checks the return value already handles.
     if (g_coopActive && (animHeader == 0 || animBase == 0)) return 0;
 
+    // CUSTOM: co-op - remember which of the player's four animation sources
+    // this pose came from, so a client can reproduce the same one. Derived
+    // here rather than at the fifty-odd call sites, none of which are ours.
+    Coop_NoteJointSource(animHeader, animBase, reverse);
+
     // Wait if timing hasn't expired
     unsigned char* timingPtr = &ENTITY->timing_control;
     if (1 < *timingPtr) {
