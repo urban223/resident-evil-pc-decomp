@@ -1,8 +1,9 @@
 # Native Linux Port — Analysis and Work Plan
 
-Status: **Phases 0-5 implemented.** The Linux binary boots the real game,
+Status: **Phases 0-8 implemented, phase 9 in progress.** The Linux binary boots the real game,
 renders the title screen, responds to the keyboard, and renders an in-game room
-with correct 3D depth. Phases 6-10 planned.
+with correct 3D depth. The §6.3 table and §6.6 below are the authority on what
+has landed; phase 10 remains planned.
 Scope: a native Linux binary that shares the game logic with the existing
 Win32 build, which must keep building exactly as it does today.
 
@@ -42,10 +43,11 @@ Four measured facts make the job smaller than it looks:
 | **No GDI text/font rendering anywhere** | `GetDC` only at `main.cpp:129,304` (color-depth query); `GetStockObject` at `main.cpp:546` (window brush). All text is a PSX TIM atlas drawn as sprites (`PrintText.cpp` → `AddTintSprite`) | The entire text/UI path is portable as-is |
 | **No threading** | Whole tree: 2× `Sleep`, 1× `WaitForSingleObject`, zero `CreateThread`/`CriticalSection`/`Interlocked*` | No thread abstraction needed; the cooperative task scheduler is the only concurrency |
 | **File I/O is mostly stdio** | 10× `fopen`, 9× `fclose`, 6× `fseek`, 4× `fread` vs 3× `CreateFileA`/`ReadFile`, 1 memory-mapped file | File layer is nearly portable already |
-| **The Win32 surface is types, not APIs** | exactly **1 of 84** `.cpp` files is Windows-free today; 75 of 76 reach `<windows.h>` transitively | a typedef shim unlocks the whole tree |
+| **The Win32 surface is types, not APIs** | this was written when 1 of 84 `.cpp` files was Windows-free. There are now **127** `.cpp` files and the whole of `src/game/` is certified OS-agnostic by the CI boundary check | a typedef shim unlocked the whole tree |
 
-The platform-specific code is roughly **12k of 113k lines (~10%)**; the ~90k
-lines of game logic in `src/game/` are shared verbatim.
+The platform-specific code is roughly **16k of 133k lines**; the ~112k lines of
+game logic in `src/game/` are shared verbatim. (Counts move every phase — the
+table below is a snapshot, not an invariant.)
 
 ---
 
@@ -109,7 +111,7 @@ replacement:
 - `DrawRect()`, `DrawLine()`
 - `DrawTriangles()` — 8 floats/vertex, screen-space affine
 - `DrawTrianglesPersp()` — 10 floats/vertex, `w` for perspective-correct UV
-- `DrawTriangles3D()` — 9 floats/vertex, depth test/write `LESS_EQUAL`
+- `DrawTriangles3D()` — **10** floats/vertex `{x,y,z,w,u,v,r,g,b,a}` (`MarniDX.h:190`; § below records the correction from 9), depth test/write `LESS_EQUAL`
 
 **Readback**
 - `CaptureBackbufferToRGBA()` (screenshots / `SaveBitmapToFile`)
@@ -162,7 +164,7 @@ the backend, not just recompiled.
 
 ### A. Build system
 - Add `CMakeLists.txt` as the single source of truth for the file list; the
-  existing `Game.vcxproj` (109 `ClCompile` entries) must keep working. Either
+  existing `Game.vcxproj` (117 `ClCompile` entries) must keep working. Either
   generate the vcxproj from CMake or keep both in sync with a check.
 - Keep the MSVC path byte-for-byte intact: `WholeProgramOptimization` stays off
   (see `Game.vcxproj:33-37` — LTCG miscompiles the task scheduler).
@@ -182,7 +184,9 @@ logic needs a **type shim**, not a rewrite:
   non-Marni files reach `<windows.h>` transitively (74 of them through
   `Globals.h`). This is precisely why the shim is mandatory: without it,
   *nothing* compiles on Linux.
-- Only **17 of 109** files include `<windows.h>` directly (16 headers + 2 .cpp),
+- Only **4** files include `<windows.h>` directly — `src/platform/types.h`,
+  `src/platform/win32/platform.cpp`, `src/platform/win32/video.cpp`,
+  `src/system/CrashLog.cpp` —
   so the shim surface itself is small and the include graph is shallow.
 - MSVC `_s` CRT calls must be shimmed too: `sprintf_s`, `strcpy_s`, `strcat_s`,
   `_vsnprintf_s`, `_snprintf` appear in `AssetPath.cpp:88`,
@@ -197,7 +201,7 @@ logic needs a **type shim**, not a rewrite:
 - This is the difference between "port 90k lines" and "port 12k lines".
 
 ### C. Graphics backend (`MarniDX_GL.cpp`)
-- Implement §3 (30 methods) against OpenGL, written to a GLES-3-compatible
+- Implement §3 (32 public methods) against OpenGL, written to a GLES-3-compatible
   subset (see §7.1 — decided; this is what keeps Android/Switch reachable).
 - Replace `src/system/DisplayConfig.cpp`'s DXGI enumeration with SDL2 display
   mode enumeration (see §3b — it is the one leak outside `src/marni/`).
@@ -296,8 +300,15 @@ with `__asm {}` blocks doing raw `ESP` switching, plus
   contiguous stacks) kept for crash safety; they can be preserved as-is on
   Linux via `mmap`.
 
-### I. Memory layout
-`src/Globals.cpp` places globals into custom sections:
+### I. Memory layout *(superseded — see § Phase 1 and `docs/MEMORY_LAYOUT.md`)*
+
+**None of this is true any more.** The custom sections were deleted in Phase 1
+(this doc says so itself further down) and `ResetGameStateBlock()` clears the
+wiped globals by name instead. There is no `__declspec(allocate(` or
+`#pragma section` left in `src/Globals.cpp` — only historical comments. Kept for
+the reasoning about why the sections could not survive GNU ld.
+
+The arrangement it describes was:
 - `.sched` — task scheduler state, `g_pMarniDirect3D`, `g_pMasterInputState`
   (kept out of the wiped range). Single section, declaration-ordered.
 - `.gwipe$<4 hex digits>` — 20 subsections reproducing the original
@@ -407,6 +418,15 @@ One tree, backend selected at build time. Two orthogonal axes:
 - **`src/marni/`** — graphics/audio *API* backends, selected independently of
   the OS (D3D11 vs GL; XAudio2 vs SDL audio).
 
+> **This tree is a proposal that was not followed.** About seventeen of the
+> paths below were never created and the names that did land differ — there is
+> no `win32/plat_window.cpp`, no `linux/plat_sched_ucontext.cpp`, no
+> `marni/MarniDX_D3D11.cpp`, no split `VideoPlayback_MCI/ffmpeg.cpp`. What exists
+> is `src/platform/win32/{main,platform,video,window_proc}.cpp`,
+> `src/platform/linux/{main,platform,input,audio,video,config,crash,stubs}.cpp`,
+> `src/marni/{MarniDX,MarniDX_GL,MarniGLFuncs,MarniSound}.*` and one shared
+> `src/video/VideoPlayback.cpp`. §6.6, §7 and §8 list the real names; read those.
+
 ```
 CMakeLists.txt                     # new: file list + backend selection
 tests/                             # port tests + the boundary gate
@@ -436,7 +456,7 @@ src/
       plat_display.cpp             # SDL2 display modes
       plat_sched_ucontext.cpp      # portable task switch (also the ARM path)
   marni/
-    MarniDX.h                      # UNCHANGED interface (30 methods)
+    MarniDX.h                      # UNCHANGED interface (32 public methods)
     MarniDX_D3D11.cpp              # = today's MarniDX.cpp
     MarniDX_GL.cpp                 # NEW: same class, same globals, GL impl
     MarniSound_XAudio2.cpp         # = today's MarniSound.cpp
@@ -449,9 +469,10 @@ src/
 ```
 
 Tests live in `tests/`, not `tools/`. `tools/` stays what it is — decompilation
-tooling. Its `verify_msg_*.py` / `test_rdt_editor.js` scripts are referenced by
-`docs/TEXT_ENCODING.md` and test artifacts that live in `tools/`, so they stay
-put; anything written for the port goes in `tests/`.
+tooling. Its `verify_msg_fixes.py` is referenced by
+`docs/TEXT_ENCODING.md`, and `test_rdt_editor.js` is referenced by no doc but is
+the headless test for `rdt_event_editor.html`, which lives in `tools/` — so both
+stay put; anything written for the port goes in `tests/`.
 
 The renderer/sound backends are not new abstractions — they are **alternative
 definitions of the existing classes**, so `Marni_DX()`, `g_pMarniDirect3D`, the
@@ -484,10 +505,18 @@ scheduler (§6.5), which is where the 32-bit assumption actually lives.
   so drift is caught instead of discovered.
 - Options: `RE1_PLATFORM=win32|linux`, `RE1_RENDERER=d3d11|gl`,
   `RE1_AUDIO=xaudio2|sdl`, `RE1_VIDEO=mci|ffmpeg`.
-- Windows keeps building through `Game.vcxproj`/`build.bat` exactly as today;
-  CMake's Windows path is for parity checks only.
-- Linux flags: `-m32` (first cut), `-fomit-frame-pointer` **mandatory** for the
-  scheduler TU, no LTO.
+  **None of these four options was ever implemented.** `CMakeLists.txt` has no
+  `option()` or cache variable for backend selection; the Linux backend files
+  are appended unconditionally. The real knobs are `RE1_M32_LIBDIR` autodetection
+  and the `re1_link_32bit()` glob resolver.
+- Windows keeps building through `Game.vcxproj`/`build.bat`. There is no CMake
+  Windows path at all: `if(WIN32)` in `CMakeLists.txt` is a hard
+  `FATAL_ERROR` telling you to use the vcxproj.
+- Linux flags: `-m32` (plus `-w`) globally. `-fomit-frame-pointer` is described
+  below as **mandatory** for the scheduler TU, and § stack corruption explains
+  why — but `CMakeLists.txt` does not set it on any TU. Only
+  `tests/compile_linux.sh:33-35` applies it, to `src/game/TaskScheduler.cpp`.
+  That gap between the gate and the build is real and unclosed.
 
 ### 6.3 Phases
 
@@ -498,7 +527,7 @@ test.
 | # | Phase | Deliverable | Gate |
 |---|---|---|---|
 | 0 | **Platform extraction** *(done)* | `src/platform/{types.h,platform.h,win32/}`; move every Win32 call and handle out of `src/game/` | `src/game/` has no `<windows.h>` and no Win32 API call (CI grep); Windows build behaves identically |
-| 1 | Build skeleton + shim *(done)* | Linux `types.h` path, ucontext scheduler, per-symbol state reset, platform file/memory calls | **72/72 shared TUs compile on Linux x86-32**; Windows Release + Debug green; boundary check green |
+| 1 | Build skeleton + shim *(done)* | Linux `types.h` path, ucontext scheduler, per-symbol state reset, platform file/memory calls | **104/104 shared TUs compile on Linux x86-32**; Windows Release + Debug green; boundary check green |
 | 2 | Window + GL lifecycle *(done)* | SDL2 window, GL context, `Clear`/`Present`, `main.cpp` pump + 33 ms limiter | a cleared window at 30 Hz; scheduler runs for minutes without stack corruption |
 | 3 | 2D + textures *(done)* | texture create/update/destroy/white/font, `DrawSprite`/`DrawRect`/`DrawLine`, samplers, blends, path layer | **title screen renders**; glyphs pixel-crisp |
 | 4 | 3D *(done)* | `DrawTrianglesPersp`, `DrawTriangles3D`, depth test/write, perspective-correct UV | **in-game room renders**; models correct; depth ordering correct |
@@ -566,7 +595,7 @@ only what it needs — at the cost of touching the same files twice.
 
 ### 6.5 Phase 1 detail
 
-**Status: implemented.** Gate met — **72/72 shared TUs compile on Linux
+**Status: implemented.** Gate met — **104/104 shared TUs compile on Linux
 x86-32**, and Windows Release + Debug both build. What was done:
 
 1. `types.h` grew the full shim: `DWORD`/`BYTE`/`BOOL`/`HWND`/`HANDLE`/`RECT`/
@@ -613,7 +642,7 @@ MainMenu, MainLoop), `%Iu`→`%zu`, and platform calls for `VirtualQuery`,
 
 | File | Role |
 |---|---|
-| `src/platform/linux/platform.cpp` | all 16 `plat_*` functions (SDL2 keys/time/window/cursor/dialog, mmap guard stacks, `/proc/self/maps` readback, stdio files) |
+| `src/platform/linux/platform.cpp` | 20 of the 30 `plat_*` entry points declared in `src/platform/platform.h` (the rest are in `linux/{input,audio,video,config,crash}.cpp`) (SDL2 keys/time/window/cursor/dialog, mmap guard stacks, `/proc/self/maps` readback, stdio files) |
 | `src/platform/linux/main.cpp` | SDL2 window + GL context, config.ini read, 33 ms limiter, scheduler smoke tasks |
 | `src/platform/linux/stubs.cpp` | inert placeholders for the not-yet-ported subsystems (P5/P6/P7/P8) |
 | `src/marni/MarniDX_GL.cpp` | the GL backend: lifecycle, Clear/Present, textures, 2D quad/triangle path |
@@ -924,7 +953,7 @@ they are byte-identical, and the attract reel that carries the water-splash
 sprites (pdemo1) now draws them at full size.
 
 This is the same failure class as the item viewer's rotation block
-([[byte-offset-indexed-globals-need-one-array]]): whenever the original
+(**byte-offset-indexed globals need one array**): whenever the original
 addresses a global block by index through `&DAT_x`, the port must declare the
 whole span as one array.
 
