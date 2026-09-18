@@ -227,7 +227,18 @@ void Coop_ChooseTargets(void)
 static int coop_free_enemy_slot(void)
 {
     for (int s = 0; s < 30; s++) {
-        if ((g_EnemiesList[s].status_flags & ENTITY_STATUS_ACTIVE) == 0) return s;
+        if ((g_EnemiesList[s].status_flags & ENTITY_STATUS_ACTIVE) != 0) continue;
+
+        // A reserved slot is asleep - status_flags 0 - so the liveness bit
+        // cannot distinguish it from a free one. Without this, reserving the
+        // second player's zombie picked the SAME slot the first had just been
+        // given, both players ended up sharing one body, and the second death
+        // wrote over the first one's.
+        int taken = 0;
+        for (int q = 0; q < RAID_PLAYERS; q++) {
+            if (s_reservedSlot[q] == s) { taken = 1; break; }
+        }
+        if (!taken) return s;
     }
     return -1;
 }
@@ -238,7 +249,7 @@ static int coop_free_enemy_slot(void)
 // updates them until somebody dies.
 void Coop_ReserveZombies(void)
 {
-    for (int i = 0; i < RAID_PLAYERS; i++) g_coopZombieSlot[i] = -1;
+    for (int i = 0; i < RAID_PLAYERS; i++) { g_coopZombieSlot[i] = -1; s_reservedSlot[i] = -1; }
     if (!g_coopActive) return;
 
     Entity* saveEntity = ENTITY;
