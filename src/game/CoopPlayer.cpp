@@ -254,6 +254,11 @@ void Coop_ReserveZombies(void)
 
     Entity* saveEntity = ENTITY;
 
+    // Same reason as in Coop_SpawnPlayer2: these loads must not move the page
+    // the room left current, or whatever loads next lands somewhere unexpected.
+    const unsigned char texBankSave = g_TextureBankID;
+    const unsigned char texPageSave = g_TextureCurrentPage;
+
     for (int i = 0; i < RAID_PLAYERS; i++) {
         const int slot = coop_free_enemy_slot();
         if (slot < 0) break;
@@ -291,6 +296,8 @@ void Coop_ReserveZombies(void)
     }
 
     ENTITY = saveEntity;
+    g_TextureBankID      = texBankSave;
+    g_TextureCurrentPage = texPageSave;
 }
 
 void Coop_SpawnPlayer2(void)
@@ -325,9 +332,21 @@ void Coop_SpawnPlayer2(void)
     // and a player is not one.
     p2->pSca_hit_data = (DWORD)s_player2ScaHitData;
 
+    // SetupCharacterData sets g_TextureBankID / g_TextureCurrentPage for the
+    // player it is setting up and leaves them there. For player 1 that is
+    // harmless - nothing loads a texture between it and the room. For player 2
+    // it is not: everything loaded afterwards, the arena's own zombies included,
+    // would land on HIS bank and overwrite him. That is a red torso on Chris and
+    // a zombie wearing half a player.
+    const unsigned char texBankSave = g_TextureBankID;
+    const unsigned char texPageSave = g_TextureCurrentPage;
+
     Coop_BeginPlayer(1);
     SetupCharacterData();
     Coop_EndPlayer();
+
+    g_TextureBankID      = texBankSave;
+    g_TextureCurrentPage = texPageSave;
 
 
     // SetupCharacterData sets Sca_info from the character id but does NOT touch
