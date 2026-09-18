@@ -14,7 +14,25 @@ import sys
 
 FORBIDDEN_INCLUDE = re.compile(
     r'#\s*include\s*<(windows|mmsystem|d3d11|dxgi|d3dcompiler|xinput|xaudio2|'
-    r'dbghelp|imm32|shellapi|shlobj|commdlg)\.h>'
+    r'dbghelp|imm32|shellapi|shlobj|commdlg|winsock2|ws2tcpip|winsock)\.h>'
+)
+
+# Sockets are an OS service like input and files, so they belong behind
+# src/platform/platform.h too. These are listed separately from the Win32 set
+# because most of them are the SAME NAME on both platforms - socket(), bind(),
+# recv() - so this rule is not 'no Windows' but 'no networking in src/game at
+# all'. Added before the netcode existed rather than after, so the guard could
+# never be the thing that arrives late.
+# Matched as CALLS - `name(` - not as bare words. Several of these are ordinary
+# English that game code already uses for its own things (a menu has a select,
+# an entity has a connect), and a rule that fired on those would be switched off
+# within a week, which is worse than not having it at all.
+FORBIDDEN_NET = re.compile(
+    r'\b(WSAStartup|WSACleanup|WSAGetLastError|closesocket|ioctlsocket|'
+    r'socket|bind|listen|accept|connect|send|sendto|recv|recvfrom|'
+    r'setsockopt|getsockopt|shutdown|select|inet_addr|inet_ntoa|'
+    r'inet_pton|inet_ntop|htons|htonl|ntohs|ntohl|'
+    r'getaddrinfo|freeaddrinfo|gethostbyname)\s*\('
 )
 
 # Live Win32 API calls. OutputDebugStringA is deliberately absent: Globals.h
@@ -58,6 +76,7 @@ def scan(root):
             lines = strip_comments(text)
             for i, line in enumerate(lines, 1):
                 for rx, what in ((FORBIDDEN_INCLUDE, 'Windows header'),
+                                 (FORBIDDEN_NET, 'network call'),
                                  (FORBIDDEN_API, 'Win32 call')):
                     m = rx.search(line)
                     if m:
