@@ -15,10 +15,10 @@ table before writing the definition:
 
 | Original address range | Placement | Mechanism |
 |---|---|---|
-| `[0x00be41e0, 0x00be9620)` | game-init wipe block | `.gwipe$<tag>` ordered section (see below) |
+| `[0x00be41e0, 0x00be9620)` | game-init wipe block | named in `ResetGameStateBlock()` (see below) |
 | `[0x00be9620, 0x00be9a3c)` | bio card / save block | field of `BioCardLayout` + macro alias in `src/game/BioCard.h` |
-| Task scheduler cluster (`0x00d91a68..0x00d91a90`, `g_TasksTable` 0x00d1fde4, `g_StackPointer` 0x007e0cc8) | `.sched` section | `__declspec(allocate(".sched"))` in `src/Globals.cpp` |
-| Anything a range operation must **never** touch but the linker keeps placing at risk (historically `g_pMarniDirect3D`, `g_pMasterInputState`) | `.sched` section | same |
+| Task scheduler cluster (`0x00d91a68..0x00d91a90`, `g_TasksTable` 0x00d1fde4, `g_StackPointer` 0x007e0cc8) | ordinary global | nothing special is needed any more — see below |
+| Anything a range operation must **never** touch (historically `g_pMarniDirect3D`, `g_pMasterInputState`) | ordinary global | the wipe no longer works by address, so nothing can be caught by it |
 | Everything else | normal global | plain definition + original-address comment |
 
 If you find a **new range-based operation** in decompiled code (a `memclr`,
@@ -34,42 +34,53 @@ point the code at it. Example: `ComplexTmdObjectSetup` addressed the object
 data area DAT_008ffcc0 as `&g_objectCountArray[32]`, which in our layout wrote
 0x84-byte object entries over unrelated globals (see incident 4).
 
-## Mechanism 1: `.gwipe` — the game-init wipe block
+## The mechanism: `ResetGameStateBlock()`, by name
 
-`InitializeGame` (0x004807a0) executes:
-
-```c
-memclr(&g_defaultItemSlot, g_BioCardData);   // original: wipes 0x00be41e0..0x00be9620
-```
-
-Every global whose original address is in `[0x00be41e0, 0x00be9620)` **must**
-be allocated into the `.gwipe` section, tagged with the low 4 hex digits of its
-original address:
+`InitializeGame` (0x004807a0) in the original executes one block wipe:
 
 ```c
-#pragma section(".gwipe$41e4", read, write)          // once, in the list at the
-                                                     // top of src/Globals.cpp
-__declspec(allocate(".gwipe$41e4")) Effect g_effectPool[MAX_EFFECTS] = {};
+memclr(&g_defaultItemSlot, g_BioCardData);   // wipes 0x00be41e0..0x00be9620
 ```
 
-The MSVC linker sorts `$`-suffixed subsections **alphabetically** and
-concatenates them into one final `.gwipe` section. Because the tags are
-fixed-width lowercase hex, alphabetical order == original address order, so the
-block reassembles itself correctly no matter which translation unit defines
-which global.
+**This decomp no longer reproduces that as an address range.** It used to:
+every in-range global was allocated into a linker-ordered `.gwipe$<tag>`
+section, with `.sched` for the state that had to stay out of the wipe and
+`.items` for the item image buffer. That depended on MSVC's `$`-subsection
+sorting, which cannot be expressed on GNU ld or lld, so it died with the Linux
+port. There is not one `#pragma section` or `__declspec(allocate(` left under
+`src/`.
 
-Sentinels:
+The wipe is explicit instead. `ResetGameStateBlock()`
+(`src/game/GameStart.cpp:52`, called from `InitializeGame` at `:488`) clears
+each wiped global **by name**, nineteen of them, in original-address order:
 
-- `.gwipe$41e0` = `g_defaultItemSlot` — **first** byte, the memclr's begin.
-- `.gwipe$9620` = `g_BioCard` — **exclusive end**; the memclr stops here and
-  the bio card itself is *not* wiped.
+```c
+static void ResetGameStateBlock(void)
+{
+    g_defaultItemSlot = 0;                                     // 0x00be41e0
+    DAT_00be41e1 = 0;                                          // 0x00be41e1
+    g_enemy_count = 0;                                         // 0x00be41e2
+    memset(g_effectPool, 0, sizeof(g_effectPool));             // 0x00be41e4
+    memset(&g_playerEntity, 0, sizeof(g_playerEntity));        // 0x00be62e4
+    /* ... player position/angle/health and their backups ... */
+    memset(g_EnemiesList, 0, sizeof(g_EnemiesList));           // 0x00be6464
+    memset(g_savedEnemyStates, 0, sizeof(g_savedEnemyStates)); // 0x00be92cc
+    DAT_00be9614 = 0;                                          // 0x00be9614
+    g_SpecialR1 = g_SpecialG1 = g_SpecialB1 = 0;               // 0x00be961d..1f
+}
+```
 
-Guarantees:
+That is exactly the set the address range covered, with no ordering
+requirement, so every global in `src/Globals.cpp` is now an ordinary
+definition. `src/Globals.cpp:7-27` carries the same explanation and points back
+here for the member table.
 
-- No global outside `.gwipe` can ever land between the sentinels → nothing
-  foreign is wiped.
-- Every member listed is inside the sentinels → everything the original wiped
-  is wiped.
+**What this does and does not buy you.** The old scheme was self-enforcing: a
+global that landed in the range by accident got wiped, and the sentinels made
+that visible. The new one is not — a global whose original address is in the
+range but whose name is missing from `ResetGameStateBlock()` is simply never
+cleared, silently. The table below is therefore the checklist, not a
+description.
 
 ### Current members
 
@@ -88,10 +99,17 @@ Guarantees:
 | `6382` | `g_playerBkpPosZ` | 0x00be6382 * | 2 | Globals.cpp |
 | `6384` | `g_playerBkpHealthStat` | 0x00be6384 * | 4 | Globals.cpp |
 | `6388` | `g_playerBkpAngle` | 0x00be6388 * | 2 | Globals.cpp |
-| `63a0` | `g_firstItemSlotPointer` | 0x00be63a0 * | 4 | Globals.cpp |
-| `63a4` | `g_totalHeldItems` | 0x00be63a4 * | 4 | Globals.cpp |
-| `63a8` | `g_heItemsX2Less1` | 0x00be63a8 * | 4 | Globals.cpp |
-| `63b0` | `g_itemSlotIndices[8]` | 0x00be63b0 * | 8 | Globals.cpp |
+| `63a0` | `g_ItemSlotsPointer` | 0x00be63a0 * | 4 | Globals.cpp |
+| `63a4` | `g_TotalHeldItems` | 0x00be63a4 * | 4 | Globals.cpp |
+| `63a8` | `g_ItemSlotsBitmask` | 0x00be63a8 * | 4 | Globals.cpp |
+| `63b0` | `g_ItemSlotIndices[8]` | 0x00be63b0 * | 8 | Globals.cpp |
+
+> These four were listed here under the names `g_firstItemSlotPointer`,
+> `g_totalHeldItems`, `g_heItemsX2Less1` and `g_itemSlotIndices` long after they
+> stopped existing. They were `.gwipe` overlay globals that nothing ever
+> assigned, which made `SaveLoadScreen`'s inventory serialiser a silent no-op —
+> `src/game/SaveLoadScreen.cpp:598-602` records the incident. The live names are
+> above.
 | `6464` | `g_EnemiesList[30]` | 0x00be6464 | 0x2e68 | Globals.cpp |
 | `92cc` | `g_savedEnemyStates[16]` | 0x00be92cc | see Globals.cpp | Globals.cpp |
 | `9614` | `DAT_00be9614` | 0x00be9614 | 1 | Globals.cpp |
@@ -106,35 +124,35 @@ still wiped like the original bytes were.
 
 Unmapped gaps in the original range hold bytes the original wiped but no
 ported global uses. With the decomp function-complete, only one gap remains:
-`0x00be9320..0x00be9613` (between `g_savedEnemyStates[16]` and `DAT_00be9614`)
+`0x00be948c..0x00be9613` (between `g_savedEnemyStates[16]`, which is 16 × 0x1C and so ends at 0x00be948b, and `DAT_00be9614`)
 — truly-unused scratch space in the original. If you ever name a global there
-in Ghidra and add it to the code, it **must** get a `.gwipe` tag.
+in Ghidra and add it to the code, it **must** be added to `ResetGameStateBlock()`.
 
 ### Adding a member (checklist)
 
 1. Confirm the original address is in `[0x00be41e0, 0x00be9620)`.
-2. Add `#pragma section(".gwipe$<tag>", read, write)` to the list at the top of
-   `src/Globals.cpp` (tag = low 4 hex digits, lowercase).
-3. Prefix the definition with `__declspec(allocate(".gwipe$<tag>"))`.
-4. Update the table above.
+2. Add a line clearing it to `ResetGameStateBlock()` in
+   `src/game/GameStart.cpp`, in original-address order, with the address in a
+   trailing comment like its neighbours.
+3. Update the table above.
 
-MSVC quirks: the section name must be a **single string literal** — you cannot
-build it with macro string concatenation (`".gwipe$" tag` fails with C2341/C2059),
-which is why every subsection is spelled out. A global defined in another .cpp
-file can join the section the same way (the `#pragma section` must appear in
-that file too); alphabetical `$` sorting keeps the order correct across TUs.
+There is nothing to do in `src/Globals.cpp` any more: define the global
+normally, with its original-address comment. No `#pragma section`, no
+`__declspec(allocate(...))` — both are gone from the tree and neither can be
+expressed on the Linux toolchain.
 
-## Mechanism 2: `.sched` — protected survivors
+## Formerly Mechanism 2: `.sched` — protected survivors *(historical)*
 
-Globals that a range operation must never touch, but whose original addresses
-are *outside* any modeled block, live in `.sched` (declared at the top of
-`src/Globals.cpp`). Current residents: task scheduler state (`g_TasksTable`,
-`g_TasksESP/EIP`, `g_SchedulerESP`, `g_CurrentTask*`, `g_StackPointer`),
-`g_pMarniDirect3D`, `g_pMasterInputState`.
+Globals that a block operation must never touch used to be parked in a `.sched`
+section: the task-scheduler state (`g_TasksTable`, `g_TasksESP/EIP`,
+`g_SchedulerESP`, `g_CurrentTask*`, `g_StackPointer`), plus `g_pMarniDirect3D`
+and `g_pMasterInputState`.
 
-Use `.sched` when a pointer or system-level struct keeps getting corrupted by a
-block operation and its original address proves it should be far away from the
-operated range.
+That section is gone with the rest. Since the wipe now names its targets, a
+global can no longer be caught by one through bad luck of placement, so nothing
+needs protecting. Several of those definitions still carry comments saying they
+"MUST live in the .sched section" (`src/Globals.cpp:157`, `:165`, `:215-236`) —
+those comments are stale; the definitions themselves are ordinary.
 
 ## Mechanism 3: struct overlay — the bio card block
 
@@ -147,31 +165,43 @@ save files) and as ~60 individual variables. It is modeled as one packed struct
 never reorder; add new aliases at their correct offset.
 
 Use this pattern when a block is **copied/serialized as a whole** and byte
-offsets inside it matter (saves, file formats). Use `.gwipe`-style sections when
-only *membership and ordering* matter (wipes).
+offsets inside it matter (saves, file formats). When only *membership* matters
+(a wipe), name the members in an explicit function instead — that is what
+`ResetGameStateBlock()` is.
 
 ## Known range-based operations
 
 | Operation | Range (original) | Status |
 |---|---|---|
-| `InitializeGame` → `memclr(&g_defaultItemSlot, g_BioCardData)` | 0x00be41e0..0x00be9620 | modeled by `.gwipe` |
+| `InitializeGame` → `memclr(&g_defaultItemSlot, g_BioCardData)` | 0x00be41e0..0x00be9620 | modeled by `ResetGameStateBlock()`, by name |
 | bio_card.dat / save load `memcpy` (0x41C bytes) | 0x00be9620..0x00be9a3c | modeled by `BioCardLayout` |
-| `ClearGameStateFlags` (GameInit.cpp): zeroes **7 DWORDs from `&g_main_state_flags`** | 0x00be41c0..0x00be41dc | **FIXED** — was a pointer walk over linker-placed globals; now an explicit clear of exactly the original members (`g_main_state_flags`, `g_main_state_flags2`, `g_spriteAnimActive/R/G/B`, `g_spriteAnimIntensity`; the unnamed scratch dwords at 0x00be41c8/41cc/41d8 have no port equivalent). See the comment in GameInit.cpp. |
+| `ClearGameStateFlags` (GameInit.cpp): zeroes **8 DWORDs from `&g_main_state_flags`** | 0x00be41c0..0x00be41dc | **FIXED** — was a pointer walk over linker-placed globals; now an explicit clear of exactly the original members (`g_main_state_flags`, `g_main_state_flags2`, `g_spriteAnimActive/R/G/B`, `g_spriteAnimIntensity`, `g_menu_choice_id`; the unnamed scratch dwords at 0x00be41c8/41cc/41d8 have no port equivalent). See the comment in GameInit.cpp. |
 | `InitJoysticks`: zeroes `pState+0x28..+0x3B28` | inside `g_pMasterInputState` | safe (single struct, internal offsets) |
 
 ## Verifying the layout
 
+The old recipe here grepped `dumpbin /HEADERS` for `.gwipe` and `.sched`. Those
+sections are not emitted any anymore, so it can only ever report their absence.
+
+What is checkable now is the member list itself, which is the thing that can
+actually go wrong:
+
 ```powershell
-# .gwipe should exist and span nearly the full wiped range (~0x5400; the
-# original block is 0x5440 minus the unused gap)
-& "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\<ver>\bin\Hostx64\x86\dumpbin.exe" `
-    /HEADERS bin\Debug\residentevil.exe | Select-String -Context 0,3 "\.gwipe|\.sched"
+# every global cleared by the wipe, in the order the function clears them
+Select-String -Path src\game\GameStart.cpp -Pattern '0x00be' |
+    Select-Object -First 25
 ```
 
-For symbol-level checks, `dumpbin /SYMBOLS` on `obj\Debug\Globals.obj` shows the
-`.gwipe$xxxx` subsection assignments.
+Compare that against the table above. A global in the range that does not
+appear in `ResetGameStateBlock()` is a bug waiting to happen, and nothing in
+the build will tell you.
 
 ## Incident history
+
+*These all happened under the old section-based scheme. They are kept because
+the failure shapes recur — a global that should be in a range operation and is
+not, or one that is and should not be — even though the mechanism that caused
+them is gone.*
 
 Incidents 1–3 and 5 share one root cause — a range operation touching
 linker-placed bystanders:
@@ -199,7 +229,7 @@ Membership errors cut both ways.
    re-pack that became `g_objectDeletePtr`, which got stamped with vertex data
    (0x3030302C) → AV in `CreateTmdObjectInternal`. Fixed by defining
    `g_complexTmdObjectData[0x10800]` (0x008ffcc0) and
-   `g_tmdObjectSlotAnimPtrs[250]` (0x00aabd6c, the table `g_objectDeletePtr`
+   `g_tmdObjectSlotAnimPtrs[251]` (0x00aabd6c, the table `g_objectDeletePtr`
    statically points to in the original — it was `NULL` in the decomp, which
    silently disabled TMD slot reuse).
 
@@ -231,5 +261,6 @@ Membership errors cut both ways.
 
 The decompilation is function-complete: every global the original binary
 references has been identified, named, and placed per these rules. The
-mechanisms above remain load-bearing — if you ever add or move a global that
-overlays an original range-operation address, follow the checklist.
+checklist above remains load-bearing — if you add a global whose original
+address falls inside a range the original operated on, it has to be named in
+`ResetGameStateBlock()`, because nothing places it there for you any more.
