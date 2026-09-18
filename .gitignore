@@ -1,4 +1,9 @@
 tools/__pycache__/*
+
+# assets/ is the PLAYER'S OWN COPY OF THE GAME - Capcom's data, supplied by
+# whoever cloned this, never redistributed here. Everything this port itself
+# produced lives in portdata/ instead, which IS tracked; tools/deploy_portdata.py
+# copies it into assets/ and both bin/ trees. See docs/ASSETS.md.
 assets/
 .kilo/
 .vs/
@@ -15,3 +20,6 @@ dist/
 # so it is no longer tracked; re1.lock is the single-instance guard.
 config.ini
 re1.lock
+# portdata/ is tracked on purpose - never let the broad *.png / *.jpg rules
+# above swallow an asset that belongs in it.
+!portdata/**

@@ -1,0 +1,7 @@
+# portdata/ is runtime data, not source. Git must hand a clone exactly the bytes
+# that were committed: tools/deploy_portdata.py compares file CONTENTS to decide
+# what to copy into assets/ and both bin/ trees, so a line-ending conversion on
+# checkout would make raid1.lvl differ between a Windows and a Linux clone and
+# report itself stale forever. (The parser itself takes CRLF or LF - see
+# RaidLevel.cpp - so this is about reproducibility, not about it loading.)
+portdata/** -text

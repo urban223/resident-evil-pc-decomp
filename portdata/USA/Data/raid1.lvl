@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# RAID arena 1
+#
+# Read by src/game/RaidLevel.cpp at room load, and again on F7 without leaving
+# the room. Written by tools/raid_editor.html, and perfectly hand-editable.
+#
+# Units are the game's own. X and Z are the floor plane; Y is NEGATIVE UPWARDS,
+# so a ceiling is a negative number. Every coordinate is read back UNSIGNED by
+# the collision and camera-zone tests, so keep the whole level at positive X/Z
+# below 32768.
+#
+#   ambient <r> <g> <b>                          12-bit channels, 0..4095
+#   light   <x> <y> <z> <r> <g> <b> <radius>     up to 3; radius 0 is a BLACK light
+#   cam     <fx> <fy> <fz> <tx> <ty> <tz> <fov>  fov is a focal length, not an angle
+#   camzone <cam> <x0> <z0> <x1> <z1>            walk in here, switch to that camera
+#   spawn   <x> <z> <angle>                      0 = +X, 0x400 = +Z, 4096 = a turn
+#   box     <x0> <y0> <z0> <x1> <y1> <z1> <flags> <shade> <r> <g> <b>
+#   enemy   <x> <z> <angle> <type>
+#
+# box flags: 1 draw, 2 collide, 4 checkerboard.   shade is in hundredths.
+# ---------------------------------------------------------------------------
+ver 1
+
+ambient 880 850 920
+
+light 4000 -2000 4000 210 205 195 9000
+light 8000 -2000 8000 150 155 175 9000
+light 6000 -2600 3000 120 118 130 7000
+
+# Inside the box, high in the low-X/low-Z corner, looking across it. Outside
+# would put a wall between the lens and the room; from in here the two near
+# walls fall behind the near plane and the two far ones frame the shot.
+cam 2600 -4200 2600  6400 -600 6600  207
+
+spawn 6000 6000 512
+
+# The floor. A plate - y0 == y1 - so it is one horizontal face, and checkered,
+# which is most of what sells a flat plane as a floor.
+box 2000 0 2000  10000 0 10000  5 72 255 247 224
+
+# The four walls. They are solid slabs OUTSIDE the play area, not a hollow
+# frame: the collision pushes the player OUT of a box, so a wall has to be a
+# box she is never inside.
+box     0 -3600     0   2000 0 12000  3 46 209 219 255
+box 10000 -3600     0  12000 0 12000  3 46 209 219 255
+box     0 -3600     0  12000 0  2000  3 46 209 219 255
+box     0 -3600 10000  12000 0 12000  3 46 209 219 255
+
+# Pickups. A clip by the near wall, a spray in the far corner, and a second
+# pistol out in the open - the marker's colour comes from the item's category,
+# so ammunition is brass, healing is green and a weapon is steel.
+item  3200  3200 0 11 30      # CLIP
+item  9200  9200 0 65 1       # F.-AID SPRAY
+item  3200  9200 0 113 4      # FREEZE PISTOL
+
+# The starting inventory. Remove every `give` line and the mode falls back to
+# its built-in loadout instead of starting her empty-handed.
+give 1 0        # COMBAT KNIFE
+give 2 15       # BERETTA
+give 11 60      # CLIP
+give 113 4      # FREEZE PISTOL
+give 65 1       # F.-AID SPRAY
+
+# One zombie, to stand in the arena. `type` is the entity id: 0 is the white-coat
+# zombie, and its model is EMD table entry type + 4.
+enemy  6000  3000 1024 0
