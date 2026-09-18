@@ -3,6 +3,7 @@
 // All functions decompiled from Ghidra with original addresses
 #include "../Globals.h"
 #include "CoopPlayer.h"   // CUSTOM: RAID co-op
+#include "CoopNet.h"      // CUSTOM: RAID co-op transport
 #include "../marni/MarniSystem.h"
 #include "FileLoader.h"
 #include "SpriteRenderer.h"
@@ -457,8 +458,11 @@ static void Raid_EnterRoom(void)
     // pointers, SCA info - and only his position is moved. Before the enemy
     // spawn, so Coop_ChooseTargets has both players to choose between on the
     // first frame they are dispatched.
-    g_coopActive = 1;
-    Coop_SpawnPlayer2();
+    CoopNet_StartFromConfig();
+    g_coopActive = (g_coopRole != COOP_ROLE_OFF) ? 1 : 0;
+    if (g_coopActive) {
+        Coop_SpawnPlayer2();
+    }
 
     // ...and then put the level's own enemies in it. After the emptying, not
     // before: this fills the same slots that loop has just cleared.

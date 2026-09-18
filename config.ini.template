@@ -38,6 +38,17 @@ Version=USA
 ; used, and an existing save/ or Save/ is found as well.
 Path=
 
+[Coop]
+; RAID co-op. off = single player. host / client = online, the real mode.
+; local = BOTH PLAYERS ON THIS MACHINE for debugging without a second PC:
+; player 1 takes a gamepad if one is present and the keyboard otherwise,
+; player 2 gets whichever is left.
+Mode=off
+; Where to connect, for Mode=client only. host:port.
+Host=127.0.0.1:27015
+; Port to listen on, for Mode=host only.
+Port=27015
+
 [Debug]
 ; Master switch for the port-added debug features: F1 debug menu, F6 texture
 ; viewer, F8 collision overlay. 0 = off, 1 = on.

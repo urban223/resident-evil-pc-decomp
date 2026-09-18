@@ -58,3 +58,14 @@ void CoopNet_Receive(void);
 // Once per tick, after the world has moved: a host sends the snapshot, a client
 // sends its pad.
 void CoopNet_Send(void);
+
+// Read from [Coop] in config.ini by src/system/ConfigFile.cpp.
+// Mode: 0 off, 1 local (debug), 2 host, 3 client.
+extern int            g_coopConfigMode;
+extern char           g_coopConfigHost[64];
+extern unsigned short g_coopConfigPort;
+
+// Turn the configured mode into a role. Called once when RAID starts; on any
+// failure it leaves the role off, so a bad address or a busy port drops into
+// single player rather than into a half-open session.
+void CoopNet_StartFromConfig(void);

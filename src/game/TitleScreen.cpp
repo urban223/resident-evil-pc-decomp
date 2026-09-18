@@ -2,6 +2,7 @@
 // All functions decompiled from Ghidra with original addresses
 #include "../Globals.h"
 #include "CoopPlayer.h"   // CUSTOM: RAID co-op
+#include "CoopNet.h"      // CUSTOM: RAID co-op transport
 #include "../marni/MarniSystem.h"
 #include "../marni/MarniSound.h"
 #include "../marni/PSXTexture.h"
@@ -1495,6 +1496,7 @@ void title_state(void)
 	// run ended - death, quit, or the ending.
 	g_raidMode = 0;
 	g_coopActive = 0;   // CUSTOM: co-op is RAID-only
+	CoopNet_Stop();     // CUSTOM: and so is the socket
 
     setMenuScreenOffset(320, 240, 0, 0, 0);
     CenterScreenOrigin();

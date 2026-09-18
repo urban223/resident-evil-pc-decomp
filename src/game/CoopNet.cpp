@@ -6,6 +6,7 @@
 #include "entities/EntityCommon.h"
 #include "../platform/platform.h"
 #include <cstring>
+#include "../DebugPrint.h"
 
 int g_coopRole = COOP_ROLE_OFF;
 
@@ -303,5 +304,31 @@ void CoopNet_Send(void)
         in.dpadHeld    = g_PlayerDpadHeld;
         in.dpadPressed = g_PlayerDpadPressed;
         plat_net_send(s_sock, &s_peer, &in, (int)sizeof(in));
+    }
+}
+
+void CoopNet_StartFromConfig(void)
+{
+    g_coopRole = COOP_ROLE_OFF;
+
+    switch (g_coopConfigMode) {
+    case 1:
+        // The debug mode: both players here, no socket at all.
+        g_coopRole = COOP_ROLE_LOCAL;
+        break;
+    case 2:
+        if (!CoopNet_StartHost(g_coopConfigPort)) {
+            dbg_printf("[coop] host on port %u failed; single player\n",
+                       (unsigned int)g_coopConfigPort);
+        }
+        break;
+    case 3:
+        if (!CoopNet_StartClient(g_coopConfigHost)) {
+            dbg_printf("[coop] client to %s failed; single player\n",
+                       g_coopConfigHost);
+        }
+        break;
+    default:
+        break;
     }
 }

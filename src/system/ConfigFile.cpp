@@ -12,6 +12,12 @@
 #include <string.h>
 
 #define CONFIG_NAME "config.ini"
+
+// CUSTOM: RAID co-op, read from [Coop]. Defined here because this is the file
+// that parses them; CoopNet turns them into a role when RAID starts.
+int            g_coopConfigMode = 0;      // 0 off, 1 local debug, 2 host, 3 client
+char           g_coopConfigHost[64] = "";
+unsigned short g_coopConfigPort = 27015;
 #define MAX_LINE    1024
 #define MAX_LINES   512
 
@@ -408,6 +414,23 @@ BOOL ConfigFile_Load(void)
     if (ReadValue(path, "Save", "Path", value, sizeof(value)) && value[0] != '\0') {
         SetSaveRoot(ResolveConfiguredPath(exeDir, value, resolved, sizeof(resolved)));
     }
+
+    // [Coop] - RAID co-op. Read here rather than from a menu because there is
+    // no menu for it yet and the file is already parsed; Mode picks the role and
+    // Host is only consulted for client. An unrecognised Mode is 'off' rather
+    // than an error: a typo should drop you into single player, not refuse to
+    // start the game.
+    if (ReadValue(path, "Coop", "Mode", value, sizeof(value))) {
+        if      (strcmp(value, "local")  == 0) g_coopConfigMode = 1;
+        else if (strcmp(value, "host")   == 0) g_coopConfigMode = 2;
+        else if (strcmp(value, "client") == 0) g_coopConfigMode = 3;
+        else                                   g_coopConfigMode = 0;
+    }
+    if (ReadValue(path, "Coop", "Host", value, sizeof(value))) {
+        strncpy(g_coopConfigHost, value, sizeof(g_coopConfigHost) - 1);
+        g_coopConfigHost[sizeof(g_coopConfigHost) - 1] = 0;
+    }
+    g_coopConfigPort = (unsigned short)ReadInt(path, "Coop", "Port", 27015);
 
     char version[16];
     if (ReadValue(path, "Assets", "Version", version, sizeof(version))) {
