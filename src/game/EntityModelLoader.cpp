@@ -735,16 +735,24 @@ void SetupCharacterData(void)
     // second lands his TIM on the first one's page and the first character then
     // samples the wrong skin - which is why Jill was wearing Chris.
     //
-    // Player 2 gets page 8 / bank 0x17. Both are free: the room's own textures
-    // start at page 0, character select takes 5, the player 7, enemies start at
-    // bank 0x06 page 0x0A and climb, the computer screen is 0x13 and the ending
-    // 0x1C. Bank 0x17 is below the 32-entry g_textureBankRedirect bound.
+    // Player 2 gets page 8 / bank 0x18, and the gap of TWO banks is the point.
+    // A bank is 0x40 VRAM X units apart - texDesc[0] = bankID * 0x40 - baseX
+    // (TextureLoader.cpp:466) - but a character page is 256 texels at 8bpp,
+    // which is 128 of those units (the width is halved for 8bpp at :479). So
+    // bank 0x17 starts halfway INTO bank 0x16's page: the first attempt put
+    // Chris's face on the back of Jill's model, which is exactly what half a
+    // page of overlap looks like. 0x16 + 2 = 0x18 clears it: 0x180 + 128 = 0x200.
+    //
+    // 0x18 is free - the room's textures start at page 0, character select takes
+    // 5, the player 7, enemies start at bank 0x06 and climb, doors are 0x15, the
+    // computer screen 0x13 and the ending 0x1B/0x1C - and it is inside the
+    // 32-entry g_textureBankRedirect bound.
     if (g_pCurPlayer == &g_players[0]) {
         g_TextureCurrentPage = 7;
         g_TextureBankID = 0x16;
     } else {
         g_TextureCurrentPage = 8;
-        g_TextureBankID = 0x17;
+        g_TextureBankID = 0x18;
     }
 
     // Object_DeleteAll(0) is NOT run for the second player: it tears down the
