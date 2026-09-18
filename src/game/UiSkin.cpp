@@ -45,7 +45,7 @@
 #define C_LIME    0xFFC6FF4Au
 #define C_SCRIM   0xCD040A0Eu
 
-// --- layout, from claude/status-screen-skin-spec.md --------------------------
+// --- layout, from docs/STATUS_SCREEN_SKIN.md --------------------------
 #define CELL_W 44
 #define CELL_H 34
 #define CELL_GX 47              // column pitch

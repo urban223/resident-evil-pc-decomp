@@ -67,7 +67,7 @@ extern void ResolveAnimPointers(unsigned char* data);             // TmdAnimatio
 // out of step with the game - and the whole reason this file exists is that the
 // two should show the same thing.
 
-// The examine screen's own ceiling on an .ivm, from claude/ivm-model-format.md.
+// The examine screen's own ceiling on an .ivm, from docs/IVM_MODEL_FORMAT.md.
 #define RAID_IVM_MAX           187160
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@
 // struct below and calls in, which keeps the two sides honest about what the
 // skin is allowed to know.
 //
-// Layout is specified in claude/status-screen-skin-spec.md and is in the
+// Layout is specified in docs/STATUS_SCREEN_SKIN.md and is in the
 // game's 320x240 logical space, the same space menu_draw_inventory uses.
 #pragma once
 

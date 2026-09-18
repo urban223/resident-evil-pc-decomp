@@ -10,7 +10,7 @@ the later ones have to move.
 nothing to stay faithful to:**
 
 ```
-src/game/editor/**              6172 lines   the RE1 EDITOR (see claude/re1-editor.md)
+src/game/editor/**              6172 lines   the RE1 EDITOR (see docs/RE1_EDITOR.md)
 src/game/UiAtlas.{h,cpp}         233         the shared Space GUI atlas
 src/game/UiSkin.{h,cpp}          930         the status-screen skin
 src/game/Achievements.{h,cpp}    620         the toast
@@ -129,8 +129,10 @@ two `.bin` files are byte-identical to the committed ones before the change
 (`certutil -hashfile <file> SHA256` on Windows). If they are not, the
 refactor changed the art, which is a failure, not a new baseline.
 
-Remember `assets/USA/Data/*.bin` is duplicated into `bin/Debug/USA/Data/` and
-`bin/Release/USA/Data/`. All three copies must match.
+Both `.bin` atlases now live in `portdata/USA/Data/` and are copied into
+`assets/` and both `bin/` trees by `tools/deploy_portdata.py`. Re-run it after
+any re-bake, and `--check` to confirm all three copies match — see
+`docs/ASSETS.md`.
 
 ## Step 4 — split `UiSkin_DrawStatus`
 
@@ -154,7 +156,7 @@ writer in `editor/EditorSave.cpp`, and the format doc). A small table of
 `{ keyword, min args, max args, handler }` collapses the parser and makes the
 writer checkable against it.
 
-The format is documented in `claude/raid-level-format.md` — keep it in step.
+The format is documented in `docs/RAID_LEVEL_FORMAT.md` — keep it in step.
 
 Two properties the current parser has that must survive: **Y is negative
 upwards**, and every coordinate is read back **unsigned**, so values must stay
@@ -167,7 +169,7 @@ must be identical.
 
 ## Step 6 — the editor's own tidy-up
 
-- `src/game/editor/panels/EditorShell.cpp` implements what
+- `src/game/editor/EditorShell.cpp` implements what
   `src/game/editor/EditorShell.h` declares, but the two are in different
   directories and a third file, `EditorActions.cpp`, also implements part of
   that header (`g_edShell` lives there). Either move the shell's header beside

@@ -53,7 +53,7 @@ B_U, B_V = 3, 95
 
 # Its own muzzle face takes a near-black one instead, so the end of the barrel
 # reads as a BORE and not as a grey stub. This is the flat dark block on Jill's
-# character page catalogued in claude/emw-inhand-weapon-format.md (u 42..53,
+# character page catalogued in docs/EMW_INHAND_WEAPON_FORMAT.md (u 42..53,
 # v 92..143, about rgb(8, 24, 16)); one texel, all three corners on it.
 BORE_U, BORE_V = 47, 110
 
