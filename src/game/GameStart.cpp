@@ -2,6 +2,7 @@
 // game_start, InitializeGame and all player/inventory initialization.
 // All functions decompiled from Ghidra with original addresses
 #include "../Globals.h"
+#include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "../marni/MarniSystem.h"
 #include "FileLoader.h"
 #include "SpriteRenderer.h"
@@ -55,7 +56,10 @@ static void ResetGameStateBlock(void)
     DAT_00be41e1 = 0;                   // 0x00be41e1
     g_enemy_count = 0;                  // 0x00be41e2
     memset(g_effectPool, 0, sizeof(g_effectPool));            // 0x00be41e4
-    memset(&g_playerEntity, 0, sizeof(g_playerEntity));        // 0x00be62e4
+    // CUSTOM: co-op - clear EVERY player, not just whichever is current.
+    // g_playerEntity is a macro for *g_pCurPlayer now, so the original's single
+    // memset would leave player 2 holding a dead run's state.
+    memset(g_players, 0, sizeof(g_players));                   // 0x00be62e4
     g_playerPosX = 0;                   // 0x00be6350
     g_playerPosZ = 0;                   // 0x00be6358
     g_playerAngle = 0;                  // 0x00be6368
@@ -447,6 +451,14 @@ static void Raid_EnterRoom(void)
     for (int i = 0; i < 30; i++) {
         g_EnemiesList[i].status_flags = 0;
     }
+
+    // CUSTOM: co-op. Player 2 is cloned from player 1 AFTER the placement and
+    // the loadout above, so he inherits a fully set-up body - joints, animation
+    // pointers, SCA info - and only his position is moved. Before the enemy
+    // spawn, so Coop_ChooseTargets has both players to choose between on the
+    // first frame they are dispatched.
+    g_coopActive = 1;
+    Coop_SpawnPlayer2();
 
     // ...and then put the level's own enemies in it. After the emptying, not
     // before: this fills the same slots that loop has just cleared.

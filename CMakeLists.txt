@@ -41,6 +41,7 @@ set(RE1_SOURCES
     src/video/VideoPlayback.cpp
 
     src/game/Achievements.cpp
+    src/game/CoopPlayer.cpp
     src/game/PortAtlas.cpp
     src/game/PortText.cpp
     src/game/UiAtlas.cpp

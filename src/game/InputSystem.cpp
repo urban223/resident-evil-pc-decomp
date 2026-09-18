@@ -7,6 +7,7 @@
 #include "../marni/MarniXInput.h"
 #include <cstring>
 #include "editor/Editor.h"   // CUSTOM: the in-game editor
+#include "CoopPlayer.h"       // CUSTOM: RAID co-op
 
 // ============================================================================
 // Pad default bindings (port addition)
@@ -140,6 +141,31 @@ DWORD JoyToPSX(DWORD pcMask, int player)
 DWORD ReadPadBoth(void)
 {
 	DWORD tmp;
+
+	// CUSTOM: co-op needs these two apart. The merge below is right for the
+	// original - keyboard and pad are two ways to drive one character - but two
+	// players on one machine need one source each. The split is the original's
+	// own: the keyboard is remap table 0 and a joystick is remap table 1, which
+	// is what JoyToPSX's `player` argument has always meant (see its comment).
+	//
+	// Player 1 prefers a pad and falls back to the keyboard, so "one gamepad
+	// plus the keyboard" is a playable pair. Player 2 gets the second pad, or
+	// the keyboard if he is the one left without.
+	if (g_coopPadSource >= 0) {
+		const int padCount = (int)g_pMasterInputState.joystickCount;
+		const int wantPad  = (g_coopPadSource == 0) ? 0 : 1;
+
+		if (wantPad < padCount && g_pMasterInputState.joysticks[wantPad].enabled != 0) {
+			g_PadBtnWord = JoyToPSX(g_pMasterInputState.joysticks[wantPad].currPress, 1);
+		} else if (g_coopPadSource == 0 && padCount > 0
+		           && g_pMasterInputState.joysticks[0].enabled != 0) {
+			g_PadBtnWord = JoyToPSX(g_pMasterInputState.joysticks[0].currPress, 1);
+		} else {
+			g_PadBtnWord = (g_pMasterInputState.frameFlag != 0)
+			             ? JoyToPSX(g_pMasterInputState.keyboardPrev, 0) : 0;
+		}
+		return g_DisablePad != 0 ? 0 : g_PadBtnWord;
+	}
 
 	if (g_pMasterInputState.frameFlag != 0) {
 		g_PadBtnWord = JoyToPSX(g_pMasterInputState.keyboardPrev, 0);

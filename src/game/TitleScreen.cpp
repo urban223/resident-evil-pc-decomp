@@ -1,6 +1,7 @@
 // TitleScreen.cpp - Title screen rendering and state management
 // All functions decompiled from Ghidra with original addresses
 #include "../Globals.h"
+#include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "../marni/MarniSystem.h"
 #include "../marni/MarniSound.h"
 #include "../marni/PSXTexture.h"
@@ -1493,6 +1494,7 @@ void title_state(void)
 	// rather than at the end of a run means it cannot survive one however the
 	// run ended - death, quit, or the ending.
 	g_raidMode = 0;
+	g_coopActive = 0;   // CUSTOM: co-op is RAID-only
 
     setMenuScreenOffset(320, 240, 0, 0, 0);
     CenterScreenOrigin();

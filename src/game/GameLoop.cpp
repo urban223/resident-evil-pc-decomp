@@ -14,6 +14,7 @@
 // Called by: game_start (0x00480710)
 // ============================================================================
 #include "../Globals.h"
+#include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "editor/Editor.h"   // CUSTOM: the in-game level editor
 #include "../marni/MarniInput.h"
 #include <cstdio>
@@ -298,20 +299,34 @@ LAB_00480e89:
                 // the debug menu's, which hides the scene so the menu box is
                 // the only thing on screen.
                 if (g_debugMenuOpen == 0 && !Editor_IsOpen()) {
+                    Coop_ChooseTargets();   // CUSTOM: who each enemy hunts
                     update_entities();
                 }
 
-                if (((g_playerEntity.zoneFlags & 0x20) != 0) ||
-                    ((g_message_flags & 0x100) == 0))
-                {
-                    g_PlayerDpadHeld &= 0xC000;
-                    g_PlayerDpadPressed &= 0xC000;
-                }
+                // CUSTOM: co-op runs this whole block once per player. Outside
+                // co-op the loop runs once with g_pCurPlayer already on player 0,
+                // which is what it did before. Serialised deliberately:
+                // check_room_collision stashes its working state in
+                // g_playerPosScratch / g_svecScratch / g_tempVar and mutates RDT
+                // records in place, so two players cannot be interleaved through
+                // it - only run one after the other.
+                for (int coopP = 0; coopP < Coop_PlayerCount(); coopP++) {
+                    Coop_BeginPlayer(coopP);
 
-                // 0x00480ebd-0x00480ecf: Player animation and position update
-                update_player_anim();
-                g_main_state_flags2 &= ~MSF2_EFFECT_ZONE;
-                update_player_position(&g_playerEntity, 1);
+                    if (((g_playerEntity.zoneFlags & 0x20) != 0) ||
+                        ((g_message_flags & 0x100) == 0))
+                    {
+                        g_PlayerDpadHeld &= 0xC000;
+                        g_PlayerDpadPressed &= 0xC000;
+                    }
+
+                    // 0x00480ebd-0x00480ecf: Player animation and position update
+                    update_player_anim();
+                    g_main_state_flags2 &= ~MSF2_EFFECT_ZONE;
+                    update_player_position(&g_playerEntity, 1);
+
+                    Coop_EndPlayer();
+                }
 
                 // 0x00480ecf-0x00480f70: Screen effects, room objects, entity
                 // and player rendering, 2D effects and room sprites.
@@ -348,12 +363,20 @@ LAB_00480e89:
                     }
 
                     // 0x00480f54-0x00480f89: Player entity rendering
-                    ENTITY = (Entity*)&g_playerEntity;
-                    EntityComputeJointWorldMatrices(g_playerEntity.unk_ca);
-                    EntityApplyLookAtRotation();
-                    if (g_dwEntityRenderEnabled != 0) {
-                        render_entity((Entity*)&g_playerEntity);
+                    // CUSTOM: once per player. Drawing and lighting need nothing
+                    // co-op-specific - update_entity_lighting works off the
+                    // entity's own matrix translation inside render_entity - so
+                    // the second player lights correctly for free.
+                    for (int coopP = 0; coopP < Coop_PlayerCount(); coopP++) {
+                        Coop_BeginPlayer(coopP);
+                        EntityComputeJointWorldMatrices(g_playerEntity.unk_ca);
+                        EntityApplyLookAtRotation();
+                        if (g_dwEntityRenderEnabled != 0) {
+                            render_entity((Entity*)&g_playerEntity);
+                        }
+                        Coop_EndPlayer();
                     }
+                    ENTITY = (Entity*)&g_playerEntity;
 
                     // 0x00480f6e-0x00480f70: 2D effects and room sprites
                     update_2d_effects();

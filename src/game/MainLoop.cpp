@@ -2,6 +2,7 @@
 // Original function: main_loop at 0x00428eb0 (Ghidra)
 // Adapted from Ghidra decompilation
 #include "Globals.h"
+#include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "../system/AssetPath.h"
 
 // 0x00470750 - declared in SpriteRenderer.h; the signature must match that
@@ -43,7 +44,9 @@ int main_loop(void)
 
     // 0x00428ee0: Frame startup - input update
     InputUpdate();
-    PlayerPad_Update();
+    // CUSTOM: co-op publishes one pad per player. Outside co-op this is exactly
+    // the single PlayerPad_Update() call it replaces.
+    Coop_UpdatePads();
 
     // 0x00428eff: Check for special key combination (F9/F10/F11 scan codes)
     // Only fires when no message is currently displayed (bit 0x80 of g_menu_choice_id = message active)

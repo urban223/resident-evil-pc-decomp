@@ -14,6 +14,7 @@
 // All original addresses from Ghidra.
 // ============================================================================
 #include "EntityCommon.h"
+#include "../CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "../../Globals.h"
 #include <cstring>
 
@@ -1790,11 +1791,26 @@ void update_entities(void)
             // gates the draw loop and auto-aim targeting, so clearing it would
             // make the enemy vanish rather than stand still.)
             if (!weapon_status_entity_frozen(ENTITY)) {
+                // CUSTOM: co-op - this enemy hunts its OWN player. Every range
+                // and facing helper below reads g_playerEntity directly (e.g.
+                // entity_check_visual_range, :287), and since Phase 1a that name
+                // is a macro for *g_pCurPlayer, so pointing it at this slot's
+                // target is all it takes. No enemy file changes.
+                PlayerEntity* coopPrev = g_pCurPlayer;
+                if (g_coopActive) {
+                    const int slot = (int)(ENTITY - g_EnemiesList);
+                    if (slot >= 0 && slot < 30 && g_enemyTarget[slot] < RAID_PLAYERS) {
+                        g_pCurPlayer = &g_players[g_enemyTarget[slot]];
+                    }
+                }
+
                 // 0x0048f12b: Call per-type update function from dispatch table
                 void* updateFunc = enemies_update_functions_tbl[ENTITY->id];
                 if (updateFunc != NULL) {
                     ((void(*)())updateFunc)();
                 }
+
+                g_pCurPlayer = coopPrev;   // CUSTOM
             }
 
             // 0x0048f131-0x0048f197: the mirror pass. Bit 0 of g_main_state_flags
