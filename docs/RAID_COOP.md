@@ -98,6 +98,37 @@ The lesson worth carrying: **the focus pause had a second thing silently
 leaning on it, and there may be a third.** Anything that assumed "unfocused
 means not drawing" is now wrong in a networked session.
 
+## What a snapshot has to carry
+
+The first version carried position and health - the state of the world - and a
+client rendered an empty room full of frozen people. Everything below had to be
+added, and each one looked like "the client is broken" on its own:
+
+| Carried | Why |
+|---|---|
+| Two animation pairs | `PlayerEntity` has `animationId`/`animFrameId` at 0x84/0x85 for the state machine AND `animationId`/`animation_frame_id` at 0xBD/0xBE through the `Entity` view. `Joint_move` reads the second. |
+| Which animation SOURCE | A player poses from four pairs - `emdScratchPtr1/2`, `jointMoveData0/1`, `jointMoveData2/3`, `animHeader`/`animBase` - and the state machine picks per animation. The host records what it used, derived by comparing pointers inside `Joint_move`. |
+| The whole `status_flags` byte | `\|= ACTIVE` left a client's enemy at 01 where the host read F1. |
+| Entity header bytes 2 and 3 | `render_entity` opens with `g_animFrameIdSave = ((entity[3] & 0x7f) == 0)` and puts its entire draw branch behind that being zero. A client whose byte 3 was 0 called `render_entity`, walked every joint and emitted nothing. |
+| `g_enemy_count` | The draw loop is bounded by it, and a host grows it when a dead player stands up as a zombie. |
+| Death | `Coop_CheckDeaths` runs only on the authority, so without this a client kept drawing a body frozen on the frame that killed it. |
+| The enemy's pose fields | `action_behavior`, `action_state`, `timing_control`, `blend_counter`, `hit_state`, `death_timer`. A client runs no state machine, so whatever it does not receive keeps the value its own spawn left. |
+| Effect events | A billboard is not state - it is an event, queued on the host and replayed. See `Coop_NoteEffect`. |
+
+**A client must not animate on its own.** `Joint_move` advances
+`animation_frame_id` on its way out. `Coop_ClientPose` poses the wire's frame
+and then puts the frame and `timing_control` back, because letting the advance
+stand played the animation a second time on top of the snapshot.
+
+## A trap when instrumenting this
+
+`game_loop` and `main_loop` are **different scheduler tasks**. A probe after
+`update_entities` and a probe inside `snap_build` are not the same frame, and
+the gap between them can be tens of ticks. Comparing the two and concluding
+that the host sends stale fields is wrong - that mistake cost two rounds here.
+Log both ends of the wire, or log twice in the same function, but do not
+compare across those two.
+
 ## Known gaps
 
 - `src/platform/linux/sockets.cpp` has never been compiled;
@@ -109,3 +140,9 @@ means not drawing" is now wrong in a networked session.
   frame id and nothing advances the skeleton locally.
 - The zombie a dead player becomes has no attack button bound. State 5 is
   accepted, there is just no input that reaches it.
+- **A killed zombie stands on the client.** Five rounds did not close it.
+  Known: posing is not the cause (disabling it leaves T-poses AND a standing
+  corpse), and the host's own fields at send time are not stale.
+- No blood pool on the floor after a kill. That is a different primitive, not
+  `Effect_CreateBillboard`, so the event channel does not carry it.
+- Jill jitters on a client when moving or turning while aiming.
