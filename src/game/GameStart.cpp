@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include "../system/AssetPath.h"
+#include "../platform/platform.h"
 #include "RaidLevel.h"
 #include "RaidEnemies.h"
 
@@ -467,6 +468,10 @@ static void Raid_EnterRoom(void)
     // ...and then put the level's own enemies in it. After the emptying, not
     // before: this fills the same slots that loop has just cleared.
     RaidEnemies_Spawn();
+
+    // CUSTOM: co-op - hold a slot and a loaded model for each player's future
+    // zombie, while the arena allocator is still where the spawn left it.
+    Coop_ReserveZombies();
 
     // Re-cut the camera now that she is actually somewhere. The arena has one
     // camera and its switch table terminates on the first record, so this does

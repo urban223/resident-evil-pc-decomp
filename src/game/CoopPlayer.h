@@ -66,6 +66,10 @@ extern int g_coopPadSource;
 // level's own spawn has been applied to player 1.
 void Coop_SpawnPlayer2(void);
 
+// Hold an enemy slot per player for the zombie he will become, with its model
+// loaded now. Called at room entry, after the level's own enemies are placed.
+void Coop_ReserveZombies(void);
+
 // ---------------------------------------------------------------------------
 // Friendly fire
 //

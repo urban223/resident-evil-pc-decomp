@@ -4,6 +4,7 @@
 #include "../marni/MarniSystem.h"
 #include <cstdio>
 #include <cstdlib>
+#include "../platform/platform.h"
 #include "../DebugPrint.h"
 #include "entities/EntityCommon.h"
 
@@ -1072,6 +1073,25 @@ void entity_extract_anim_vertex(Entity* entity, unsigned int emdScratch1, unsign
 {
     // emdScratch1 points to animation header: [+2] = vertex stride, [+6] = vertex count
     // emdScratch2 points to animation frame table (indexed by animationId)
+    // CUSTOM: a null animation header is a real state in co-op and was not one
+    // in the original, where there was exactly one player and he was set up
+    // before anything could ask. With two, a zombie's attack path can reach
+    // here holding the OTHER player - player_death_anim_tint swaps the global
+    // ENTITY to "the player" and restores it through the single global
+    // g_entity_bkp (Zombie.cpp:1356-1363) - and the original would simply fault
+    // on the deref below.
+    //
+    // Skipping the frame is the honest behaviour: with no animation data there
+    // is no vertex to extract, and the alternative is an access violation.
+    // Gated on co-op so the story campaign keeps faulting loudly on a state
+    // that would be a genuine bug there.
+    if (g_coopActive && (emdScratch1 == 0 || emdScratch2 == 0)) {
+        g_svecScratch.x = 0;
+        g_svecScratch.y = 0;
+        g_svecScratch.z = 0;
+        return;
+    }
+
     short headerStride = *(short*)(emdScratch1 + 2);
     short headerCount  = *(short*)(emdScratch1 + 6);
 
@@ -1213,6 +1233,11 @@ void JointApplyColorTint(JointStruct* joint, int param2, int param3, void* data)
 // ============================================================================
 unsigned int Joint_move(char reverse, unsigned int animHeader, unsigned int animBase, short blendStep)
 {
+    // CUSTOM: see the note in entity_extract_anim_vertex - same reason, same
+    // co-op gate. 0 means "did not advance a frame", which is what a caller
+    // that checks the return value already handles.
+    if (g_coopActive && (animHeader == 0 || animBase == 0)) return 0;
+
     // Wait if timing hasn't expired
     unsigned char* timingPtr = &ENTITY->timing_control;
     if (1 < *timingPtr) {

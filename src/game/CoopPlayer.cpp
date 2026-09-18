@@ -3,9 +3,14 @@
 #include "entities/EntityCommon.h"
 #include "Entities.h"
 #include <cstring>
+#include <cstdio>
+#include "../platform/platform.h"
 
 int g_coopActive = 0;
 unsigned char g_enemyTarget[30] = {};
+
+// Enemy slots held for the zombies the players will become; see Coop_ReserveZombies.
+static int s_reservedSlot[RAID_PLAYERS] = { -1, -1 };
 // The model loaders, declared the way RaidEnemies.cpp declares them
 // (RaidEnemies.cpp:40-43): the unsigned-int form of SetupJointStructures is the
 // one that returns the advanced arena pointer, and it is deliberately NOT the
@@ -215,6 +220,56 @@ void Coop_ChooseTargets(void)
 // ---------------------------------------------------------------------------
 #define COOP_SPAWN_OFFSET 900
 
+// A slot nothing is using. Deliberately does NOT extend g_enemy_count past what
+// is already there if a free slot exists below it: every enemy loop is bounded
+// by that count and the draw loop has no 30-slot clamp of its own
+// (GameLoop.cpp:337), so growing it is the riskier half of this.
+static int coop_free_enemy_slot(void)
+{
+    for (int s = 0; s < 30; s++) {
+        if ((g_EnemiesList[s].status_flags & ENTITY_STATUS_ACTIVE) == 0) return s;
+    }
+    return -1;
+}
+
+// Reserve one enemy slot per player for the zombie he will become, and load its
+// model NOW - at room entry, with the arena allocator where RaidEnemies_Spawn
+// leaves it. The slots stay inactive (status_flags 0), so nothing draws or
+// updates them until somebody dies.
+void Coop_ReserveZombies(void)
+{
+    for (int i = 0; i < RAID_PLAYERS; i++) g_coopZombieSlot[i] = -1;
+    if (!g_coopActive) return;
+
+    Entity* saveEntity = ENTITY;
+
+    for (int i = 0; i < RAID_PLAYERS; i++) {
+        const int slot = coop_free_enemy_slot();
+        if (slot < 0) break;
+
+        Entity* z = &g_EnemiesList[slot];
+        memset(z, 0, sizeof(Entity));
+        z->id = ENEMY_ZOMBIE;
+
+        // Marked active only for the duration of the load, because
+        // coop_free_enemy_slot picks by that bit and the second reservation
+        // must not pick the same slot.
+        z->status_flags = ENTITY_STATUS_ACTIVE;
+
+        ENTITY = z;
+        LoadEntityEMD(z, (unsigned char)(z->id + 4));
+        Entity_SetJoints(z, 0x7c);
+        InitAnimStructure((void*)z->modelLoadBuffer);
+        g_loadDataDestPointer =
+            (void*)SetupJointStructures((unsigned int)g_loadDataDestPointer);
+
+        z->status_flags = 0;          // asleep until its owner dies
+        s_reservedSlot[i] = slot;
+    }
+
+    ENTITY = saveEntity;
+}
+
 void Coop_SpawnPlayer2(void)
 {
     PlayerEntity* p1 = &g_players[0];
@@ -250,6 +305,7 @@ void Coop_SpawnPlayer2(void)
     Coop_BeginPlayer(1);
     SetupCharacterData();
     Coop_EndPlayer();
+
 
     // SetupCharacterData sets Sca_info from the character id but does NOT touch
     // pSca_hit_data, so the assignment above survives it. Re-asserted here
@@ -290,17 +346,6 @@ int Coop_IsZombie(int i)
     return (i >= 0 && i < RAID_PLAYERS && g_coopZombieSlot[i] >= 0) ? 1 : 0;
 }
 
-// A slot nothing is using. Deliberately does NOT extend g_enemy_count past what
-// is already there if a free slot exists below it: every enemy loop is bounded
-// by that count and the draw loop has no 30-slot clamp of its own
-// (GameLoop.cpp:337), so growing it is the riskier half of this.
-static int coop_free_enemy_slot(void)
-{
-    for (int s = 0; s < 30; s++) {
-        if ((g_EnemiesList[s].status_flags & ENTITY_STATUS_ACTIVE) == 0) return s;
-    }
-    return -1;
-}
 
 void Coop_CheckDeaths(void)
 {
@@ -310,12 +355,14 @@ void Coop_CheckDeaths(void)
         if (Coop_IsZombie(i)) continue;
         if (g_players[i].health >= 0) continue;
 
-        const int slot = coop_free_enemy_slot();
-        if (slot < 0) continue;           // nowhere to put him; stays a corpse
+        const int slot = s_reservedSlot[i];
+        if (slot < 0) continue;           // no slot was reserved; he stays a corpse
 
         Entity* z = &g_EnemiesList[slot];
-        memset(z, 0, sizeof(Entity));
 
+        // No memset: the reservation left a loaded model in here and clearing
+        // it would put animHeader back to 0, which is the whole bug this
+        // reservation exists to avoid.
         z->id = ENEMY_ZOMBIE;
         z->status_flags = ENTITY_STATUS_ACTIVE;
         z->state = COOP_Z_STATE_RUN;
@@ -334,30 +381,12 @@ void Coop_CheckDeaths(void)
 
         if (slot >= g_enemy_count) g_enemy_count = slot + 1;
 
-        // He needs a MODEL, the same way RaidEnemies_Spawn gives one to every
-        // enemy it places (RaidEnemies.cpp:133-150). Without it animHeader stays
-        // 0, and the first thing that reads it crashes - snap_player_to_grab_position
-        // dereferences ENTITY->animHeader the moment this zombie grabs somebody
-        // (EntityCommon.cpp:845), which is an access violation at
-        // entity_extract_anim_vertex+0x31 with EAX=0.
-        //
-        // The loaders all read the global ENTITY, so it has to be aimed at him
-        // for the duration and put back afterwards.
-        {
-            Entity* saveEntity = ENTITY;
-            void*   saveDest   = g_loadDataDestPointer;
-
-            ENTITY = z;
-            LoadEntityEMD(z, (unsigned char)(z->id + 4));
-            Entity_SetJoints(z, 0x7c);
-            InitAnimStructure((void*)z->modelLoadBuffer);
-            g_loadDataDestPointer =
-                (void*)SetupJointStructures((unsigned int)g_loadDataDestPointer);
-
-            ENTITY = saveEntity;
-            (void)saveDest;   // the joint setup advances the arena on purpose
-        }
-
+        // The model is NOT loaded here. Coop_ReserveZombies did that at room
+        // entry, while the arena allocator was still where RaidEnemies_Spawn
+        // left it; loading one mid-game advances g_loadDataDestPointer over
+        // whatever the room has already put there, and the first casualty is
+        // the live zombie's own model - its animHeader goes to 0 and it faults
+        // the moment it attacks. All this has to do now is wake the slot up.
         g_coopZombieSlot[i] = slot;
 
         // Any enemy still hunting him should look elsewhere; Coop_ChooseTargets
