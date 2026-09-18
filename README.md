@@ -351,8 +351,10 @@ backend.
 - `src/video/` — FMV playback: a shared state machine over `plat_video_*`
   (MCI on Windows, ffmpeg on Linux).
 - `docs/` — architecture notes: task scheduler, memory layout, classes and
-  vtable conventions, implementation plan, `LINUX_PORT.md` for the port, and
-  `ASSETS.md` for which data is tracked, which you supply, and which you rebuild.
+  vtable conventions, implementation plan, `LINUX_PORT.md` for the port,
+  `ASSETS.md` for which data is tracked, which you supply, and which you
+  rebuild, and `RAID_COOP.md` for two-player RAID and how to test the
+  networked mode on one machine.
 - `portdata/` — the runtime assets this port produced, tracked so a clone has
   them; `tools/deploy_portdata.py` copies them where the game reads from.
 - `tests/` — build/verification scripts (compile gate, frame comparison).
