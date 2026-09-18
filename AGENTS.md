@@ -113,9 +113,25 @@ of guessed. Run them from the repo root.
 - `jpn_msg_decode.py` — decode / re-encode the JPN text tables straight from the JPN executable.
 - `gen_jpn_text.py` — generate the C++ side from those two (`JpnTextTables.cpp`, `JpnFontTable.h`, and `test_str_jp.cpp`).
 
+**The port's own assets — read `docs/ASSETS.md` before touching any of these**
+A runtime asset has to exist in `assets/USA/`, `bin/Debug/USA/` *and*
+`bin/Release/USA/`, because each build reads the tree next to its own
+executable. Forgetting one fails silently: the build compiles a freshly
+generated header while the run loads the old blob. This has cost real time more
+than once.
+- `deploy_portdata.py` — copies `portdata/` (the tracked assets this port produced) into all three trees; `--check` compares contents and writes nothing. It also names what a clone still has to rebuild.
+- `atlas_lib.py` — shared packer / font baker / blob writer for the two atlas bakers. Change it, not the generated headers.
+- `build_achievement_ui.py`, `build_editor_ui.py` — bake `achvui.bin` / `edui.bin` from the Space GUI pack, which is not tracked. Neither is byte-reproducible, so `portdata/*.bin` is the source of truth.
+- `build_achievement_sfx.py`, `build_raid_sfx.py`, `build_raid_bgm.py` — the generated sounds (seeded, reproducible).
+- `build_title_bg.py`, `build_raid_eye.py` — derived from the game's own art; not tracked, rebuild from your install.
+- `build_raid_room.py` — bakes the RAID arena into stage 1 room 0x10, a four-byte stub the game never enters.
+- `build_beretta_barrel.py` — **overwrites `players/W12.EMW` in place**, no backup.
+- `build_inhand_pistol.py` — grafts the tracked TMD halves in `tools/inhand/` onto that same `W12.EMW` to rebuild the custom pistols' in-hand models.
+
 **Editors (open in a browser, no build)**
 - `rdt_event_editor.html` — RDT event editor; `node tools/test_rdt_editor.js` runs its headless tests (add `--quick` for assertions only).
 - `save_editor.html` — PC save-file editor.
+- `raid_editor_server.py` / `raid_editor.bat` — superseded. The RAID level editor is in the game now (RAID mode, F2); see `docs/RE1_EDITOR.md`.
 
 **Linux** — `package_linux.sh` and `elf_needed.py`; both are described in the Linux port section above.
 

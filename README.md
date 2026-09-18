@@ -198,9 +198,18 @@ RE1/
   SAVE/
 ```
 
-The development tree keeps the assets under `assets/` one level above the build
-directory, so its `config.ini` sets `Path=../../assets`. Under the VS debugger
-the executable is in `bin\Debug\`, so that build needs `Path=..\..\assets` too.
+The development tree works the same way: `bin/Debug/config.ini` and
+`bin/Release/config.ini` both ship `Path=` **empty**, so each build reads the
+`USA/` tree sitting next to its own executable — `bin/Debug/USA/` and
+`bin/Release/USA/`. The `assets/` tree at the repository root is the checkout's
+source of truth and is *not* what a run loads, which is why the same file has to
+exist in three places and why `tools/deploy_portdata.py` exists. `docs/ASSETS.md`
+is the full picture; get this wrong and a rebuilt asset silently does not appear.
+
+(The asset paths compiled into the code read `.\assets\USA\` in a Debug build
+and `.\usa\` in a Release one — see `src/system/AssetPath.h`. That prefix is not
+the path that gets opened: `ResolveAssetRoot` swaps it for the configured root
+before every load.)
 
 ### config.ini
 
@@ -342,9 +351,12 @@ backend.
 - `src/video/` — FMV playback: a shared state machine over `plat_video_*`
   (MCI on Windows, ffmpeg on Linux).
 - `docs/` — architecture notes: task scheduler, memory layout, classes and
-  vtable conventions, implementation plan, and `LINUX_PORT.md` for the port.
+  vtable conventions, implementation plan, `LINUX_PORT.md` for the port, and
+  `ASSETS.md` for which data is tracked, which you supply, and which you rebuild.
+- `portdata/` — the runtime assets this port produced, tracked so a clone has
+  them; `tools/deploy_portdata.py` copies them where the game reads from.
 - `tests/` — build/verification scripts (compile gate, frame comparison).
-- `tools/` — tools used to help decompilation
+- `tools/` — tools used to help decompilation, plus the port's asset generators
 
 Every rewritten function carries its original address as a comment, and every
 named global documents its original variable address, so any line in `src/`
