@@ -1,6 +1,13 @@
 // CoopPlayer.cpp - two players in the RAID arena. CUSTOM; see CoopPlayer.h.
 #include "CoopPlayer.h"
 #include "entities/EntityCommon.h"
+// benddown_and_eat is zombie_action_tbl[4] (Zombie.cpp:2831), reached through
+// action_behavior - NOT behavior_flags. The table's own comment calls it
+// zombie_move_behavior_tbl "indexed by behavior_flags & 0x0F" and it does serve
+// that too, but the eat is the action-dispatch entry. Measured, not read off
+// the comment: at the moment it tints, behavior_flags is 00 and
+// action_behavior is 4.
+#define ZOMBIE_ACTION_EAT 4
 #include "Entities.h"
 #include <cstring>
 #include <cstdio>
@@ -87,6 +94,16 @@ static void pad_load(int i)
 int Coop_CharSfxBase(void)
 {
     return (g_coopActive && g_pCurPlayer == &g_players[1]) ? 32 : 0;
+}
+
+unsigned char Coop_PlayerTexBank(void)
+{
+    return (g_coopActive && g_pCurPlayer == &g_players[1]) ? 0x18 : 0x16;
+}
+
+unsigned char Coop_PlayerTexPage(void)
+{
+    return (g_coopActive && g_pCurPlayer == &g_players[1]) ? 8 : 7;
 }
 
 int Coop_PlayerCount(void)
@@ -202,6 +219,46 @@ void Coop_ChooseTargets(void)
 
         const unsigned char cur = (g_enemyTarget[s] < RAID_PLAYERS) ? g_enemyTarget[s] : 0;
         const unsigned char other = (unsigned char)(cur ^ 1);
+
+        // A zombie bent over a corpse keeps the corpse. benddown_and_eat is
+        // zombie_move_behavior_tbl[4] - "bend down over a corpse and feed" -
+        // and it addresses its meal as g_playerEntity, i.e. whoever is current.
+        // Hand the target over mid-meal and the rest of that animation acts on
+        // the OTHER player: on animation frame 0x0E it tints its victim's
+        // joints 0 and 2 dark red (Zombie.cpp:2648), so the moment Jill died
+        // the zombie still chewing on her painted the wound onto Chris,
+        // untouched at full health across the room. The log is unambiguous -
+        // one entity, tgt flipping 0/1 frame to frame, hp1=140 throughout.
+        //
+        // Gated on the BEHAVIOUR, not the state: the eat runs with state 1
+        // (the idle dispatch) and action_state 5, so an earlier attempt to gate
+        // on ZOMBIE_STATE_ATTACK matched nothing at all.
+        if (e->id == ENEMY_ZOMBIE && e->action_behavior == ZOMBIE_ACTION_EAT) {
+            // Feeding: the meal is a CORPSE, so the target has to be a dead
+            // player - the nearest one if both are down. Freezing the target
+            // instead was not enough, and the log said so: the dead-target rule
+            // had already moved the zombie onto Chris a frame BEFORE it bent
+            // down, so the freeze just locked in the wrong man and every wound
+            // went to him. Choosing the corpse is the rule; keeping whatever
+            // was there was a guess.
+            int pick = -1, best = 0;
+            for (int q = 0; q < RAID_PLAYERS; q++) {
+                if (g_players[q].health >= 0) continue;
+                const int d = coop_dist_to(&g_players[q], e);
+                if (pick < 0 || d < best) { pick = q; best = d; }
+            }
+            if (pick >= 0) {
+                g_enemyTarget[s] = (unsigned char)pick;
+                continue;
+            }
+            // Nobody is down: this is not really a meal, fall through.
+        }
+
+        // Never switch TO a corpse. Without this the two rules below fight each
+        // other: the dead-target rule moves the zombie onto the living player,
+        // then the distance rule moves it straight back because the body it is
+        // standing over is nearer, and the target oscillates every frame.
+        if (g_players[other].health < 0) continue;
 
         // A dead player stops being worth chasing; take the other one whatever
         // the distance. Health below zero is the engine's own dead test.
