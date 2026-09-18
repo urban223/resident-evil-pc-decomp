@@ -1070,7 +1070,8 @@ void LoadShadowMaskTexture(void* imageBuffer, int slotBase)
 // NOTE: the object handle this produces (g_VideoDriverArray_068[slot], via
 // FUN_0046c230) is what AddFadePoly requires to be non-zero; it returns 0 early
 // otherwise. While the viewport calls below are stubbed, ground shadows cannot
-// draw no matter what the fade-sprite queue contains. See docs/SCD_WORK_PLAN.md.
+// draw no matter what the fade-sprite queue contains - so an empty-looking
+// shadow bug is to be chased here first, not in the queue.
 //
 // Sub-functions (Marni viewport API, stubbed until full implementation):
 //   FUN_0046c280(handle)              - release old execute buffer

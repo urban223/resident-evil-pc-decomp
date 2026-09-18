@@ -2314,7 +2314,7 @@ static void player_state_03(void)
 //
 // This is the state the intro cutscene hands back to, and while it was a stub the
 // player froze: no input mapping, no idle animation, and no route to the door
-// transition. See docs/SCD_WORK_PLAN.md.
+// transition.
 //
 // Ghidra's decompilation of this function is NOT usable - it reports
 // "Sanity check requires truncation of jumptable" and "Could not find normalized
@@ -2832,8 +2832,10 @@ static void player_ctrl_behavior_run(void)
         }
         // NOTE: the original's second test is `(frame > 4) || (frame < 8)`, which is
         // always true, so move_speed_current is unconditionally 0x40 here. Kept as
-        // written rather than "corrected" - see the always-true-condition entries in
-        // docs/SCD_WORK_PLAN.md.
+        // written rather than "corrected": AGENTS.md is explicit that the original's
+        // quirks are preserved, and this one is load-bearing - "fixing" it into
+        // `frame > 4 && frame < 8` would leave 0x3c standing on frames 0-4 and 8+,
+        // which is a different walk speed, i.e. a behaviour change.
         g_playerEntity.move_speed_current = 0x3c;
         if (frame > 4 || frame < 8) {
             g_playerEntity.move_speed_current = 0x40;
