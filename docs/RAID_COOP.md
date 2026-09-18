@@ -4,6 +4,12 @@ Two players in RAID mode only. Player 1 is Jill, player 2 is Chris with the
 Colt Python. Everything here is port-only code; no transcribed file was
 restructured for it.
 
+If you are here because a networked client is rendering something wrong, read
+[What a snapshot has to carry](#what-a-snapshot-has-to-carry) first. The short
+version: **a snapshot has to carry presentation state, not just world state**,
+and almost every bug in this feature has been a field the renderer reads and
+the wire did not send.
+
 Configured under `[Coop]` in `config.ini`:
 
 | `Mode`   | What it does |
@@ -100,9 +106,38 @@ means not drawing" is now wrong in a networked session.
 
 ## What a snapshot has to carry
 
-The first version carried position and health - the state of the world - and a
-client rendered an empty room full of frozen people. Everything below had to be
-added, and each one looked like "the client is broken" on its own:
+> **A snapshot has to carry presentation state, not just world state.**
+>
+> Where a body is and how much health it has is what the *simulation* needs. It
+> is not what the *renderer* reads. The renderer reads a different set of fields
+> - sometimes at different offsets in the same struct, sometimes a byte that
+> decides whether to draw at all - and a client that runs no simulation has no
+> other way to obtain them.
+
+This is the single most expensive lesson in this work, so it is worth stating
+plainly before the list. The first snapshot carried position and health, which
+is the obvious thing to send and reads as complete. It produced a client showing
+an empty room full of frozen people, and every missing field below was found
+one at a time, each looking like "the client is broken" rather than like a
+field that was never sent.
+
+Three properties made them hard to find:
+
+1. **They fail silently and locally.** A missing byte does not crash or log; it
+   makes one body wrong while every neighbouring number matches the host.
+2. **The obvious measurements exonerate them.** Joint pointers, model pointers,
+   joint counts, positions and even the draw counter all agreed between host and
+   client while the room was visibly empty.
+3. **Name similarity hides them.** `PlayerEntity` carries two animation pairs at
+   two offsets; sending the wrong one poses from a frame nothing wrote.
+
+The practical rule: when a client renders something wrong, **do not ask what the
+simulation would have computed - ask what the drawing code reads, and check
+whether the wire carries that**. Diff the two ends on the exact fields
+`render_entity` and `Joint_move` touch.
+
+Everything below had to be added, and each one looked like "the client is
+broken" on its own:
 
 | Carried | Why |
 |---|---|
