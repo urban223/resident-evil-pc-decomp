@@ -3,6 +3,7 @@
 // Adapted from Ghidra decompilation
 #include "Globals.h"
 #include "CoopPlayer.h"   // CUSTOM: RAID co-op
+#include "CoopNet.h"      // CUSTOM: RAID co-op transport
 #include "../system/AssetPath.h"
 
 // 0x00470750 - declared in SpriteRenderer.h; the signature must match that
@@ -47,6 +48,10 @@ int main_loop(void)
     // CUSTOM: co-op publishes one pad per player. Outside co-op this is exactly
     // the single PlayerPad_Update() call it replaces.
     Coop_UpdatePads();
+    // CUSTOM: the only point that is both once per presented tick AND ahead of
+    // the task pass, so a client's world is already the host's before anything
+    // reads it this frame.
+    CoopNet_Receive();
 
     // 0x00428eff: Check for special key combination (F9/F10/F11 scan codes)
     // Only fires when no message is currently displayed (bit 0x80 of g_menu_choice_id = message active)
@@ -493,6 +498,7 @@ _post:
     }
 
     // 0x0042a0d0: Frame timing + present governor
+    CoopNet_Send();   // CUSTOM: after the world has moved this tick
     FrameRateGovernor();
     g_gameTimerSnapshot = Game_timer;
     DAT_004d46d4 = Game_timer;

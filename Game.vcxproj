@@ -148,6 +148,7 @@
     <ClCompile Include="src\game\editor\EditorMode.cpp" />
     <ClCompile Include="src\game\editor\EditorSave.cpp" />
     <ClCompile Include="src\game\editor\EditorSelect.cpp" />
+    <ClCompile Include="src\game\CoopNet.cpp" />
     <ClCompile Include="src\game\CoopPlayer.cpp" />
     <ClCompile Include="src\game\RaidArena.cpp" />
     <ClCompile Include="src\game\RaidEnemies.cpp" />
@@ -226,6 +227,7 @@
   <ItemGroup>
     <ClInclude Include="src\Globals.h" />
     <ClInclude Include="src\game\Achievements.h" />
+    <ClInclude Include="src\game\CoopNet.h" />
     <ClInclude Include="src\game\CoopPlayer.h" />
     <ClInclude Include="src\game\PortAtlas.h" />
     <ClInclude Include="src\game\PortText.h" />

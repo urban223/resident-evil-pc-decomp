@@ -340,3 +340,23 @@ void Coop_DriveZombie(int i)
         ENTITY->state = COOP_Z_STATE_RUN;
     }
 }
+
+void Coop_SetRemotePad(int i, unsigned int padHeld,
+                       unsigned short dpadHeld, unsigned short dpadPressed)
+{
+    if (i < 0 || i >= RAID_PLAYERS) return;
+
+    // Straight into the saved block, and into the live globals too when this
+    // player's block happens to be the one loaded. Going through the same
+    // storage the local path uses is what keeps "remote" from being a second
+    // kind of input the game has to know about.
+    s_pad[i].padHeld     = padHeld;
+    s_pad[i].dpadHeld    = dpadHeld;
+    s_pad[i].dpadPressed = dpadPressed;
+
+    if (s_padOwner == i) {
+        g_PlayerPadHeld     = padHeld;
+        g_PlayerDpadHeld    = dpadHeld;
+        g_PlayerDpadPressed = dpadPressed;
+    }
+}

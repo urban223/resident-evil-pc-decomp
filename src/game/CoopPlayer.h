@@ -135,3 +135,9 @@ void Coop_CheckDeaths(void);
 // Steer slot `slot`'s zombie from player `i`'s pad. Called from update_entities
 // in place of the AI's own targeting, immediately before the state dispatch.
 void Coop_DriveZombie(int i);
+
+// Feed a player's pad from somewhere other than a local device - the network.
+// Writes into the same saved block Coop_UpdatePads swaps around, so the value
+// reaches update_player_anim exactly as a local pad would.
+void Coop_SetRemotePad(int i, unsigned int padHeld,
+                       unsigned short dpadHeld, unsigned short dpadPressed);

@@ -15,6 +15,7 @@
 // ============================================================================
 #include "../Globals.h"
 #include "CoopPlayer.h"   // CUSTOM: RAID co-op
+#include "CoopNet.h"      // CUSTOM: RAID co-op transport
 #include "editor/Editor.h"   // CUSTOM: the in-game level editor
 #include "../marni/MarniInput.h"
 #include <cstdio>
@@ -298,7 +299,10 @@ LAB_00480e89:
                 // in it is moving. That is the one way its freeze differs from
                 // the debug menu's, which hides the scene so the menu box is
                 // the only thing on screen.
-                if (g_debugMenuOpen == 0 && !Editor_IsOpen()) {
+                // CUSTOM: only the authority advances the world. A client's
+                // entities and players come off the wire, so running these here
+                // would fight the snapshot for the same fields every tick.
+                if (g_debugMenuOpen == 0 && !Editor_IsOpen() && Coop_IsAuthority()) {
                     Coop_CheckDeaths();     // CUSTOM: a killed player gets up as a zombie
                     Coop_ChooseTargets();   // CUSTOM: who each enemy hunts
                     update_entities();
@@ -311,7 +315,7 @@ LAB_00480e89:
                 // g_playerPosScratch / g_svecScratch / g_tempVar and mutates RDT
                 // records in place, so two players cannot be interleaved through
                 // it - only run one after the other.
-                for (int coopP = 0; coopP < Coop_PlayerCount(); coopP++) {
+                for (int coopP = 0; Coop_IsAuthority() && coopP < Coop_PlayerCount(); coopP++) {
                     if (Coop_IsZombie(coopP)) continue;   // CUSTOM: he is an entity now
                     Coop_BeginPlayer(coopP);
 
