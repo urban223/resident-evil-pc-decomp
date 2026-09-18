@@ -149,6 +149,28 @@ void Coop_CheckDeaths(void);
 extern unsigned char g_coopJointSrc[RAID_PLAYERS];
 extern unsigned char g_coopJointMirror[RAID_PLAYERS];
 void Coop_NoteJointSource(unsigned int animHeader, unsigned int animBase, char reverse);
+// One billboard spawn, queued on the host and replayed on the client. Four a
+// tick is the cap: at 30Hz that is far more than any RAID scene produces, and
+// a bound means a burst drops frames of blood rather than growing the packet.
+#define COOP_EFFECT_QUEUE 4
+
+typedef struct {
+    unsigned char type;
+    unsigned char depthGroup;
+    unsigned char lightFactor;
+    unsigned char parent;      // enemy slot, 0x80|player, or 0xFF for none
+    short         yaw;
+    short         pad;
+    int           x, y, z;     // the offset RELATIVE to parent, as passed
+} CoopEffectEvent;
+
+extern CoopEffectEvent g_coopEffectQueue[COOP_EFFECT_QUEUE];
+extern int             g_coopEffectCount;
+
+void  Coop_NoteEffect(unsigned char type, unsigned char depthGroup, short yaw,
+                      const void* spriteInfo, const void* pos, char lightFactor);
+void* Coop_EffectParentPtr(unsigned char parent);
+
 void Coop_ClientPose(void);
 
 // Steer slot `slot`'s zombie from player `i`'s pad. Called from update_entities

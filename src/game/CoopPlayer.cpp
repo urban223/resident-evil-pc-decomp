@@ -644,9 +644,98 @@ static void coop_pose_current(unsigned int animHeader, unsigned int animBase,
                               unsigned char mirror)
 {
     if (animHeader == 0 || animBase == 0) return;
-    ENTITY->timing_control = 1;
-    ENTITY->blend_counter  = 0;    // no blend: the wire frame IS the pose
+
+    // Pose the frame the wire named, and leave that frame exactly where it was.
+    //
+    // Joint_move advances animation_frame_id on its way out, and timing_control
+    // is what normally holds it back. Forcing timing_control to 1 and letting
+    // the advance stand meant the client ran the animation ON ITS OWN, one
+    // frame per tick, on top of the frame the snapshot had just set: bodies
+    // jittered between frame N and N+1, and a corpse - which the host holds on
+    // its last frame by keeping timing_control above 1 - ran off the end of the
+    // death animation and stood back up.
+    //
+    // So: force the pose to happen, then put the frame back. The client never
+    // advances anything; it only ever shows what the host sent.
+    const unsigned char frame = ENTITY->animation_frame_id;
+    const unsigned char timing = ENTITY->timing_control;
+
+    ENTITY->timing_control = 1;     // 1 poses; anything above it returns early
+    ENTITY->blend_counter  = 0;     // no blend: the wire frame IS the pose
     Joint_move((char)mirror, animHeader, animBase, 0x400);
+
+    ENTITY->animation_frame_id = frame;
+    ENTITY->timing_control     = timing;
+}
+
+// ---------------------------------------------------------------------------
+// Effects
+//
+// A billboard is spawned by whoever's AI decided to spawn it, which on a
+// client is nobody: it runs no state machine, so a zombie bit a player and no
+// blood appeared. The snapshot carries world state; an effect is an EVENT, and
+// events have to be queued and shipped rather than sampled.
+//
+// What travels is the call's own arguments plus a PARENT ID rather than the
+// parent pointer: spriteInfo is a MATRIX* belonging to some entity, and the
+// client has its own copy of that entity at the same slot. Sending the id and
+// rebuilding the pointer locally keeps the parent's rotation, which resolving
+// to a world position on the host would have thrown away.
+// ---------------------------------------------------------------------------
+#define COOP_EFFECT_NONE   0xFF
+#define COOP_EFFECT_PLAYER 0x80   // | player index
+
+CoopEffectEvent g_coopEffectQueue[COOP_EFFECT_QUEUE];
+int             g_coopEffectCount = 0;
+
+static unsigned char coop_effect_parent(const void* spriteInfo)
+{
+    if (spriteInfo == 0) return COOP_EFFECT_NONE;
+    for (int i = 0; i < 30; i++) {
+        if (spriteInfo == (const void*)&g_EnemiesList[i].scaMatrixData.localMatrix) {
+            return (unsigned char)i;
+        }
+    }
+    for (int i = 0; i < RAID_PLAYERS; i++) {
+        if (spriteInfo == (const void*)&g_players[i].scaMatrixData.localMatrix) {
+            return (unsigned char)(COOP_EFFECT_PLAYER | i);
+        }
+    }
+    return COOP_EFFECT_NONE;     // something else's matrix; send it parentless
+}
+
+void* Coop_EffectParentPtr(unsigned char parent)
+{
+    if (parent == COOP_EFFECT_NONE) return 0;
+    if (parent & COOP_EFFECT_PLAYER) {
+        const int i = parent & 0x7F;
+        if (i < 0 || i >= RAID_PLAYERS) return 0;
+        return (void*)&g_players[i].scaMatrixData.localMatrix;
+    }
+    if (parent >= 30) return 0;
+    return (void*)&g_EnemiesList[parent].scaMatrixData.localMatrix;
+}
+
+void Coop_NoteEffect(unsigned char type, unsigned char depthGroup, short yaw,
+                     const void* spriteInfo, const void* pos, char lightFactor)
+{
+    // Host only. A client calls Effect_CreateBillboard while replaying these,
+    // and recording those would send them back round for ever.
+    if (!Coop_IsNetworked() || !Coop_IsAuthority()) return;
+    if (g_coopEffectCount >= COOP_EFFECT_QUEUE) return;   // drop, do not grow
+    if (pos == 0) return;
+
+    const short* v = (const short*)pos;      // VECTOR's first three components
+    CoopEffectEvent* e = &g_coopEffectQueue[g_coopEffectCount++];
+    e->type        = type;
+    e->depthGroup  = depthGroup;
+    e->lightFactor = (unsigned char)lightFactor;
+    e->parent      = coop_effect_parent(spriteInfo);
+    e->yaw         = yaw;
+    e->x = ((const int*)pos)[0];
+    e->y = ((const int*)pos)[1];
+    e->z = ((const int*)pos)[2];
+    (void)v;
 }
 
 void Coop_ClientPose(void)

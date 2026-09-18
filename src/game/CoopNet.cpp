@@ -61,10 +61,24 @@ typedef struct {
     unsigned char id;           // enemy type; 0xFF means "slot empty"
     unsigned char statusFlags;  // the WHOLE byte, not just the liveness bit
     unsigned char hdr2, hdr3;   // behavior_flags and has_enter_switch_zone
+    // The rest of what drives a pose. A client runs no state machine, so any
+    // of these it does not receive stays at whatever its own spawn left.
+    unsigned char actionBehavior;
+    unsigned char actionState;
+    unsigned char timingControl;
+    unsigned char blendCounter;
+    unsigned char hitState;
+    unsigned char deathTimer;
     unsigned char state;
     unsigned char animationId;
     unsigned char animFrameId;
 } CoopNetEnemy;
+
+typedef struct {
+    unsigned char type, depthGroup, lightFactor, parent;
+    short         yaw, pad;
+    int           x, y, z;
+} CoopNetEffect;
 
 typedef struct {
     unsigned int   magic;
@@ -73,6 +87,9 @@ typedef struct {
     unsigned char  pad0, pad1, pad2;
     CoopNetPlayer  player[RAID_PLAYERS];
     CoopNetEnemy   enemy[COOP_NET_ENEMIES];
+    unsigned char  effectCount;
+    unsigned char  epad0, epad1, epad2;
+    CoopNetEffect  effect[COOP_EFFECT_QUEUE];
 } CoopNetSnapshot;
 
 typedef struct {
@@ -188,6 +205,22 @@ static void snap_build(CoopNetSnapshot* s)
     // the host's "drawn=2 count=2" was saying.
     s->enemyCount = (unsigned char)g_enemy_count;
 
+    // Drain this tick's billboard spawns. Events, not state: they are queued as
+    // they happen and cleared once shipped, so a lost datagram loses a puff of
+    // blood rather than desynchronising anything.
+    s->effectCount = (unsigned char)g_coopEffectCount;
+    for (int i = 0; i < g_coopEffectCount; i++) {
+        const CoopEffectEvent* q = &g_coopEffectQueue[i];
+        CoopNetEffect* w = &s->effect[i];
+        w->type        = q->type;
+        w->depthGroup  = q->depthGroup;
+        w->lightFactor = q->lightFactor;
+        w->parent      = q->parent;
+        w->yaw         = q->yaw;
+        w->x = q->x; w->y = q->y; w->z = q->z;
+    }
+    g_coopEffectCount = 0;
+
     for (int i = 0; i < RAID_PLAYERS; i++) {
         const PlayerEntity* p = &g_players[i];
         CoopNetPlayer* w = &s->player[i];
@@ -230,6 +263,12 @@ static void snap_build(CoopNetSnapshot* s)
         w->statusFlags = en->status_flags;
         w->hdr2        = en->behavior_flags;
         w->hdr3        = en->has_enter_switch_zone;
+        w->actionBehavior = en->action_behavior;
+        w->actionState    = en->action_state;
+        w->timingControl  = en->timing_control;
+        w->blendCounter   = en->blend_counter;
+        w->hitState       = en->hit_state;
+        w->deathTimer     = (unsigned char)en->death_timer;
         w->state       = en->state;
         w->animationId = en->animationId;
         w->animFrameId = en->animation_frame_id;
@@ -301,6 +340,12 @@ static void snap_apply(const CoopNetSnapshot* s)
         // draw counter itself - matched the host exactly.
         en->behavior_flags        = w->hdr2;
         en->has_enter_switch_zone = w->hdr3;
+        en->action_behavior = w->actionBehavior;
+        en->action_state    = w->actionState;
+        en->timing_control  = w->timingControl;
+        en->blend_counter   = w->blendCounter;
+        en->hit_state       = w->hitState;
+        en->death_timer     = w->deathTimer;
         en->scaMatrixData.localMatrix.t[0] = w->x;
         en->scaMatrixData.localMatrix.t[1] = w->y;
         en->scaMatrixData.localMatrix.t[2] = w->z;
@@ -312,6 +357,18 @@ static void snap_apply(const CoopNetSnapshot* s)
         en->state  = w->state;
         en->animationId        = w->animationId;
         en->animation_frame_id = w->animFrameId;
+    }
+
+    // Effects last: a billboard's parent is an entity matrix, and it has to be
+    // the one this snapshot just installed rather than the previous tick's.
+    const int fx = (s->effectCount <= COOP_EFFECT_QUEUE) ? s->effectCount : 0;
+    for (int i = 0; i < fx; i++) {
+        const CoopNetEffect* w = &s->effect[i];
+        VECTOR at;
+        at.x = w->x; at.y = w->y; at.z = w->z; at.pad = 0;
+        Effect_CreateBillboard(w->type, w->depthGroup, w->yaw,
+                               Coop_EffectParentPtr(w->parent), &at,
+                               (char)w->lightFactor);
     }
 }
 

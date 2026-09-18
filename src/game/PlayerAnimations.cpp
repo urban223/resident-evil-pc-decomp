@@ -1358,6 +1358,11 @@ unsigned char Effect_CreateBillboard(
     unsigned char type, unsigned char depthGroup, short yaw,
     void* spriteInfo, void* pos, char lightFactor)
 {
+    // CUSTOM: co-op - a host queues every billboard it spawns so a client can
+    // replay it. Before the free-slot test on purpose: the client's pool is its
+    // own, and an effect the host dropped for lack of a slot should not be sent.
+    Coop_NoteEffect(type, depthGroup, yaw, spriteInfo, pos, lightFactor);
+
     if (g_freeEffectSlots == 0) return type;
 
     bool needAnimLookup = true;
