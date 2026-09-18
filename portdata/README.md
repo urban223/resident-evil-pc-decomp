@@ -22,8 +22,10 @@ copy of the game. Nothing of Capcom's belongs here.
 The three `.ivm` models are here because they share nothing with the game's
 files: own geometry, own 256x256 texture, own palette — `docs/IVM_MODEL_FORMAT.md`
 covers how they were built and `docs/GRENADE_PISTOL.md` why. Their in-hand
-counterparts `players/{w1f,w2f,w3f}.emw` are **not** here, and cannot be: each
-carries Jill's animation half byte for byte.
+counterparts `players/{W1F,W2F,W3F}.EMW` are **not** here and cannot be: each
+carries Jill's animation half byte for byte. Only our half of them is tracked,
+as `tools/inhand/*.tmd`, and `tools/build_inhand_pistol.py` grafts it onto the
+`W12.EMW` from your own copy of the game.
 
 The two `.bin` atlases are baked from the Space GUI pack, which is licensed for
 use in a product but not for redistribution as a pack — so the baked sheets are
@@ -34,5 +36,5 @@ from a bare clone; they do not need to be, because their output is tracked.
 **Not here, and deliberately:** anything carrying Capcom's own art or audio —
 `titlebg.pix`, `titlelogo.bin` (cut out of `title.pix`), `raideye.bin` (a frame
 of `ou.avi`), the barrelled `W12.EMW`, the custom pistols' in-hand `.emw`
-models, and the RAID room's RDT. Their generators are tracked — except the
-in-hand `.emw`, which has none; `docs/ASSETS.md` says what that costs a clone.
+models, and the RAID room's RDT. Every one of them has a tracked generator, so
+a clone rebuilds them from its own install; `docs/ASSETS.md` is the checklist.

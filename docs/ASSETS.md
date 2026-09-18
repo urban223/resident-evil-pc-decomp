@@ -52,8 +52,9 @@ not sizes or dates, and it is the only thing here that would have caught it.
 4. Copy your game data into bin/Debug/USA/ and bin/Release/USA/ as well
 5. python3 tools/deploy_portdata.py      ← the port's own assets, all 3 trees
 6. Rebuild whatever is derived from the game's own art (below) — and read the
-   warning there first: build_beretta_barrel.py overwrites W12.EMW in place
-7. Accept that players/{w1f,w2f,w3f}.emw cannot be rebuilt at all (below)
+   warning there first: build_beretta_barrel.py overwrites W12.EMW in place.
+   python3 tools/build_inhand_pistol.py is the one you must not skip; without
+   it Jill holds a Beretta where the custom pistols belong
 ```
 
 `python3 tools/deploy_portdata.py --check` reports what is stale or missing
@@ -70,6 +71,7 @@ audio, so they are not tracked either. Their generators are:
 | `USA/Data/titlebg.pix` | `tools/build_title_bg.py` | `RC1121.PIX`, graded |
 | `USA/Data/titlelogo.bin` | `tools/build_title_bg.py` | the wordmark cut out of `title.pix` |
 | `USA/Data/raideye.bin` | `tools/build_raid_eye.py` | a frame of `Movie/ou.avi` |
+| `USA/players/{W1F,W2F,W3F}.EMW` | `tools/build_inhand_pistol.py` | `W12.EMW`'s animation half, grafted |
 | `USA/players/W12.EMW` | `tools/build_beretta_barrel.py` | the stock file, **patched in place** |
 | `USA/Stage1/ROOM110{0,1}.RDT` | `tools/build_raid_room.py` | nothing — it fills an empty slot |
 
@@ -90,32 +92,44 @@ excludes the other stage-1 stub, 0x19. (The elevator stairway that *is* room
 0x10 lives in stage 6, as `ROOM6100.RDT`, and is untouched.) You can tell which
 you have by size: 4 bytes is the stub, 65536 is the RAID arena.
 
-## The one gap a fresh clone cannot fill
+## The in-hand models, and how they stopped being a gap
 
-`USA/players/{w1f,w2f,w3f}.emw` — the custom pistols' **in-hand** models — have
-**no generator in this tree**. Each is a copy of Jill's `W12.EMW` with the
-weapon TMD swapped out, so most of the file is Capcom's animation data byte for
-byte and it cannot be tracked here; but the swapped-in mesh was authored by hand
-and was never written back out as a script, so it cannot be rebuilt either.
+`USA/players/{W1F,W2F,W3F}.EMW` — the custom pistols as Jill holds them — are
+each her `W12.EMW` with the weapon half of the TMD replaced. Most of every file
+is therefore Capcom's animation data byte for byte, so the files cannot be
+tracked, and for a while nothing could rebuild them either: a clone had no
+in-hand models at all.
 
-Jill starts with all three pistols (`GameStart.cpp::SetInitialItems`), so on a
-clone this is the first thing that happens rather than an edge case. It used to
-be fatal: `LoadFile` answers `(size_t)-1` for a miss and the next line indexed
-`anim_buffer - 12`, handing the animation system a pointer built out of whatever
-was there — memory corruption that surfaced later and elsewhere.
+What makes it work is that an `.emw` splits exactly where the ownership does:
 
-`LoadEquippedWeaponAnimation` now falls back to Jill's `w12.emw`, which these
-pistols already alias to, so a clone without the files gets **a Beretta in her
-hands instead of the flare pistol** and keeps running. Every pose is right,
-because the fallback is the file the animation half was copied from in the first
-place; only the gun is wrong. That is a visible defect, not a hidden one — which
-is the point. If you are looking at a Beretta where a flare pistol belongs, the
-three `.emw` are missing.
+```
+[ 0 .. tmd_off )    the animation half   Capcom's, identical in w12/w1f/w2f/w3f
+[ tmd_off .. -8 )   the TMD              OURS, and the only part that differs
+last 8 bytes        (anim_off, tmd_off)  unchanged
+```
+
+So the three TMD halves are tracked as `tools/inhand/*.tmd` (6–7 KB each) and
+`tools/build_inhand_pistol.py` grafts them onto the animation half of whichever
+`W12.EMW` the machine already has. Nothing of Capcom's is redistributed and the
+clone still gets the real models. Order against `build_beretta_barrel.py` does
+not matter: that tool asserts it leaves the animation half untouched, so the
+stock and the barrelled `W12.EMW` graft identically.
+
+**The loader still has a fallback, and it should keep it.** Jill starts with all
+three pistols (`GameStart.cpp::SetInitialItems`), so a missing `.emw` is the
+first thing that happens rather than an edge case, and it used to be fatal:
+`LoadFile` answers `(size_t)-1` and the next line indexed `anim_buffer - 12`,
+handing the animation system a pointer built out of whatever was there.
+`LoadEquippedWeaponAnimation` now falls back to `w12.emw` instead, so the
+failure reads as **a Beretta in her hands where a flare pistol belongs** — a
+visible defect rather than corruption surfacing three scenes later. If you see
+that, you skipped step 6.
 
 The **examine** models (`Item_m2/{IFLR,IACD,IFRZ}.ivm`) are a different story
-and are tracked in `portdata/`: they were built from scratch, each with its own
-256x256 texture, and share no geometry or texels with any Capcom file — a byte
-comparison against `I00V.IVM` matches 162 bytes out of 66080, i.e. chance.
+again and are tracked in `portdata/` outright: they were built from scratch,
+each with its own 256x256 texture, and share no geometry or texels with any
+Capcom file — a byte comparison against `I00V.IVM` matches 162 bytes out of
+66080, i.e. chance.
 
 ## The Space GUI pack
 

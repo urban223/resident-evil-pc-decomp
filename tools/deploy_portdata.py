@@ -39,6 +39,9 @@ DERIVED = [
     ("USA/Data/titlebg.pix",   "tools/build_title_bg.py"),
     ("USA/Data/titlelogo.bin", "tools/build_title_bg.py"),
     ("USA/Data/raideye.bin",   "tools/build_raid_eye.py"),
+    ("USA/players/W1F.EMW",    "tools/build_inhand_pistol.py"),
+    ("USA/players/W2F.EMW",    "tools/build_inhand_pistol.py"),
+    ("USA/players/W3F.EMW",    "tools/build_inhand_pistol.py"),
 ]
 
 # These two generators write OVER a path the game already ships - W12.EMW gains
@@ -52,17 +55,7 @@ IN_PLACE = [
     ("USA/Stage1/ROOM110{0,1}.RDT",  "tools/build_raid_room.py"),
 ]
 
-# The one gap nothing can close: the custom pistols' in-hand models have no
-# generator in this tree, and cannot be tracked either (each is Jill's W12.EMW
-# with the weapon TMD swapped, so the animation half is the game's own data).
-# EntityModelLoader falls back to w12.emw when they are absent, so this is a
-# visibly wrong gun rather than a crash - but it is still worth naming, because
-# nothing on screen says WHY the gun is wrong.
-UNOBTAINABLE = [
-    "USA/players/w1f.emw",
-    "USA/players/w2f.emw",
-    "USA/players/w3f.emw",
-]
+UNOBTAINABLE = []   # nothing, since build_inhand_pistol.py closed the last one
 
 
 def relative_files(root):

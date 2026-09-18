@@ -27,8 +27,9 @@ Binary assets added: `Item_m2/{IFLR,IACD,IFRZ}.ivm` (examine models) and
 `players/{w1f,w2f,w3f}.emw` (in-hand models). The `.ivm` are entirely ours —
 own mesh, own 256x256 texture — and are tracked in `portdata/`. The `.emw` are
 copies of Jill's `W12.EMW` with the weapon TMD swapped, so they carry her
-animation data verbatim and are **not** tracked, and no tool here rebuilds
-them; `docs/ASSETS.md` spells out what that costs a fresh clone.
+animation data verbatim and are **not** tracked; only our half of them is
+(`tools/inhand/*.tmd`), and `tools/build_inhand_pistol.py` grafts it back onto
+the `W12.EMW` a clone supplies. See `docs/ASSETS.md`.
 
 Two companion references carry the reusable file-format knowledge:
 `docs/IVM_MODEL_FORMAT.md` and `docs/EMW_INHAND_WEAPON_FORMAT.md`.

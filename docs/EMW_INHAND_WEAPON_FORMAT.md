@@ -103,6 +103,27 @@ Round 12 in `docs/GRENADE_PISTOL.md`; a mixed textured/untextured TMD is safe
 because `ProcessTmdTextures` only edits packets with the textured bit set and
 advances by each packet's own length byte.
 
+That mix is not hypothetical and it breaks any code that assumes one packet
+size. All three shipped pistols have 206 primitives, but only `w1f` is textured
+throughout, at 28 bytes each. `w2f` and `w3f` keep the 34 fist packets textured
+and make their 172 pistol packets untextured at 20 bytes — which is exactly the
+1376-byte difference between `W1F.EMW` (31116) and the other two (29740). Read
+`nprim` and then walk by each packet's own length; never multiply.
+
+## Rebuilding them: the file splits where the ownership does
+
+```
+[ 0 .. tmd_off )    the animation half   the game's, identical in all four files
+[ tmd_off .. -8 )   the TMD              ours, and the only part that differs
+last 8 bytes        (anim_off, tmd_off)  unchanged
+```
+
+`tools/build_inhand_pistol.py` keeps our TMD halves in `tools/inhand/*.tmd` and
+grafts them onto whichever `W12.EMW` is present, which is what lets a clone have
+these models without this repository carrying any of the game's data. It asserts
+the animation half came through untouched — that is the check that matters,
+because if it moves, every pose is wrong and the hands are somewhere else.
+
 ## Local frame and placement
 
 Same convention as the item models: **+Y is the muzzle direction, +X is up, Z is
