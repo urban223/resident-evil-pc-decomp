@@ -23,3 +23,6 @@ re1.lock
 # portdata/ is tracked on purpose - never let the broad *.png / *.jpg rules
 # above swallow an asset that belongs in it.
 !portdata/**
+
+# Python bytecode from running the test scripts.
+tests/__pycache__/

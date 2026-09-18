@@ -85,3 +85,53 @@ void Coop_SpawnPlayer2(void);
 //
 // Returns 1 if the shot was spent on the teammate.
 int Coop_FriendlyFire(unsigned char weaponId);
+
+// ---------------------------------------------------------------------------
+// Nameplates
+//
+// Storage only. The drawing lives in RaidArena.cpp, because that is where the
+// camera view exists: RaBuildView/RaProject already run every frame in RAID and
+// produce backbuffer pixels, which is the space UiAtlas_TextPushed wants.
+// EditorView_Project is the same maths but is unusable here - g_edView.ok is
+// only ever set by EditorView_Build, which is called from four places, all
+// inside the editor, so outside it the function returns 0 and writes nothing.
+//
+// Names are variables, not literals, so a lobby or a config can set them later.
+#define COOP_NAME_MAX 16
+extern char g_coopName[RAID_PLAYERS][COOP_NAME_MAX];
+
+// ---------------------------------------------------------------------------
+// Death turns you into a zombie
+//
+// A killed player keeps playing, as a zombie, on the same pad. He is not a
+// PlayerEntity any more: the zombie moveset lives in zombie state handlers that
+// read an Entity, so his body becomes a real entity in g_EnemiesList with
+// id = ENEMY_ZOMBIE. That is what makes the moveset, the hit reactions, the
+// dismemberment and the magnum decapitation work natively rather than by
+// imitation.
+//
+// The control seam is the one the freeze pistol already proved: update_entities
+// can skip the AI dispatch without disturbing drawing, collision or joints
+// (EntityCommon.cpp:1792). Here the AI is not skipped but STEERED - the pad
+// picks the state and the action, and the engine's own handler runs. That
+// matters because a zombie only moves through Add_speedXZ and only advances a
+// frame through Joint_move, and both are reachable only from inside a state
+// handler; driving one from outside would mean reimplementing it.
+//
+// Forward works because zombie_slow_walk sets its waypoint 5000 units ahead
+// along ENTITY->angle (Zombie.cpp:2180) rather than at the player - so writing
+// the angle from the pad steers it.
+
+// The enemy slot each player's zombie occupies, or -1 while he is alive.
+extern int g_coopZombieSlot[RAID_PLAYERS];
+
+// Is this player currently playing as a zombie?
+int  Coop_IsZombie(int i);
+
+// Once per frame, before the entity update: promote any player whose health has
+// gone below zero into a zombie.
+void Coop_CheckDeaths(void);
+
+// Steer slot `slot`'s zombie from player `i`'s pad. Called from update_entities
+// in place of the AI's own targeting, immediately before the state dispatch.
+void Coop_DriveZombie(int i);

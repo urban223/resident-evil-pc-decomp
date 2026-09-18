@@ -299,6 +299,7 @@ LAB_00480e89:
                 // the debug menu's, which hides the scene so the menu box is
                 // the only thing on screen.
                 if (g_debugMenuOpen == 0 && !Editor_IsOpen()) {
+                    Coop_CheckDeaths();     // CUSTOM: a killed player gets up as a zombie
                     Coop_ChooseTargets();   // CUSTOM: who each enemy hunts
                     update_entities();
                 }
@@ -311,6 +312,7 @@ LAB_00480e89:
                 // records in place, so two players cannot be interleaved through
                 // it - only run one after the other.
                 for (int coopP = 0; coopP < Coop_PlayerCount(); coopP++) {
+                    if (Coop_IsZombie(coopP)) continue;   // CUSTOM: he is an entity now
                     Coop_BeginPlayer(coopP);
 
                     if (((g_playerEntity.zoneFlags & 0x20) != 0) ||
@@ -368,6 +370,7 @@ LAB_00480e89:
                     // entity's own matrix translation inside render_entity - so
                     // the second player lights correctly for free.
                     for (int coopP = 0; coopP < Coop_PlayerCount(); coopP++) {
+                        if (Coop_IsZombie(coopP)) continue;   // CUSTOM: drawn by the entity loop
                         Coop_BeginPlayer(coopP);
                         EntityComputeJointWorldMatrices(g_playerEntity.unk_ca);
                         EntityApplyLookAtRotation();
@@ -395,8 +398,11 @@ LAB_00480e89:
                 }
 
                 // 0x00480f90-0x00480fae: Check player death
+                // CUSTOM: in co-op a dead player becomes a zombie instead of
+                // ending the run, so the death screen is only reached when
+                // NOBODY is still playing as a human.
                 if (((g_main_state_flags2 & MSF2_ATTRACT_DEMO) == 0) &&
-                    (g_playerEntity.health < 0))
+                    (g_playerEntity.health < 0) && !g_coopActive)
                 {
                     g_main_state_flags |= MSF_PLAYER_DEAD;
                 }

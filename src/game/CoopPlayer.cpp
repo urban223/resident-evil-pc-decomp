@@ -240,3 +240,103 @@ void Coop_SpawnPlayer2(void)
     p2->posY = 0;
     p2->directionAngle = p1->directionAngle;
 }
+
+// Defaults until something sets them. See the note in CoopPlayer.h.
+char g_coopName[RAID_PLAYERS][COOP_NAME_MAX] = { "PLAYER 1", "PLAYER 2" };
+
+// ---------------------------------------------------------------------------
+// Death turns you into a zombie - see the note in CoopPlayer.h.
+// ---------------------------------------------------------------------------
+int g_coopZombieSlot[RAID_PLAYERS] = { -1, -1 };
+
+// Turn rate and the two actions the pad selects. 0x1000 is a full turn, so 0x30
+// a frame is about 2.6 degrees - a zombie is not meant to pivot like a player.
+#define COOP_Z_TURN        0x30
+#define COOP_Z_ACT_IDLE    0
+#define COOP_Z_ACT_WALK    1     // zombie_slow_walk: waypoint 5000 ahead of angle
+#define COOP_Z_STATE_RUN   1     // zombie_state_check, the behaviour dispatch
+#define COOP_Z_STATE_ATK   5     // zombie_attack
+
+int Coop_IsZombie(int i)
+{
+    return (i >= 0 && i < RAID_PLAYERS && g_coopZombieSlot[i] >= 0) ? 1 : 0;
+}
+
+// A slot nothing is using. Deliberately does NOT extend g_enemy_count past what
+// is already there if a free slot exists below it: every enemy loop is bounded
+// by that count and the draw loop has no 30-slot clamp of its own
+// (GameLoop.cpp:337), so growing it is the riskier half of this.
+static int coop_free_enemy_slot(void)
+{
+    for (int s = 0; s < 30; s++) {
+        if ((g_EnemiesList[s].status_flags & ENTITY_STATUS_ACTIVE) == 0) return s;
+    }
+    return -1;
+}
+
+void Coop_CheckDeaths(void)
+{
+    if (!g_coopActive) return;
+
+    for (int i = 0; i < RAID_PLAYERS; i++) {
+        if (Coop_IsZombie(i)) continue;
+        if (g_players[i].health >= 0) continue;
+
+        const int slot = coop_free_enemy_slot();
+        if (slot < 0) continue;           // nowhere to put him; stays a corpse
+
+        Entity* z = &g_EnemiesList[slot];
+        memset(z, 0, sizeof(Entity));
+
+        z->id = ENEMY_ZOMBIE;
+        z->status_flags = ENTITY_STATUS_ACTIVE;
+        z->state = COOP_Z_STATE_RUN;
+        z->action_behavior = COOP_Z_ACT_IDLE;
+        z->action_state = 0;
+        z->health = 100;
+
+        // Stand him up where he fell, facing the way he was.
+        z->scaMatrixData.localMatrix.t[0] = g_players[i].scaMatrixData.localMatrix.t[0];
+        z->scaMatrixData.localMatrix.t[1] = g_players[i].scaMatrixData.localMatrix.t[1];
+        z->scaMatrixData.localMatrix.t[2] = g_players[i].scaMatrixData.localMatrix.t[2];
+        z->position.x = g_players[i].position.x;
+        z->position.y = g_players[i].position.y;
+        z->position.z = g_players[i].position.z;
+        z->angle = g_players[i].directionAngle;
+
+        if (slot >= g_enemy_count) g_enemy_count = slot + 1;
+
+        g_coopZombieSlot[i] = slot;
+
+        // Any enemy still hunting him should look elsewhere; Coop_ChooseTargets
+        // does that on its own next frame because his health is below zero.
+    }
+}
+
+void Coop_DriveZombie(int i)
+{
+    if (!Coop_IsZombie(i)) return;
+
+    // Read that player's pad without disturbing whoever's block is live: the
+    // published words belong to one player at a time, so the zombie's owner
+    // gets his own out of the saved block rather than the globals.
+    const WORD dpad = (s_padOwner == i) ? g_PlayerDpadHeld : s_pad[i].dpadHeld;
+
+    // The dpad bits are the same ones player movement reads: 0x8000 up,
+    // 0x4000 down, 0x2000 left, 0x1000 right (PlayerAnimations.cpp's movement).
+    if (dpad & 0x2000) ENTITY->angle = (short)(ENTITY->angle - COOP_Z_TURN);
+    if (dpad & 0x1000) ENTITY->angle = (short)(ENTITY->angle + COOP_Z_TURN);
+
+    const unsigned char want = (dpad & 0x8000) ? COOP_Z_ACT_WALK : COOP_Z_ACT_IDLE;
+
+    // action_state is the handler's own "have I started yet" latch; clearing it
+    // on a change is what makes zombie_slow_walk re-run its init branch and lay
+    // down a fresh waypoint along the new angle.
+    if (ENTITY->action_behavior != want) {
+        ENTITY->action_behavior = want;
+        ENTITY->action_state = 0;
+    }
+    if (ENTITY->state != COOP_Z_STATE_RUN && ENTITY->state != COOP_Z_STATE_ATK) {
+        ENTITY->state = COOP_Z_STATE_RUN;
+    }
+}

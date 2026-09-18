@@ -42,6 +42,8 @@
 #include "SpriteRenderer.h"   // g_SubpixelOffsetX/Y - the screen centre
 #include "TmdRenderer.h"      // TmdViewZToNdc - the model pass's depth mapping
 #include "../marni/MarniDX.h"
+#include "CoopPlayer.h"      // CUSTOM: co-op nameplates
+#include "UiAtlas.h"         // CUSTOM: the baked font the nameplates draw with
 #include "../marni/MarniSystem.h"
 #include <cmath>
 
@@ -360,6 +362,57 @@ static void RaItemTint(unsigned char id, float* r, float* g, float* b)
     *r = 0.88f; *g = 0.88f; *b = 0.92f;
 }
 
+// ---------------------------------------------------------------------------
+// CUSTOM: co-op nameplates.
+//
+// A label over each player's head, in world space, so it tracks him rather than
+// sitting in a corner of the HUD.
+//
+// Y is NEGATIVE upwards in this engine, so the anchor is the player's matrix
+// translation MINUS the head height - getting that sign wrong puts the name
+// under the floor, which is the first thing to check if nothing appears.
+//
+// Depth 700 puts it after the 3D pass (anything below PENDING_SCENE_DEPTH,
+// 0x400, draws then) and behind the game's own item icons, which sit at
+// depth*16 + 500 = 644..676. Lower would draw the name over the inventory.
+//
+// Nothing is drawn for a player who is off camera: RaProject's caller has
+// already rejected vz below the near plane, and a name whose anchor is behind
+// the camera would otherwise smear across the screen.
+// ---------------------------------------------------------------------------
+#define RA_NAME_HEAD_Y    1700.0f   // above the feet, in world units
+#define RA_NAME_DEPTH     700u
+#define RA_NAME_SCALE     0.5f
+#define RA_NAME_COLOR     0xFFE8E8E8u
+
+static void RaDrawNames(const RaView& V)
+{
+    if (!g_coopActive) return;
+    if (UiAtlas_Ready() == 0) return;
+
+    const float k = UiAtlas_Scale() * RA_NAME_SCALE;
+
+    for (int i = 0; i < RAID_PLAYERS; i++) {
+        if (Coop_IsZombie(i)) continue;   // his body is an entity now, not here
+        const PlayerEntity* p = &g_players[i];
+
+        RaVert head;
+        head.x = (float)p->scaMatrixData.localMatrix.t[0];
+        head.y = (float)p->scaMatrixData.localMatrix.t[1] - RA_NAME_HEAD_Y;
+        head.z = (float)p->scaMatrixData.localMatrix.t[2];
+
+        const float vz = RaDepth(V, head);
+        if (vz < 96.0f) continue;          // behind or on the near plane
+
+        float sx, sy;
+        RaProject(V, head, vz, &sx, &sy);
+
+        const float w = UiAtlas_TextWidth(UI_FONT_BODY, g_coopName[i], k);
+        UiAtlas_TextPushed(UI_FONT_BODY, g_coopName[i],
+                           sx - w * 0.5f, sy, k, RA_NAME_COLOR, RA_NAME_DEPTH);
+    }
+}
+
 static void RaDrawItems(const RaView& V)
 {
     s_itemPhase++;
@@ -500,6 +553,8 @@ void RaidArena_Draw(void)
     RaDrawItems(V);
 
     RaFlush();
+
+    RaDrawNames(V);   // CUSTOM: co-op nameplates, after the batch, before the models
 
     // The pickups' real models. AFTER the flush, because these do not go
     // through this file's own triangle batch at all - they are TMD objects,

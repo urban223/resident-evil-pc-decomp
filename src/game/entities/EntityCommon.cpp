@@ -1799,7 +1799,17 @@ void update_entities(void)
                 PlayerEntity* coopPrev = g_pCurPlayer;
                 if (g_coopActive) {
                     const int slot = (int)(ENTITY - g_EnemiesList);
-                    if (slot >= 0 && slot < 30 && g_enemyTarget[slot] < RAID_PLAYERS) {
+
+                    // A player's own zombie is steered by his pad rather than
+                    // hunting anybody. The state handler below still runs - that
+                    // is what moves and animates him.
+                    int owner = -1;
+                    for (int q = 0; q < RAID_PLAYERS; q++) {
+                        if (g_coopZombieSlot[q] == slot) { owner = q; break; }
+                    }
+                    if (owner >= 0) {
+                        Coop_DriveZombie(owner);
+                    } else if (slot >= 0 && slot < 30 && g_enemyTarget[slot] < RAID_PLAYERS) {
                         g_pCurPlayer = &g_players[g_enemyTarget[slot]];
                     }
                 }
