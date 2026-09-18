@@ -17,6 +17,7 @@ static int s_reservedSlot[RAID_PLAYERS] = { -1, -1 };
 // void* overload in Globals.h - see the overload note in CharacterNpc.h.
 extern void load_character_sfx(unsigned char charId);          // SoundSystem.cpp
 extern void LoadEntityEMD(Entity* em, unsigned char entity_id);
+extern void ResetJointTransforms(void);                          // 0x0048bad0
 extern void Entity_SetJoints(Entity* em, unsigned int stride);
 extern void InitAnimStructure(void* animHeaderValue);
 extern unsigned int SetupJointStructures(unsigned int base);
@@ -253,6 +254,7 @@ static int coop_free_enemy_slot(void)
 // model NOW - at room entry, with the arena allocator where RaidEnemies_Spawn
 // leaves it. The slots stay inactive (status_flags 0), so nothing draws or
 // updates them until somebody dies.
+
 void Coop_ReserveZombies(void)
 {
     for (int i = 0; i < RAID_PLAYERS; i++) { g_coopZombieSlot[i] = -1; s_reservedSlot[i] = -1; }
@@ -297,6 +299,19 @@ void Coop_ReserveZombies(void)
         g_loadDataDestPointer =
             (void*)SetupJointStructures((unsigned int)g_loadDataDestPointer);
 
+        // The skeleton's REST POSE. SetupJointStructures fills each joint's
+        // flags and mesh slot but never touches joint->transform, so the
+        // translations stay whatever the model arena happened to hold. An
+        // arena enemy gets them from its own init state - zombie_init calls
+        // this (Zombie.cpp:336) on its first update_entities dispatch - but a
+        // reserved zombie is asleep and never reaches state 0, so it woke with
+        // joint 0 correct and joints 1-14 pointing into the far distance. That
+        // is the body that renders as a pair of shorts hanging in the air:
+        //   j00 w=(6685,-1855,3936)   j01 w=(389842459,242564028,113253608)
+        // against a healthy arena zombie's j00=(6782,-1856,3450) j07=(6597,-2206,3034).
+        // Done here rather than at the wake-up so nothing allocates mid-game.
+        ResetJointTransforms();
+
         z->status_flags = 0;          // asleep until its owner dies
         s_reservedSlot[i] = slot;
     }
@@ -304,6 +319,7 @@ void Coop_ReserveZombies(void)
     ENTITY = saveEntity;
     g_TextureBankID      = texBankSave;
     g_TextureCurrentPage = texPageSave;
+
 }
 
 void Coop_SpawnPlayer2(void)
@@ -405,9 +421,11 @@ int Coop_IsZombie(int i)
 }
 
 
+
 void Coop_CheckDeaths(void)
 {
     if (!g_coopActive) return;
+
 
     for (int i = 0; i < RAID_PLAYERS; i++) {
         if (Coop_IsZombie(i)) continue;
@@ -427,6 +445,24 @@ void Coop_CheckDeaths(void)
         z->action_behavior = COOP_Z_ACT_IDLE;
         z->action_state = 0;
         z->health = 100;
+
+        // The rest of the field set RaidEnemies_Spawn gives every enemy it
+        // places (RaidEnemies.cpp:100-110). The reservation's memset left these
+        // zero, which is right for all of them but one: timing_control has to
+        // be 1. At 0 the zombie's state handler never advances a frame, so his
+        // skeleton keeps the unposed transforms SetupJointStructures left - all
+        // fifteen parts collapsed onto the hip, which is the "only shorts"
+        // body. Spawn-path parity again: everything that path does is
+        // load-bearing, and none of it lives inside the struct.
+        z->timing_control      = 1;
+        z->animationId         = 0;
+        z->animation_frame_id  = 0;
+        z->behavior_flags      = 0;
+        z->ignore_player_flag  = 0;
+        z->hit_state           = 0;
+        z->collisionFlags      = 0;
+        z->lookAtFlags         = 0;
+        z->position.pad        = 0;      // the rotation SVECTOR's X
 
         // Stand him up where he fell, facing the way he was.
         z->scaMatrixData.localMatrix.t[0] = g_players[i].scaMatrixData.localMatrix.t[0];

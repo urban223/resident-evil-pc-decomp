@@ -6113,29 +6113,49 @@ static void player_scd_behavior_00(void)
         return;
     case 2:
         LoadEquippedWeaponAnimation(g_playerEntity.equippedWeaponId, 0xe,
-                                    (unsigned int)(unsigned int*)g_animationBuffer,
-                                    (unsigned int)(unsigned int*)g_animObjectBuffer);
+                                    // CUSTOM: co-op - the CURRENT player's
+                                    // buffers. These were the raw globals, i.e.
+                                    // player 1's, so player 2's weapon joint
+                                    // ended up pointing into player 1's arena
+                                    // and each reload corrupted the other man.
+                                    (unsigned int)Coop_AnimBuffer(),
+                                    (unsigned int)Coop_AnimObjBuffer());
         g_playerEntity.action_state = 6;
         Joint_move(0, g_playerEntity.animHeader, g_playerEntity.animBase, 0x400);
         return;
     case 3:
         LoadEquippedWeaponAnimation(g_playerEntity.equippedWeaponId, 0xe,
-                                    (unsigned int)(unsigned int*)g_animationBuffer,
-                                    (unsigned int)(unsigned int*)g_animObjectBuffer);
+                                    // CUSTOM: co-op - the CURRENT player's
+                                    // buffers. These were the raw globals, i.e.
+                                    // player 1's, so player 2's weapon joint
+                                    // ended up pointing into player 1's arena
+                                    // and each reload corrupted the other man.
+                                    (unsigned int)Coop_AnimBuffer(),
+                                    (unsigned int)Coop_AnimObjBuffer());
         g_playerEntity.action_state = 6;
         Joint_move(0, g_playerEntity.jointMoveData0, g_playerEntity.jointMoveData1, 0x400);
         return;
     case 4:
         LoadEquippedWeaponAnimation(g_playerEntity.equippedWeaponId, 0xe,
-                                    (unsigned int)(unsigned int*)g_animationBuffer,
-                                    (unsigned int)(unsigned int*)g_animObjectBuffer);
+                                    // CUSTOM: co-op - the CURRENT player's
+                                    // buffers. These were the raw globals, i.e.
+                                    // player 1's, so player 2's weapon joint
+                                    // ended up pointing into player 1's arena
+                                    // and each reload corrupted the other man.
+                                    (unsigned int)Coop_AnimBuffer(),
+                                    (unsigned int)Coop_AnimObjBuffer());
         g_playerEntity.action_state = 6;
         Joint_move(0, g_playerEntity.jointMoveData2, g_playerEntity.jointMoveData3, 0x400);
         return;
     case 5:
         LoadEquippedWeaponAnimation(g_playerEntity.equippedWeaponId, 0xe,
-                                    (unsigned int)(unsigned int*)g_animationBuffer,
-                                    (unsigned int)(unsigned int*)g_animObjectBuffer);
+                                    // CUSTOM: co-op - the CURRENT player's
+                                    // buffers. These were the raw globals, i.e.
+                                    // player 1's, so player 2's weapon joint
+                                    // ended up pointing into player 1's arena
+                                    // and each reload corrupted the other man.
+                                    (unsigned int)Coop_AnimBuffer(),
+                                    (unsigned int)Coop_AnimObjBuffer());
         g_playerEntity.action_state = 6;
         Joint_move(0, g_playerEntity.emdScratchPtr1, g_playerEntity.emdScratchPtr2, 0x400);
         return;

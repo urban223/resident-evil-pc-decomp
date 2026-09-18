@@ -354,9 +354,20 @@ LAB_00480e89:
                     // render_entity all operate on the GLOBAL ENTITY pointer,
                     // so the loop has to advance that global — walking a local copy
                     // leaves every helper transforming whichever entity was set last.
+                    // CUSTOM: the `entSlot < 30` half of this condition is an
+                    // insertion. The original counts DOWN from g_enemy_count and
+                    // only on slots whose active bit is set, with no bound on
+                    // the walk - correct only while g_enemy_count equals the
+                    // number of active slots, which the original maintains
+                    // because its corpses keep the bit. Co-op breaks that
+                    // invariant: a reserved zombie slot sits INACTIVE inside the
+                    // count until its owner dies, so the loop can run out of
+                    // active entities, walk off the end of g_EnemiesList and
+                    // draw whatever memory follows it as entities.
                     ENTITY = g_EnemiesList;
                     int entCount = g_enemy_count;
-                    while (entCount != 0) {
+                    int entSlot = 0;
+                    while (entCount != 0 && entSlot < 30) {
                         if ((ENTITY->status_flags & 0x01) != 0) {
                             entCount = entCount - 1;
                             EntityComputeJointWorldMatrices(*(unsigned short*)&ENTITY->pad_ca);
@@ -366,6 +377,7 @@ LAB_00480e89:
                             }
                         }
                         ENTITY++;
+                        entSlot++;
                     }
 
                     // 0x00480f54-0x00480f89: Player entity rendering
