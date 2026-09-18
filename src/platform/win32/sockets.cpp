@@ -11,7 +11,14 @@
 // shared header stays the same shape as the Linux side.
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
+
+// Not declared by every SDK/header order; this is the documented value.
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
 #include "../platform.h"
+#include "../../DebugPrint.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -34,6 +41,26 @@ int plat_net_open(unsigned short bindPort)
         return PLAT_NET_INVALID;
     }
 
+    // Stop Windows turning an ICMP port-unreachable into a permanent read
+    // error on this UDP socket. Without this, a datagram sent to a port with
+    // nothing bound - which happens every time one side reaches RAID before
+    // the other - makes EVERY later recvfrom fail with WSAECONNRESET (10054),
+    // not just the next one. The link then looks alive from the sending end
+    // and is stone dead at the receiving one: sends keep succeeding, the peer
+    // address is right, and no snapshot ever arrives again. That is exactly
+    // what the client's log showed - "recv error 10054 x100" and a receive
+    // counter frozen at zero while the host happily sent.
+    //
+    // Windows-only. The Linux side reports ECONNREFUSED only on a CONNECTED
+    // UDP socket, and these are unconnected.
+    {
+        DWORD  in = FALSE;          // FALSE = do not report connection reset
+        DWORD  out = 0;
+        WSAIoctl(s, SIO_UDP_CONNRESET, &in, sizeof(in), NULL, 0, &out, NULL, NULL);
+        // Deliberately unchecked: it is absent on some stacks, and the socket
+        // is still usable without it - just fragile in the way described above.
+    }
+
     sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
@@ -52,6 +79,18 @@ int plat_net_open(unsigned short bindPort)
         closesocket(s);
         if (s_open == 0) WSACleanup();
         return PLAT_NET_INVALID;
+    }
+
+    // What port the OS actually gave us. A client passes 0 and never knew its
+    // own port, so "the host is sending to the right place" was an assumption
+    // rather than a measurement.
+    {
+        sockaddr_in bound;
+        int blen = (int)sizeof(bound);
+        if (getsockname(s, (sockaddr*)&bound, &blen) == 0) {
+            dbg_printf("[net] socket bound to port %u\n",
+                       (unsigned int)ntohs(bound.sin_port));
+        }
     }
 
     s_open++;
@@ -80,7 +119,13 @@ int plat_net_send(int sock, const PlatNetAddr* to, const void* data, int len)
 
     int n = sendto((SOCKET)sock, (const char*)data, len, 0,
                    (const sockaddr*)&sa, sizeof(sa));
-    return (n == SOCKET_ERROR) ? -1 : n;
+    if (n == SOCKET_ERROR) {
+        static int lastErr = 0;
+        const int e = WSAGetLastError();
+        if (e != lastErr) { lastErr = e; dbg_printf("[net] send error %d\n", e); }
+        return -1;
+    }
+    return n;
 }
 
 int plat_net_recv(int sock, PlatNetAddr* from, void* data, int cap)
@@ -96,6 +141,19 @@ int plat_net_recv(int sock, PlatNetAddr* from, void* data, int cap)
         // back as WSAECONNRESET on the NEXT recvfrom, not as an error on send).
         // Neither is a failure worth telling the caller about.
         const int e = WSAGetLastError();
+        // Everything except "nothing queued" is worth naming once. A swallowed
+        // WSAECONNRESET and an empty queue both return 0, which made a dead
+        // link indistinguishable from an idle one in the co-op counters.
+        if (e != WSAEWOULDBLOCK) {
+            static int lastErr = 0;
+            static unsigned int repeats = 0;
+            if (e != lastErr) {
+                lastErr = e; repeats = 0;
+                dbg_printf("[net] recv error %d\n", e);
+            } else if (++repeats % 100 == 0) {
+                dbg_printf("[net] recv error %d x%u\n", e, repeats);
+            }
+        }
         if (e == WSAEWOULDBLOCK || e == WSAECONNRESET) return 0;
         return -1;
     }
