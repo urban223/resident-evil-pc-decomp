@@ -11,7 +11,7 @@
 // ============================================================================
 // g_entityModelBuffer / g_entityModelBuffer2 are declared in Globals.h as
 // references into one contiguous 108544-byte region - see the note there.
-extern DWORD g_animObjectBuffer[0x680];        // 0x00c133c0
+// g_animObjectBuffer is declared in Globals.h (a reference to player 0's).
 extern DWORD DAT_004d2bd8;                     // 0x004d2bd8 - special model flag
 extern DWORD DAT_004d2bf4;                     // 0x004d2bf4 - TMD processing flag
 extern void SetAnimSlot(AnimSlot* slots, int slotPtr, int index);         // TmdAnimation.cpp
@@ -560,8 +560,13 @@ void LoadEntityModel(void)
 {
     void* data_pointer_bkp = g_loadDataDestPointer;
 
-    g_playerEntity.modelLoadBuffer = (DWORD)&g_entityModelBuffer;
-    g_loadDataDestPointer = &g_entityModelBuffer;
+    // CUSTOM: the CURRENT player's region, not the one fixed buffer. With one
+    // buffer, setting up a second player overwrote the first player's model and
+    // left both with joints pointing at somebody else's skeleton - which drew
+    // as no characters at all. Outside co-op this is player 0's region, i.e.
+    // exactly &g_entityModelBuffer.
+    g_playerEntity.modelLoadBuffer = (DWORD)Coop_ModelRegion();
+    g_loadDataDestPointer = Coop_ModelRegion();
 
     LoadEntityEMD(ENTITY, g_playerEntity.id & 3);
 
@@ -573,7 +578,7 @@ void LoadEntityModel(void)
 
     g_playerEntity.jointCount++;
 
-    SetupJointStructures((unsigned int)&g_entityModelBuffer2);
+    SetupJointStructures((unsigned int)Coop_ModelRegion2());   // CUSTOM: per player
 
     g_playerEntity.jointCount--;
 
@@ -752,7 +757,9 @@ void SetupCharacterData(void)
         }
     }
     LoadEquippedWeaponAnimation(
-        g_playerEntity.equippedWeaponId, 0xe, (unsigned int)g_animationBuffer, (unsigned int)&g_animObjectBuffer);
+        g_playerEntity.equippedWeaponId, 0xe,
+        (unsigned int)Coop_AnimBuffer(),        // CUSTOM: per player
+        (unsigned int)Coop_AnimObjBuffer());
 
     // The original copies the position into the matrix translation here
     // (0x0049508e: t[0] = position.x, t[2] = position.z, t[1] = 0) — this was

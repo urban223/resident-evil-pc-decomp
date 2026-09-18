@@ -1610,9 +1610,24 @@ struct EntityModelStorage {
 extern BYTE (&g_entityModelBuffer)[52224];
 extern BYTE (&g_entityModelBuffer2)[56320];
 
+// CUSTOM: co-op. LoadEntityModel loads into ONE of these regions and hard-codes
+// which, so a second player's SetupCharacterData overwrote the first player's
+// model and left both of them with joints pointing at somebody else's skeleton.
+// The storage is per player now; g_entityModelBuffer and its sibling still
+// refer to player 0's, so every existing use is byte-for-byte what it was and
+// the story campaign cannot tell the difference.
+//
+// The same was true of the weapon animation buffers, which are handed to
+// LoadEquippedWeaponAnimation as a parameter - the menus pass player 0's
+// explicitly, the player setup path asks for the current player's.
+BYTE*  Coop_ModelRegion(void);       // -> that player's EntityModelStorage.first
+BYTE*  Coop_ModelRegion2(void);      // -> .second
+BYTE*  Coop_AnimBuffer(void);        // -> that player's g_animationBuffer
+DWORD* Coop_AnimObjBuffer(void);     // -> that player's g_animObjectBuffer
+
 // 0x00c0b9c0
-extern BYTE         g_animationBuffer[37888];        // 0x00c0b9c0
-extern DWORD        g_animObjectBuffer[0x680];       // 0x00c133c0 - weapon anim object buffer
+extern BYTE       (&g_animationBuffer)[37888];        // 0x00c0b9c0 - player 0's
+extern DWORD      (&g_animObjectBuffer)[0x680];       // 0x00c133c0 - player 0's
 
 // 0x00c14dc0 - Shoot direction data buffer
 extern BYTE          g_shootDirEspBuffer[73728];

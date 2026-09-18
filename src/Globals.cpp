@@ -2002,15 +2002,31 @@ DWORD   g_effectSpriteInfo[50] = {};
 DWORD   g_effectAnimData[425] = {};   // 0x00bf0b1c - per-type effect animation pointers (DWORD array, 1700 bytes)
 
 // One contiguous region, exactly as the original: see the note in Globals.h.
-static EntityModelStorage s_entityModelStorage = {};
-BYTE (&g_entityModelBuffer)[52224]  = s_entityModelStorage.first;    // 0x00bf11c0
-BYTE (&g_entityModelBuffer2)[56320] = s_entityModelStorage.second;   // 0x00bfddc0
+// CUSTOM: one region per player - see the note in Globals.h. [0] is the
+// original's, at 0x00bf11c0, and the two references below still name it, so
+// nothing outside co-op changes.
+static EntityModelStorage s_entityModelStorage[RAID_PLAYERS] = {};
+BYTE (&g_entityModelBuffer)[52224]  = s_entityModelStorage[0].first;    // 0x00bf11c0
+BYTE (&g_entityModelBuffer2)[56320] = s_entityModelStorage[0].second;   // 0x00bfddc0
+
+static int coop_storage_index(void)
+{
+    const int i = (int)(g_pCurPlayer - g_players);
+    return (i >= 0 && i < RAID_PLAYERS) ? i : 0;
+}
+
+BYTE*  Coop_ModelRegion(void)  { return s_entityModelStorage[coop_storage_index()].first;  }
+BYTE*  Coop_ModelRegion2(void) { return s_entityModelStorage[coop_storage_index()].second; }
 
 // 0x00c0b9c0
-BYTE   g_animationBuffer[37888] = {};
+static BYTE  s_animationBuffer[RAID_PLAYERS][37888] = {};
+BYTE (&g_animationBuffer)[37888] = s_animationBuffer[0];
+BYTE* Coop_AnimBuffer(void) { return s_animationBuffer[coop_storage_index()]; }
 
 // 0x00c133c0 - weapon animation object buffer (LoadEquippedWeaponAnimation param_4)
-DWORD  g_animObjectBuffer[0x680] = {};
+static DWORD  s_animObjectBuffer[RAID_PLAYERS][0x680] = {};
+DWORD (&g_animObjectBuffer)[0x680] = s_animObjectBuffer[0];
+DWORD* Coop_AnimObjBuffer(void) { return s_animObjectBuffer[coop_storage_index()]; }
 
 // Shoot direction ESP data buffer (loaded from core00.esp)
 // 0x00c14dc0 - ESP effect data

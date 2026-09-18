@@ -7,6 +7,10 @@
 int g_coopActive = 0;
 unsigned char g_enemyTarget[30] = {};
 
+// Player 2's SCA hit-data block. Player 1 uses g_entityDataBlock (0x200 bytes,
+// 0x00d211d0); this is the same size for the same reason.
+static BYTE s_player2ScaHitData[0x200] = {};
+
 // ---------------------------------------------------------------------------
 // Pad state, swapped rather than duplicated
 //
@@ -224,9 +228,24 @@ void Coop_SpawnPlayer2(void)
     p2->health = 140;          // Chris's starting health, GameStart.cpp:516
     p2->maxHealth = 140;
 
+    // Player 1's SCA hit-data block is g_entityDataBlock, handed to him once at
+    // game start (GameStart.cpp:594); enemies carve theirs out of the pool.
+    // Player 2 had neither, so his pSca_hit_data was 0 - and player_state_init
+    // writes through it unconditionally (PlayerAnimations.cpp:2064), which is
+    // the access violation the first co-op run logged as player_state_init+0xf5
+    // with EAX=0. Give him a block of his own, the same size as player 1's,
+    // rather than carving from the enemy pool: the pool's stride is per-enemy
+    // and a player is not one.
+    p2->pSca_hit_data = (DWORD)s_player2ScaHitData;
+
     Coop_BeginPlayer(1);
     SetupCharacterData();
     Coop_EndPlayer();
+
+    // SetupCharacterData sets Sca_info from the character id but does NOT touch
+    // pSca_hit_data, so the assignment above survives it. Re-asserted here
+    // because the order is load-bearing and silent if it changes.
+    p2->pSca_hit_data = (DWORD)s_player2ScaHitData;
 
     const int x = (int)p1->scaMatrixData.localMatrix.t[0] + COOP_SPAWN_OFFSET;
     const int z = (int)p1->scaMatrixData.localMatrix.t[2];
