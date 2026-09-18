@@ -380,9 +380,17 @@ static void RaItemTint(unsigned char id, float* r, float* g, float* b)
 // already rejected vz below the near plane, and a name whose anchor is behind
 // the camera would otherwise smear across the screen.
 // ---------------------------------------------------------------------------
-#define RA_NAME_HEAD_Y    1700.0f   // above the feet, in world units
+// How far ABOVE the head joint the label floats. Y is negative upwards, so this
+// is subtracted. Small, because the anchor is already the head rather than a
+// guess at the model's height.
+#define RA_NAME_CLEAR_Y    450.0f
+
+// Fallback used only before the joints exist: the head joint's world matrix is
+// filled by EntityComputeJointWorldMatrices during the draw pass, so on the very
+// first frame it can still be zero. Measured from the feet.
+#define RA_NAME_HEAD_Y    2200.0f
 #define RA_NAME_DEPTH     700u
-#define RA_NAME_SCALE     0.5f
+#define RA_NAME_SCALE     0.9f
 #define RA_NAME_COLOR     0xFFE8E8E8u
 
 static void RaDrawNames(const RaView& V)
@@ -396,10 +404,25 @@ static void RaDrawNames(const RaView& V)
         if (Coop_IsZombie(i)) continue;   // his body is an entity now, not here
         const PlayerEntity* p = &g_players[i];
 
+        // Anchor on the HEAD JOINT, not on a fixed offset from the feet. The
+        // first cut used the matrix translation minus a constant and the label
+        // landed at chest height, because that constant was a guess at how tall
+        // the model is. jointsStructs[1] is the head - the same joint
+        // enemy_hit_reaction_head lifts its blood billboard to
+        // (WeaponDamage.cpp:1764-1775) - and its world matrix carries where the
+        // head actually IS this frame, so the label also follows a crouch or a
+        // stagger instead of floating at a fixed height.
         RaVert head;
-        head.x = (float)p->scaMatrixData.localMatrix.t[0];
-        head.y = (float)p->scaMatrixData.localMatrix.t[1] - RA_NAME_HEAD_Y;
-        head.z = (float)p->scaMatrixData.localMatrix.t[2];
+        const JointStruct* headJoint = p->jointsStructs;
+        if (headJoint != 0 && headJoint[1].world.t[1] != 0) {
+            head.x = (float)headJoint[1].world.t[0];
+            head.y = (float)headJoint[1].world.t[1] - RA_NAME_CLEAR_Y;
+            head.z = (float)headJoint[1].world.t[2];
+        } else {
+            head.x = (float)p->scaMatrixData.localMatrix.t[0];
+            head.y = (float)p->scaMatrixData.localMatrix.t[1] - RA_NAME_HEAD_Y;
+            head.z = (float)p->scaMatrixData.localMatrix.t[2];
+        }
 
         const float vz = RaDepth(V, head);
         if (vz < 96.0f) continue;          // behind or on the near plane
