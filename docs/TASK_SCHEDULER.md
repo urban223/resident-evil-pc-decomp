@@ -48,7 +48,10 @@ Max tasks = 3
 Each Task has a reserved stack size of 256KB
 
 ```
-tasksESP[id] = id * 262144 + stackPointer + 262144;
+// This port inserts a 4 KB guard page between slots and backs off 16 bytes:
+//   TaskStackBase(id) = g_TaskStackBase + id * (TASK_STACK_SIZE + TASK_GUARD_SIZE)
+//   TaskStackTop(id)  = TaskStackBase(id) + TASK_STACK_SIZE - 16
+// TaskScheduler.cpp:78-94, TASK_GUARD_SIZE 4096 at :72.
 ```
 
 ---
@@ -58,7 +61,7 @@ tasksESP[id] = id * 262144 + stackPointer + 262144;
 | Address    | Name                     | Description               |
 | ---------- | ------------------------ | ------------------------- |
 | 0x007e0cc8 | g_StackPointer           | stack pointer             |
-| 0x004ba0b8 | g_g_SchedulerRunningFlag | Scheduler running flag    |
+| 0x004ba0b8 | g_SchedulerRunningFlag   | Scheduler running flag    |
 | 0x00bf09ec | g_CurrentTask            | pointer to current task   |
 | 0x00d1fde4 | g_TasksTable[3]          | tasks table               |
 | 0x00d91a68 | g_CurrentTaskPtr         | pointer to current task   |
@@ -122,7 +125,7 @@ Called when a task yields, sleeps, or exits.
 
 Address: **0x0047577C**
 
-Stores EFLAGS then returns to scheduler.
+Does `pushad` (TaskScheduler.cpp:168-176), not `pushfd`, then returns to the scheduler. EFLAGS is pushed by the two outer wrappers, not by Yield.
 
 Used by:
 
@@ -164,7 +167,8 @@ for each task:
         run
 
     else if yield:
-        run next frame
+        resume immediately, in this same scheduler pass
+        (goto _resume_task, TaskScheduler.cpp:266-268)
 
    // hardware/events callbacks
    if async event pending
@@ -273,7 +277,7 @@ tasks[id].state = tasks[id].state | TASK_SUSPENDED
 
 ## Resume
 
-### Task_resume
+### Task_Resume
 
 Address: **0x00420270**
 
@@ -289,7 +293,7 @@ tasks[id].state = tasks[id].state & ~TASK_SUSPENDED
 
 ### ExecAsync
 
-Address: **0x00420290**
+Address: **0x004202a0**
 
 Runs event driven functions inside scheduler context.
 

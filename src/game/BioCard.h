@@ -217,7 +217,7 @@ static_assert(sizeof(BioCardLayout) == 0x41C, "BioCardLayout size mismatch");
 // file_set_collected_flag.
 //
 // Room SCD scripts reach the whole bank as flag bank 8 (cmd_bit_test/cmd_bit_op
-// and the flag_bank_set room action at 0x0041b918), so scripts can touch bits in
+// and the flag_bank_set room action at 0x0041b850), so scripts can touch bits in
 // any of these blocks.
 #define ROOM_FLAG_MAP_BASE                 0x7C  // + MAP_INDEX_* -> that map is owned
 #define ROOM_FLAG_FILE_BASE                0x82  // + (itemId - 0x5F) -> that file has been collected

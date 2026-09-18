@@ -87,7 +87,7 @@ bit, so the *values* in the table are raw pad-word bits, not button ids:
 | `0x0800` | inventory (START) |
 | `0x0900` | options |
 
-See `memory/pad-raw-vs-remapped-bit-map.md` for the raw-vs-remapped distinction
+See (a pad raw-vs-remapped bit map that is no longer in this repository) for the raw-vs-remapped distinction
 that trips up menu code.
 
 ---
@@ -214,7 +214,7 @@ Saves written after this fix round-trip correctly.
 Verified against the shipped saves:
 
 ```
-assets/SAVE/savedat1.dat
+assets/savedat1.dat
   0x820+0x80  table[1]   : all zeros
   0x8A0       joyBackup  : all zeros
   0xA02       keyBackup  : 0x1000 0x4000 0x8000 0x2000 ... 0x80 0x40 ...
@@ -319,7 +319,7 @@ Two screens edit `g_JoyRemapTbl[1]`, and they work in opposite directions.
 | Orientation | 5 **functions**, press the button to bind | 8 **buttons**, cycle through a function list |
 | Rows | ACTION/SELECT, DASH/CANCEL, GET READY, SUB SCREEN, OPTION | `g_JoyRemapTbl[1][8..15]` = buttons 1-8 |
 | Button range | bits 4-31 → buttons 1-24 | bits 8-15 → buttons 1-8 only |
-| Layout | 5 fixed rows | 8 fixed positions in `g_abOptJoyLabelX/Y` |
+| Layout | 5 fixed rows | 8 fixed positions in (no such symbol survives in `src/`) |
 
 Cancelling out of the SideWinder edit state requires the **keyboard** (Esc,
 Ctrl, or the bound cancel key); a pad press always commits. That is original

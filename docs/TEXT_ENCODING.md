@@ -65,7 +65,8 @@ Defined in `src/game/PrintText.h`:
 
 `Encoded<N>` is a `constexpr` struct holding `unsigned char bytes[N]`. Its
 constructor walks the source literal (its `\` escapes first, then
-`encodeChar()` per character) and writes the encoded bytes, then always appends
+`encodeChar()` per character) and writes the encoded bytes into `bytes[N * 3 + 2]`
+(one source character can expand to three), then always appends
 **one terminator byte** `0x01`. The result is exposed through `.bytes`
 (implicitly convertible to `const unsigned char*`).
 
@@ -117,7 +118,7 @@ Simple linear renderer over an encoded byte array:
 | `0xF8 nn` | 14×14 controller symbol (index `nn`) |
 | `0xF9 nn` | 8×14 character, depth 31 |
 | `0xFA nn` | 8×14 character, depth 31, row offset +14 |
-| `0xFB` | No-op (advance) |
+| `0xFB` | True no-op — skips WITHOUT advancing the cursor; no glyph, no move (`PrintText.cpp:334-338`) |
 | `0xFF` | Half-width advance (4 px) |
 | *default* | Render glyph `nn` (depth 30) |
 
@@ -167,7 +168,7 @@ highlighted:
 ### Item names — `src/game/MenuData.cpp` (0x07-terminated)
 
 Originally one flat 984-byte block at `0x004BECC8`; each name terminated by
-`0x07`. Now 78 `s_item*` constants, one per unique name:
+`0x07`. Now 96 `s_item*` constants, one per unique name:
 
 ```cpp
 static constexpr auto s_itemCombatKnife = STR("COMBAT KNIFE\x07");  // +0x000
@@ -175,7 +176,7 @@ static constexpr auto s_itemCombatKnife = STR("COMBAT KNIFE\x07");  // +0x000
 
 Consumed through two pointer tables:
 
-- `g_ItemNamePointers[77]` (0x004BF0A0) — indexed by `itemId - 1`;
+- `g_ItemNamePointers[128]` (0x004BF0A0) — indexed by `itemId - 1`;
   `message_item_name_lookup()` returns one of these.
 - `g_UnknownItemNamePointers[16]` (0x004BF260) — generic names shown for
   unexamined items, by item-category.
@@ -276,7 +277,7 @@ gated on the font sheet actually being wider than one page. `fontus.tim` is one
 page wide, never registers a `0x1F`, and is unaffected.
 
 Glyph width is 14 px instead of 8, which `PrintText8x14`, `PrintFormattedText`
-and `message_render_chars` already select from `GetVersion()`.
+and `message_render_chars` already select from `GetAssetVersion()`.
 
 ### 8.2 Character table
 
@@ -322,7 +323,7 @@ JPN asset tree is selected, because the encoding only means anything against
 | `global_messages_jpn[64]` | `0x004CDE58` | `0x004BFC58` | `set_message_display` (JPN 0x00491980) |
 | `g_ItemNamePointersJpn[128]` | `0x004CD388` | `0x004BF0A0` | `message_item_name_lookup` (JPN 0x00491440) |
 | `g_UnknownItemNamePointersJpn[16]` | `0x004CD548` | `0x004BF260` | same, for unexamined items |
-| `g_ItemDescriptionsJpn[79]` | `0x004C9370` | `0x004C6160` | `set_item_description_message` (JPN 0x00491A40) |
+| `g_ItemDescriptionsJpn[82]` | `0x004C9370` | `0x004C6160` | `set_item_description_message` (JPN 0x00491A40) |
 
 The name table's last 16 entries **are** the unexamined-item table — the two
 overlap in both builds (`g_ItemNamePointers[112..127]`), and the port keeps
@@ -372,7 +373,7 @@ sits one glyph left of its label, and the "No" cursor five glyphs right of the
 | `tools/jpn_msg_decode.py messages\|items\|names\|unknown` | decode any JPN table to readable text |
 | `tools/jpn_msg_decode.py verify` | decode + re-encode all four tables and diff against the executable |
 | `tools/gen_jpn_text.py` | regenerate `JpnFontTable.h`, `JpnTextTables.cpp` and `test_str_jp.cpp` |
-| `tools/test_str_jp.cpp` | `static_assert`s all 233 strings against the original bytes; `cl /nologo /c /EHsc tools\test_str_jp.cpp` |
+| `tools/test_str_jp.cpp` | `static_assert`s all 220 strings against the original bytes; `cl /nologo /c /EHsc tools\test_str_jp.cpp` |
 
 `jpn_msg_decode.py verify` reports **all entries byte-identical** and
 `test_str_jp.cpp` compiles clean, so the glyph table, the encoder and the C++

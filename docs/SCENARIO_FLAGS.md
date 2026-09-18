@@ -49,7 +49,7 @@ because it is not the obvious one:
   clears, `Flg_ck` (`0x00473f40`) tests. All three take the bank base address
   and a bit index.
 - **From SCD**: `cmd_bit_test` (`0x04`), `cmd_bit_op` (`0x05`) and the
-  `flag_bank_set` room action (`0x0041b918`). Their `sel` byte is the same bit
+  `flag_bank_set` room action (`0x0041b850`). Their `sel` byte is the same bit
   index: byte offset `(sel & 0xE0) >> 3`, bit `sel & 0x1F`.
 
 Two traps this idiom has produced in the port:
@@ -87,8 +87,8 @@ Code-verified bits have named constants in
 |---|---|---|---|
 | `0x29` | Plant 42 defeated | `plant42_award_kill` (last vine down) | room SCD scripts (bank 0 tests) |
 | `0x5B` | Monster plant combat progression | `mp_damaged` after 3+ hits | room SCD scripts |
-| `0x21` | Lab passcode panel solved (`PLAYER_FLAG_PANEL_SOLVED`) | `check_and_display_interactive_screen` | `ComputerLab`, `LabSlides` |
-| `0x20` | Interactive screen active gate (`PLAYER_FLAG_INTERACTIVE_SCREEN`) | `check_and_display_interactive_screen` | `InteractiveScreen` panel flow, `ComputerLab`, `LabSlides` |
+| `0x21` | Lab passcode panel solved (`SCENARIO_FLAG_PANEL_SOLVED`) | `check_and_display_interactive_screen` | `ComputerLab`, `LabSlides` |
+| `0x20` | Interactive screen active gate (`SCENARIO_FLAG_INTERACTIVE_SCREEN`) | `check_and_display_interactive_screen` | `InteractiveScreen` panel flow, `ComputerLab`, `LabSlides` |
 | `0x1E` / `0x1F` | Passcode-panel variant selectors (pick the initial 3x3 panel state set, per character) | room SCD scripts | `check_and_display_interactive_screen` |
 | `0x10` | Yawn bite event | Yawn attack entry (enemy type id `0x0D`) | room SCD scripts |
 | `0x47` | Yawn serum marker — the first Yawn poisons only while this is clear | serum event script | `Yawn` bite |
@@ -277,13 +277,14 @@ the only thing that tells them apart.
 
 | Bits | Count | Block | Index | Written by | Read by |
 |---|---|---|---|---|---|
-| `0x00`–`0x7B` | 124 | Room **visited** | `g_StageRoomFlagOffset[stageId % 5] + roomId` | `room_set_visited_flag` (`0x00488570`) | map screen (`0x0048775f`, `0x004878db`, `0x00488459`) |
-| `0x7C`–`0x81` | 6 | **Map** owned | `ROOM_FLAG_MAP_BASE + mapIndex` | `set_room_item_seen_flag` (`0x004885a0`) | `map_area_known` (`0x004885c0`) |
+| `0x00`–`0x7B` | 124 | Room **visited** | `g_StageRoomFlagOffset[stageId % 5] + roomId` | inlined (the original's `room_set_visited_flag` `0x00488570` has no function here) | map screen (`0x0048775f`, `0x004878db`, `0x00488459`) |
+| `0x7C`–`0x81` | 6 | **Map** owned | `ROOM_FLAG_MAP_BASE + mapIndex` | inlined — `ComputerLab.cpp:2551` calls `Flg_on` directly (the original's `set_room_item_seen_flag` `0x004885a0`) | `map_area_known` (`0x004885c0`) |
 | `0x82`–`0x91` | 16 | **File** collected | `ROOM_FLAG_FILE_BASE + (itemId - 0x5F)` | `0x00488660` | `pickup_item_seen` (`0x00488680`) |
 | `0x92`–`0x9F` | 14 | unused | — | — | — |
 
-The visited block's per-group bases are `g_StageRoomFlagOffset` = `{ 0, 32, 63,
-82, 100 }`, the running sum of `g_MapRoomCounts` = `{ 32, 31, 19, 18, 24 }`:
+The visited block's per-group bases are `g_StageRoomFlagOffset[6]` = `{ 0, 32, 63,
+82, 100, 0 }`, the running sum of `g_MapRoomCounts[6]` = `{ 32, 31, 19, 18, 24, 0 }`
+(both carry a trailing sixth element):
 Mansion 1F `0`–`31`, Mansion 2F `32`–`62`, courtyard + underground `63`–`81`,
 guardhouse `82`–`99`, laboratory `100`–`123`. It therefore ends exactly where the
 map block starts.
@@ -296,7 +297,7 @@ map block starts.
 > Ghidra.
 
 Room SCD scripts reach the whole bank as flag bank 8 (`cmd_bit_test`,
-`cmd_bit_op`, and the `flag_bank_set` room action at `0x0041b918`), so a script
+`cmd_bit_op`, and the `flag_bank_set` room action at `0x0041b850`), so a script
 can set or test bits in any of these blocks.
 
 ### The map bits
