@@ -507,7 +507,19 @@ void InitializeGame(void)
     g_SpecialRoomLightDelta = 0;
     g_fading_counter = 0;
 
-    Task_execute(1, (void*)display_game_loading_message);
+    // CUSTOM: not in RAID. display_game_loading_message posts message 0x5B, the
+    // story's opening narration ("They have escaped into the..."), which the
+    // arena inherits only because it goes through the same InitializeGame. It
+    // is gated on g_raidMode rather than on co-op because it is equally out of
+    // place in single-player RAID - the same reason load_room_bg is gated
+    // (Room.cpp:742).
+    //
+    // Skipping the task rather than clearing the message afterwards: the task
+    // is what owns the message, so letting it post and then cancelling would
+    // race the message system's own timing for one frame of visible text.
+    if (g_raidMode == 0) {
+        Task_execute(1, (void*)display_game_loading_message);
+    }
 
     LoadFile(GAME_DATA_ROOT "data\\bio_card.dat", g_loadDataDestPointer, 32);
 
