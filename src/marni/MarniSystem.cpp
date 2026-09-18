@@ -221,7 +221,13 @@ static int VTable_Clear(void* self)
 {
     CMarniDirect3D* pD3D = (CMarniDirect3D*)self;
     if (!pD3D || !pD3D->m_isInitialized) return 0;
-    if (!pD3D->m_isActive) return 0;
+    // CUSTOM: an unfocused window skips the clear because it is not drawing
+    // anything either - the message loop stops calling main_loop. A networked
+    // co-op session waives that pause, so the window IS still drawing, and
+    // skipping the clear leaves every frame composited on top of the last:
+    // the other player smears a trail of herself across the room, which snaps
+    // clean the moment the window is focused again and clears resume.
+    if (!pD3D->m_isActive && !Coop_IsNetworked()) return 0;
 
     float r, g, b;
     if (g_debugClearR != 0.0f || g_debugClearG != 0.0f || g_debugClearB != 0.0f) {

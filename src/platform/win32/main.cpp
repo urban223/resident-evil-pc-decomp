@@ -100,8 +100,20 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     BOOL hasCDROM = EnumerateDriveTypes();
     
     // --- 0x004414a2: Single instance checks via mutex ---
-    if (!CheckSingleInstance()) {
-        return 3; // already running
+    //
+    // CUSTOM: RE1_ALLOW_SECOND_INSTANCE=1 waives the guard. RAID co-op needs a
+    // host and a client, and testing that on one machine means two copies of
+    // the game talking over the loopback - which the original's mutex makes
+    // impossible. Off by default, so a normal run keeps the original's
+    // behaviour exactly. An environment variable rather than a config key
+    // because this check runs before config.ini is read.
+    {
+        char allow[8] = {0};
+        const BOOL waived = plat_env_get("RE1_ALLOW_SECOND_INSTANCE", allow, sizeof(allow))
+                            && allow[0] == '1';
+        if (!waived && !CheckSingleInstance()) {
+            return 3; // already running
+        }
     }
     
     // --- 0x004414f6: Initialize task scheduler stacks ---
@@ -659,7 +671,17 @@ int RunMessageLoop(void)
         // Losing focus therefore stops main_loop() being called at all - that is
         // the pause. The port previously ORed the two flags together with an
         // always-TRUE g_bWindowActive, so it never paused.
-        if (!g_bQuitFlag && g_bWindowFocused) {
+        // CUSTOM: a networked co-op session never pauses on focus loss. The
+        // original's pause is right for one machine, and wrong the moment there
+        // are two: main_loop is what pumps the socket, so a backgrounded window
+        // stops simulating AND stops reading the wire. With a host and a client
+        // on one desktop only one can be focused, so whichever the tester is
+        // looking at is the only one running - the other is frozen, producing
+        // nothing. That is what made the link look broken: the counters moved
+        // in bursts, plateaued for whole heartbeat windows, and reported no
+        // socket error at all, because nothing was wrong with the socket.
+        const BOOL coopRunning = Coop_IsNetworked() != 0;
+        if (!g_bQuitFlag && (g_bWindowFocused || coopRunning)) {
             if (g_hWnd != NULL || g_bWindowActive) {
                 DWORD currentTime = timeGetTime();
                 

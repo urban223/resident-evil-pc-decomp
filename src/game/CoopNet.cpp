@@ -10,6 +10,11 @@
 
 int g_coopRole = COOP_ROLE_OFF;
 
+int Coop_IsNetworked(void)
+{
+    return (g_coopRole == COOP_ROLE_HOST || g_coopRole == COOP_ROLE_CLIENT) ? 1 : 0;
+}
+
 int Coop_IsAuthority(void)
 {
     return (g_coopRole == COOP_ROLE_HOST || g_coopRole == COOP_ROLE_LOCAL
@@ -85,6 +90,34 @@ static unsigned int s_lastSeen = 0;   // newest tick accepted, to drop reorders
 // producing a frame where player 2 stands still.
 static CoopNetInput s_remoteInput = { 0, 0, 0, 0, 0 };
 
+// Link diagnostics. A UDP mode with no visibility cannot be tested: a silent
+// link and a working one look identical from the game. Everything here is
+// counters plus a heartbeat every 150 ticks (5 seconds at 30Hz), and it all
+// goes through dbg_printf, which is inert unless RE1_DEBUGLOG=1.
+static unsigned int s_statSent    = 0;
+static unsigned int s_statRecv    = 0;
+static unsigned int s_statDropped = 0;   // wrong size or bad magic
+static unsigned int s_statStale   = 0;   // arrived out of order, discarded
+
+static const char* coop_role_name(void)
+{
+    switch (g_coopRole) {
+    case COOP_ROLE_HOST:   return "host";
+    case COOP_ROLE_CLIENT: return "client";
+    case COOP_ROLE_LOCAL:  return "local";
+    default:               return "off";
+    }
+}
+
+static void coop_heartbeat(void)
+{
+    if ((s_tick % 150) != 0 || s_tick == 0) return;
+    dbg_printf("[coop] %s tick=%u sent=%u recv=%u dropped=%u stale=%u peer=%d sock=%d\n",
+               coop_role_name(), s_tick, s_statSent, s_statRecv,
+               s_statDropped, s_statStale, s_havePeer,
+               s_sock != PLAT_NET_INVALID);
+}
+
 int CoopNet_StartHost(unsigned short port)
 {
     CoopNet_Stop();
@@ -94,6 +127,9 @@ int CoopNet_StartHost(unsigned short port)
     s_tick = 0;
     s_lastSeen = 0;
     g_coopRole = COOP_ROLE_HOST;
+    s_statSent = s_statRecv = s_statDropped = s_statStale = 0;
+    dbg_printf("[coop] host listening on port %u\n",
+               (unsigned int)(port ? port : COOP_NET_PORT_DEF));
     return 1;
 }
 
@@ -111,6 +147,8 @@ int CoopNet_StartClient(const char* hostText)
     s_tick = 0;
     s_lastSeen = 0;
     g_coopRole = COOP_ROLE_CLIENT;
+    s_statSent = s_statRecv = s_statDropped = s_statStale = 0;
+    dbg_printf("[coop] client sending to %s\n", hostText);
     return 1;
 }
 
@@ -242,16 +280,31 @@ void CoopNet_Receive(void)
         PlatNetAddr from;
         const int n = plat_net_recv(s_sock, &from, buf, (int)sizeof(buf));
         if (n <= 0) break;
+        s_statRecv++;
 
         if (g_coopRole == COOP_ROLE_HOST && n == (int)sizeof(CoopNetInput)) {
             CoopNetInput in;
             memcpy(&in, buf, sizeof(in));
-            if (in.magic != COOP_MAGIC_INPUT) continue;
+            if (in.magic != COOP_MAGIC_INPUT) { s_statDropped++; continue; }
 
             // First packet from anyone is the client we are playing with. No
             // handshake: this is a two-machine game over a link the players
             // arranged themselves, not a public server.
-            if (!s_havePeer) {
+            // Always take the sender of the newest input as the peer, not
+            // just the first one ever seen. A client that restarts, or simply
+            // re-enters RAID, calls plat_net_open(0) again and lands on a NEW
+            // ephemeral port. Binding the peer once meant the host kept
+            // answering the dead port for the rest of the session - and the
+            // failure is silent from both ends, because sendto to a dead local
+            // port still succeeds and the client's own inputs keep arriving.
+            // The counters are what showed it: host sent=299 recv=306 while
+            // the client sat at recv=178 and never moved.
+            if (!s_havePeer || from.addr != s_peer.addr || from.port != s_peer.port) {
+                dbg_printf("[coop] host: peer %u.%u.%u.%u:%u%s\n",
+                           (from.addr >> 24) & 0xFF, (from.addr >> 16) & 0xFF,
+                           (from.addr >> 8) & 0xFF, from.addr & 0xFF,
+                           (unsigned int)from.port,
+                           s_havePeer ? " (moved)" : "");
                 s_peer = from;
                 s_havePeer = 1;
             }
@@ -262,20 +315,27 @@ void CoopNet_Receive(void)
             if (in.tick >= s_lastSeen) {
                 s_remoteInput = in;
                 s_lastSeen = in.tick;
+            } else {
+                s_statStale++;
             }
         } else if (g_coopRole == COOP_ROLE_CLIENT && n == (int)sizeof(CoopNetSnapshot)) {
             CoopNetSnapshot sn;
             memcpy(&sn, buf, sizeof(sn));
-            if (sn.magic != COOP_MAGIC_SNAP) continue;
+            if (sn.magic != COOP_MAGIC_SNAP) { s_statDropped++; continue; }
             if (haveSnap && sn.tick <= bestSnap.tick) continue;
             bestSnap = sn;
             haveSnap = 1;
         }
     }
 
-    if (g_coopRole == COOP_ROLE_CLIENT && haveSnap && bestSnap.tick >= s_lastSeen) {
-        s_lastSeen = bestSnap.tick;
-        snap_apply(&bestSnap);
+    if (g_coopRole == COOP_ROLE_CLIENT && haveSnap) {
+        if (bestSnap.tick >= s_lastSeen) {
+            if (s_lastSeen == 0) dbg_printf("[coop] client: first snapshot\n");
+            s_lastSeen = bestSnap.tick;
+            snap_apply(&bestSnap);
+        } else {
+            s_statStale++;
+        }
     }
 
     // The host hands the client's pad to player 2 before the world moves, so it
@@ -288,14 +348,18 @@ void CoopNet_Receive(void)
 
 void CoopNet_Send(void)
 {
-    if (s_sock == PLAT_NET_INVALID || !s_havePeer) return;
-
+    // The heartbeat runs even with no socket and no peer: a silent link and a
+    // link that was never opened look the same from the game, and last run's
+    // log could not tell "host left RAID" from "host never had a peer".
     s_tick++;
+    coop_heartbeat();
+
+    if (s_sock == PLAT_NET_INVALID || !s_havePeer) return;
 
     if (g_coopRole == COOP_ROLE_HOST) {
         CoopNetSnapshot sn;
         snap_build(&sn);
-        plat_net_send(s_sock, &s_peer, &sn, (int)sizeof(sn));
+        if (plat_net_send(s_sock, &s_peer, &sn, (int)sizeof(sn)) > 0) s_statSent++;
     } else if (g_coopRole == COOP_ROLE_CLIENT) {
         CoopNetInput in;
         in.magic       = COOP_MAGIC_INPUT;
@@ -303,7 +367,7 @@ void CoopNet_Send(void)
         in.padHeld     = g_PlayerPadHeld;
         in.dpadHeld    = g_PlayerDpadHeld;
         in.dpadPressed = g_PlayerDpadPressed;
-        plat_net_send(s_sock, &s_peer, &in, (int)sizeof(in));
+        if (plat_net_send(s_sock, &s_peer, &in, (int)sizeof(in)) > 0) s_statSent++;
     }
 }
 

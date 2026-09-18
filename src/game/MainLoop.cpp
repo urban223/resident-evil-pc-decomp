@@ -497,6 +497,16 @@ _post:
         StMask(1, 1);
     }
 
+    // CUSTOM: which end of the link this window is. Two instances on one
+    // desktop are otherwise indistinguishable, and telling them apart by window
+    // size stops working the moment they are the same size. Drawn last so it
+    // sits over everything, and only when a socket is actually up - single
+    // player never sees it.
+    if (Coop_IsNetworked()) {
+        sprintf(PRINT_TEXT_BUFFER, "%s", (g_coopRole == COOP_ROLE_HOST) ? "HOST" : "CLIENT");
+        PrintText8x14(8, 8, 128, 1);
+    }
+
     // 0x0042a0d0: Frame timing + present governor
     CoopNet_Send();   // CUSTOM: after the world has moved this tick
     FrameRateGovernor();

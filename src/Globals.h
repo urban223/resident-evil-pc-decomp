@@ -1628,6 +1628,9 @@ DWORD* Coop_AnimObjBuffer(void);     // -> that player's g_animObjectBuffer
 // (EntityModelLoader.cpp:750). Anything that textures a part of THAT player
 // afterwards has to ask instead of assuming player 1's 0x16 / 7 the way the
 // original could. Outside co-op both answer the original's own constants.
+// True while this machine is a co-op host or client. Platform code asks so the
+// focus-loss pause can be waived: a networked game cannot stop one end.
+int Coop_IsNetworked(void);
 unsigned char Coop_PlayerTexBank(void);
 unsigned char Coop_PlayerTexPage(void);
 
