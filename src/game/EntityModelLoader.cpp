@@ -729,9 +729,29 @@ void SetupCharacterData(void)
 {
     ENTITY = reinterpret_cast<Entity*>(&g_playerEntity);
     InitPlayerEntity();
-    g_TextureCurrentPage = 7;
-    g_TextureBankID = 0x16;
-    Object_DeleteAll(0);
+
+    // CUSTOM: co-op - a texture page per player. The original hardcodes page 7 /
+    // bank 0x16 because there is exactly one player; with two, whoever loads
+    // second lands his TIM on the first one's page and the first character then
+    // samples the wrong skin - which is why Jill was wearing Chris.
+    //
+    // Player 2 gets page 8 / bank 0x17. Both are free: the room's own textures
+    // start at page 0, character select takes 5, the player 7, enemies start at
+    // bank 0x06 page 0x0A and climb, the computer screen is 0x13 and the ending
+    // 0x1C. Bank 0x17 is below the 32-entry g_textureBankRedirect bound.
+    if (g_pCurPlayer == &g_players[0]) {
+        g_TextureCurrentPage = 7;
+        g_TextureBankID = 0x16;
+    } else {
+        g_TextureCurrentPage = 8;
+        g_TextureBankID = 0x17;
+    }
+
+    // Object_DeleteAll(0) is NOT run for the second player: it tears down the
+    // registered TMD objects, and the first player's are already in there.
+    if (g_pCurPlayer == &g_players[0]) {
+        Object_DeleteAll(0);
+    }
     LoadEntityModel();
     InitScaMatrix(0, &g_playerEntity.scaMatrixData);
     SetWeaponBodyParts(0xe);
