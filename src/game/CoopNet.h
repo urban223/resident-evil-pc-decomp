@@ -65,6 +65,9 @@ extern int            g_coopConfigMode;
 extern char           g_coopConfigHost[64];
 extern unsigned short g_coopConfigPort;
 
+// [Coop] BootToRaid - debug: skip the logos and title, load the arena directly.
+extern int g_coopBootToRaid;
+
 // Turn the configured mode into a role. Called once when RAID starts; on any
 // failure it leaves the role off, so a bad address or a busy port drops into
 // single player rather than into a half-open session.

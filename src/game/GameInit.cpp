@@ -1,6 +1,7 @@
 // GameInit.cpp - Game initialization and startup
 // All functions decompiled from Ghidra with original addresses
 #include "../Globals.h"
+#include "CoopNet.h"   // CUSTOM: [Coop] BootToRaid
 #include "../marni/MarniSystem.h"
 #include "../marni/PSXTexture.h"
 #include "FileLoader.h"
@@ -220,6 +221,22 @@ void load_global_assets(void)
            0,       1,        0,       0,
     };
     CreateTexturedQuad(0, 0x2F, rectConfig);
+
+    // CUSTOM: [Coop] BootToRaid=1 in config.ini goes straight to the arena,
+    // skipping the logos and the title. Debug convenience only - it exists
+    // because every co-op test otherwise costs twenty seconds of intro before
+    // the thing being tested appears.
+    //
+    // It sets exactly what the title's EXTRA path sets (TitleScreen.cpp:1088-1105)
+    // and then takes the same route into game_start, so nothing downstream can
+    // tell the difference.
+    if (g_coopBootToRaid != 0) {
+        g_raidMode = 1;
+        g_SelectedCharactedId = CHAR_JILL;
+        g_main_state_flags2 &= ~MSF2_ATTRACT_DEMO;
+        Task_chain((void*)game_start);
+        return;
+    }
 
     Task_chain((void*)logos_state);
 }

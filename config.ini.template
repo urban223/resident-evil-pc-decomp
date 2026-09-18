@@ -48,6 +48,8 @@ Mode=off
 Host=127.0.0.1:27015
 ; Port to listen on, for Mode=host only.
 Port=27015
+; Debug: 1 skips the logos and title and loads the arena directly.
+BootToRaid=0
 
 [Debug]
 ; Master switch for the port-added debug features: F1 debug menu, F6 texture
