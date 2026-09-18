@@ -613,7 +613,28 @@ extern int           g_resetGameFlag;                  // 0x004d4670 - triggers 
 // InitializeGame's memclr clears. See docs/MEMORY_LAYOUT.md before touching.
 // ============================================================================
 
-extern PlayerEntity  g_playerEntity;                   // 0x00be62e4 - main player entity (0x180 bytes) [.gwipe]
+// CUSTOM: co-op. The original has ONE player entity at 0x00be62e4 and every
+// transcribed file names it directly, 3370 times across 55 files. Rather than
+// rewrite any of them, the storage becomes an array and the name becomes a
+// macro for "whichever player is being processed right now".
+//
+// g_players[0] occupies the original's address and is the only one the story
+// campaign ever uses: g_pCurPlayer is parked on it and nothing moves it, so
+// every one of those 3370 references resolves exactly as before. RAID co-op is
+// the only thing that repoints it, and it does so around a whole player update
+// the way the engine already repoints ENTITY around an entity update.
+//
+// This is also the only mechanism that works for update_player_position, which
+// takes a PlayerEntity* and then ignores it - its reach probe reads the global
+// directly (PlayerAnimations.cpp:7408-7410). Passing a pointer would not have
+// redirected it.
+//
+// RAID_PLAYERS is 2 because the arena has one camera whose zone covers the
+// floor; a third player is a level-format question, not a code one.
+#define RAID_PLAYERS 2
+extern PlayerEntity  g_players[RAID_PLAYERS];          // [0] is 0x00be62e4 - the original's single player
+extern PlayerEntity* g_pCurPlayer;                     // never NULL; &g_players[0] outside co-op
+#define g_playerEntity (*g_pCurPlayer)
 extern Entity        g_EnemiesList[30];                // 0x00be6464 - enemy entity array (30 x 0x18C bytes) [.gwipe]
 extern int           g_enemy_count;                    // 0x00be41e2 - number of active enemies [.gwipe]
 extern Entity*       ENTITY;                           // 0x00bebcd4 - current entity pointer

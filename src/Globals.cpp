@@ -1123,7 +1123,10 @@ int end_game_status = 0;
 // ============================================================================
 
 // 0x00be62e4 - Main player entity structure (0x180 bytes)
-PlayerEntity g_playerEntity = {};
+// CUSTOM: co-op - one array instead of one struct, see the macro in Globals.h.
+// [0] is the original's player and the only one the story campaign touches.
+PlayerEntity g_players[RAID_PLAYERS] = {};
+PlayerEntity* g_pCurPlayer = &g_players[0];
 
 // 0x00be6464 - Enemy entity array (30 x 0x18C bytes)
 Entity g_EnemiesList[30] = {};
