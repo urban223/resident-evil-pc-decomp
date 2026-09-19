@@ -149,6 +149,15 @@ void Coop_CheckDeaths(void);
 extern unsigned char g_coopJointSrc[RAID_PLAYERS];
 extern unsigned char g_coopJointMirror[RAID_PLAYERS];
 void Coop_NoteJointSource(unsigned int animHeader, unsigned int animBase, char reverse);
+
+// The animation frame an enemy was last POSED on, which is not the frame its
+// entity carries: Joint_move wraps animation_frame_id to 0 on the call that
+// ends an animation, and a corpse's handler stops posing right there. Sending
+// the entity's field made every killed zombie stand back up on a client. The
+// host records the posed frame in Joint_move; snap_build sends that.
+void Coop_NotePose(void);
+int  Coop_PosedPose(int slot, unsigned char* anim, unsigned char* frame);
+void Coop_ForgetPose(int slot);
 // One billboard spawn, queued on the host and replayed on the client. Four a
 // tick is the cap: at 30Hz that is far more than any RAID scene produces, and
 // a bound means a burst drops frames of blood rather than growing the packet.

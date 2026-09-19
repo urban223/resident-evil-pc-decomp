@@ -669,6 +669,63 @@ static void coop_pose_current(unsigned int animHeader, unsigned int animBase,
 }
 
 // ---------------------------------------------------------------------------
+// The frame the host actually POSED
+//
+// Joint_move advances animation_frame_id on its way out, and on the call that
+// finishes an animation it WRAPS IT TO ZERO and returns 1
+// (PlayerAnimations.cpp, "Check for animation loop"). A state handler that
+// stops posing on that return value keeps its skeleton on the last frame of the
+// animation for ever, while the field on the entity reads 0.
+//
+// zombie_dead_animation is exactly that shape: case 1 advances to case 2 on
+// Joint_move's 1, and cases 2, 3 and 4 - the whole corpse - never call it
+// again. On one machine that is invisible, because nothing poses from the field
+// after that point.
+//
+// Over a wire it is fatal. The snapshot carried animation_frame_id, a client
+// poses from what the snapshot carries, and frame 0 of the fall animation is a
+// zombie standing on its feet. THAT is the standing corpse: not a stale field,
+// not a missing one, not the posing code - the host's 0 is correct and means
+// "nothing to pose", and only the client read it as a frame to draw.
+//
+// So the wire carries the frame the host POSED rather than the frame it would
+// pose next, recorded here where the pose happens - the same trick, and for the
+// same reason, as Coop_NoteJointSource above.
+static unsigned char s_posedAnim[30];
+static unsigned char s_posedFrame[30];
+static unsigned char s_posedValid[30];
+
+void Coop_NotePose(void)
+{
+    if (!g_coopActive) return;
+
+    // Enemies only. A player's pair is chosen by update_player_anim, which a
+    // client does not run either, but that path already has its own record and
+    // changing it is a separate change with its own in-game check.
+    const Entity* e = ENTITY;
+    if (e < &g_EnemiesList[0] || e > &g_EnemiesList[29]) return;
+
+    const int slot = (int)(e - &g_EnemiesList[0]);
+    s_posedAnim[slot]  = e->animationId;
+    s_posedFrame[slot] = e->animation_frame_id;
+    s_posedValid[slot] = 1;
+}
+
+int Coop_PosedPose(int slot, unsigned char* anim, unsigned char* frame)
+{
+    if (slot < 0 || slot >= 30 || s_posedValid[slot] == 0) return 0;
+    *anim  = s_posedAnim[slot];
+    *frame = s_posedFrame[slot];
+    return 1;
+}
+
+void Coop_ForgetPose(int slot)
+{
+    if (slot < 0 || slot >= 30) return;
+    s_posedValid[slot] = 0;
+}
+
+// ---------------------------------------------------------------------------
 // Effects
 //
 // A billboard is spawned by whoever's AI decided to spawn it, which on a

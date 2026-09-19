@@ -252,6 +252,10 @@ static void snap_build(CoopNetSnapshot* s)
         CoopNetEnemy* w = &s->enemy[e];
         if ((en->status_flags & ENTITY_STATUS_ACTIVE) == 0) {
             w->id = 0xFF;                 // empty
+            // Whatever this slot last posed belonged to a body that is gone.
+            // Leaving it would hand the next occupant of the slot - a reserved
+            // player-zombie waking up, say - a corpse's final frame.
+            Coop_ForgetPose(e);
             continue;
         }
         w->x = (int)en->scaMatrixData.localMatrix.t[0];
@@ -270,8 +274,17 @@ static void snap_build(CoopNetSnapshot* s)
         w->hitState       = en->hit_state;
         w->deathTimer     = (unsigned char)en->death_timer;
         w->state       = en->state;
+        // The live fields are the fallback, for an enemy that has not been
+        // posed yet. Once it has, the wire carries the frame the host POSED:
+        // Joint_move wraps animation_frame_id to 0 on the call that ends an
+        // animation, and zombie_dead_animation stops posing on exactly that
+        // return value - so a corpse's entity reads frame 0 while its joints
+        // hold the last frame of the fall. A client posing the field it was
+        // sent drew frame 0 of that animation, which is a zombie back on its
+        // feet. See Coop_NotePose.
         w->animationId = en->animationId;
         w->animFrameId = en->animation_frame_id;
+        Coop_PosedPose(e, &w->animationId, &w->animFrameId);
     }
 }
 

@@ -175,9 +175,6 @@ compare across those two.
   frame id and nothing advances the skeleton locally.
 - The zombie a dead player becomes has no attack button bound. State 5 is
   accepted, there is just no input that reaches it.
-- **A killed zombie stands on the client.** Five rounds did not close it.
-  Known: posing is not the cause (disabling it leaves T-poses AND a standing
-  corpse), and the host's own fields at send time are not stale.
 - No blood pool on the floor after a kill. That is a different primitive, not
   `Effect_CreateBillboard`, so the event channel does not carry it.
 - Jill jitters on a client when moving or turning while aiming.
