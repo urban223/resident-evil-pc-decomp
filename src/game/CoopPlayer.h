@@ -189,6 +189,15 @@ void* Coop_EffectParentPtr(unsigned char parent);
 
 void Coop_ClientPose(void);
 
+// The ground shadow quad at entity+0xE4, which a zombie's death recolours and
+// resizes into the blood pool. The host reads its state off the quad; the
+// client stores what arrives and rebuilds and queues the quad itself, because
+// nothing on a client runs the entity update that would have queued it.
+void Coop_ReadShadow(const void* quadPtr, unsigned char tint[3],
+                     short* w, short* h, short* ox, short* oz);
+void Coop_SetShadow(int slot, const unsigned char tint[3],
+                    short w, short h, short ox, short oz);
+
 // Steer slot `slot`'s zombie from player `i`'s pad. Called from update_entities
 // in place of the AI's own targeting, immediately before the state dispatch.
 void Coop_DriveZombie(int i);

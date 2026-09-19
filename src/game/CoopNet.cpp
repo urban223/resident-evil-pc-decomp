@@ -72,6 +72,11 @@ typedef struct {
     unsigned char state;
     unsigned char animationId;
     unsigned char animFrameId;
+    // The ground-shadow quad at entity+0xE4 - which a death recolours and
+    // resizes into the blood pool. Flat fields rather than a struct so the
+    // layout stays the packed one both ends agree on.
+    unsigned char shTint[3];
+    short shW, shH, shOx, shOz;
 } CoopNetEnemy;
 
 typedef struct {
@@ -290,6 +295,8 @@ static void snap_build(CoopNetSnapshot* s)
         w->animationId = en->animationId;
         w->animFrameId = en->animation_frame_id;
         Coop_PosedPose(e, &w->animationId, &w->animFrameId);
+        Coop_ReadShadow(&en->pushVelocity, w->shTint,
+                        &w->shW, &w->shH, &w->shOx, &w->shOz);
     }
 }
 
@@ -375,6 +382,10 @@ static void snap_apply(const CoopNetSnapshot* s)
         en->state  = w->state;
         en->animationId        = w->animationId;
         en->animation_frame_id = w->animFrameId;
+        // Stored, not applied here: the quad has to be rebuilt and queued from
+        // game_loop, next to the pose and just before DrawFadeSpr drains the
+        // queue - and this runs in main_loop, which is a different task.
+        Coop_SetShadow(e, w->shTint, w->shW, w->shH, w->shOx, w->shOz);
     }
 
     // Effects last: a billboard's parent is an entity matrix, and it has to be

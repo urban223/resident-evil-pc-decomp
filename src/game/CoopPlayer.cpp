@@ -767,6 +767,79 @@ void Coop_ForgetPose(int slot)
 }
 
 // ---------------------------------------------------------------------------
+// The ground shadow, and the blood pool it turns into
+//
+// A body's shadow is not an effect and not a sprite of its own: it is a quad
+// INSIDE the entity, at +0xE4, built by FUN_004565f0 and pushed into the
+// fade-sprite queue once per frame by the entity's own update - for a zombie,
+// by zombie_update (Zombie.cpp). The death blood pool is that same quad,
+// recoloured to 0x00ffff50 and resized by zombie_dead_animation.
+//
+// A client runs no entity update, so nothing ever queues it: there is no
+// shadow under anybody on a client, and therefore no pool either. So the wire
+// carries the quad's state - its tint, its half extents and its own offset -
+// and the client rebuilds it with the game's own builder and queues it in the
+// same place in the frame the host does, just before DrawFadeSpr drains it.
+static unsigned char s_shTint[30][3];
+static short         s_shW[30], s_shH[30], s_shOx[30], s_shOz[30];
+static unsigned char s_shValid[30];
+
+void Coop_ReadShadow(const void* quadPtr, unsigned char tint[3],
+                     short* w, short* h, short* ox, short* oz)
+{
+    const unsigned char* q = (const unsigned char*)quadPtr;
+    // Byte 0x0C is the header dword FUN_004565f0 fills from the tint scratch
+    // and BillboardSetColor rewrites; 0x60/0x64 are the +halfW/+halfH corner
+    // the size calls patch; 0x00/0x04 are the quad's own x/z offset, which is
+    // what entity_add_fade_sprite adds to the body's position.
+    const unsigned int tintWord = *(const unsigned int*)(q + 0x0C);
+    tint[0] = (unsigned char)(tintWord & 0xFF);
+    tint[1] = (unsigned char)((tintWord >> 8) & 0xFF);
+    tint[2] = (unsigned char)((tintWord >> 16) & 0xFF);
+    *w  = *(const short*)(q + 0x60);
+    *h  = *(const short*)(q + 0x64);
+    *ox = *(const short*)(q + 0x00);
+    *oz = *(const short*)(q + 0x04);
+}
+
+void Coop_SetShadow(int slot, const unsigned char tint[3],
+                    short w, short h, short ox, short oz)
+{
+    if (slot < 0 || slot >= 30) return;
+    s_shTint[slot][0] = tint[0];
+    s_shTint[slot][1] = tint[1];
+    s_shTint[slot][2] = tint[2];
+    s_shW[slot]  = w;
+    s_shH[slot]  = h;
+    s_shOx[slot] = ox;
+    s_shOz[slot] = oz;
+    s_shValid[slot] = 1;
+}
+
+static void coop_client_shadow(Entity* e, int slot)
+{
+    if (slot < 0 || slot >= 30 || s_shValid[slot] == 0) return;
+
+    SVECTOR ofs;
+    ofs.x = s_shOx[slot]; ofs.y = 0; ofs.z = s_shOz[slot]; ofs.pad = 0;
+
+    // The tint reaches the builder through the scratch global it reads rather
+    // than through an argument - see the note in zombie_init about which of the
+    // two scratch dwords that is.
+    g_animFrameIdSave = ((unsigned int)s_shTint[slot][2] << 16)
+                      | ((unsigned int)s_shTint[slot][1] << 8)
+                      | (unsigned int)s_shTint[slot][0];
+    FUN_004565f0(&ofs, (SVECTOR*)&e->pushVelocity, s_shW[slot], s_shH[slot]);
+
+    // The host queues this one only when the body is in a camera switch zone,
+    // and that test is already on the wire because render_entity gates drawing
+    // on the same byte.
+    if (e->has_enter_switch_zone == 0) return;
+    entity_add_fade_sprite((VECTOR*)&e->scaMatrixData.localMatrix.t[0],
+                           (short*)&e->pushVelocity, 0, e->angle);
+}
+
+// ---------------------------------------------------------------------------
 // Effects
 //
 // A billboard is spawned by whoever's AI decided to spawn it, which on a
@@ -859,6 +932,7 @@ void Coop_ClientPose(void)
         if ((e->status_flags & ENTITY_STATUS_ACTIVE) == 0) continue;
         ENTITY = e;
         coop_pose_current(e->animHeader, e->animBase, 0);
+        coop_client_shadow(e, s);
     }
 
     ENTITY = saveEntity;
