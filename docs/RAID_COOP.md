@@ -42,6 +42,33 @@ was rejected because `apply_weapon_damage` works through shared scratch, the
 task scheduler contains naked assembly, and the two compilers do not agree -
 none of which can be made deterministic across machines cheaply.
 
+### Where it sits in a frame
+
+```
+main_loop
+  CoopNet_Receive()          MainLoop.cpp:54     - a client applies the snapshot
+  TaskScheduler_Update()     MainLoop.cpp:271/289- runs the game_start task, and
+      game_loop                                    inside it game_loop:
+        host  : Coop_CheckDeaths, Coop_ChooseTargets, update_entities
+        client: Coop_ClientPose                   - poses, and queues shadows
+        both  : DrawFadeSpr, render_entity
+  CoopNet_Send()             MainLoop.cpp:511    - a host ships the snapshot
+```
+
+That split is why `snap_apply` stores rather than acts: it runs in `main_loop`,
+and anything that has to happen in a particular place *inside* a frame - posing
+a skeleton, queueing a shadow before `DrawFadeSpr` drains the queue - has to be
+done from `game_loop`, which is a different task. See
+[A trap when instrumenting this](#a-trap-when-instrumenting-this).
+
+| Piece | Where |
+|---|---|
+| Wire structs, build and apply | `CoopNet.cpp` |
+| Pose recording (`Coop_NotePose`, `CoopPose`) | `CoopPlayer.cpp`, called from `Joint_move` |
+| Client posing and shadow queueing | `Coop_ClientPose`, `CoopPlayer.cpp` |
+| Effect events | `Coop_NoteEffect` / `Coop_EffectParentPtr` |
+| Per-player storage accessors | `Coop_ModelRegion`, `Coop_AnimBuffer`, ... |
+
 ## Testing it on one machine
 
 The network mode needs a host and a client. Both can live on one desktop, but
@@ -81,6 +108,11 @@ have to reach the arena before anything appears in the logs.
 The heartbeat is every 150 ticks, five seconds at 30 Hz, and it runs before
 the no-socket early-out on purpose: without that, a host that had left RAID
 could not be told from one that never had a peer.
+
+**`[coop] off` at the title screen is normal, in every mode.** The role is taken
+from the config by `CoopNet_StartFromConfig`, which `GameStart` calls on the way
+into RAID, so before the arena both instances heartbeat as `off` with `sock=0`.
+It is not a sign that the config was not read.
 
 - `sent`/`recv` climbing by ~150 per window on both sides is a healthy link.
 - `recv` frozen while the other end's `sent` climbs is a one-way link. Check

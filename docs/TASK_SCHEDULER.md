@@ -12,6 +12,41 @@ The engine contains a miniature operating system that executes game scripts as t
 
 # Memory Layout
 
+## `main_loop` and `game_loop` are not the same thing
+
+Worth stating before anything else, because getting it wrong produces
+measurements that look convincing and are not.
+
+`main_loop` (`MainLoop.cpp`) is the outer per-frame driver: it is what the
+Win32 message pump calls, and it runs the scheduler through
+`TaskScheduler_Update`. `game_loop` (`GameLoop.cpp`) is not called by it -
+`game_loop` is called by `game_start` (`GameStart.cpp:682`), which is itself a
+**task** (`Task_chain(game_start)`), and it yields once a frame from inside its
+own loop with `Task_sleep(1)` (`GameLoop.cpp:520`).
+
+So within one pass of `main_loop`:
+
+```
+main_loop                       <- outside the scheduler
+  TaskScheduler_Update
+      game_start task
+          game_loop             <- inside a task, a different call chain
+  ...rest of main_loop
+```
+
+**A probe in `main_loop` and a probe in `game_loop` do not sample the same
+moment**, and the distance between them can be tens of ticks. Diffing their
+output as if it were one frame produced a confident and entirely wrong
+conclusion during the RAID co-op work - "the host is putting stale fields in the
+packet" - and cost two rounds of debugging. To compare two things, log both from
+the same function, or log the sender's copy at the moment of send and the
+receiver's at the moment of receive.
+
+The same split decides where port-only work has to live: anything that must
+happen at a particular point *inside* a frame - posing a skeleton, queueing a
+sprite before the pass that drains the queue - belongs in `game_loop`, even when
+the data arrives in `main_loop`. See `docs/RAID_COOP.md`.
+
 ## Task Control Blocks
 
 Address: **0x00D1FDE4 – 0x00D1FF58**

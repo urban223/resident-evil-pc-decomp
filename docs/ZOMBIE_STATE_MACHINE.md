@@ -406,6 +406,25 @@ The tail of every death, and the only place a "dead" zombie can stand back up.
 The stage/room test is a **word** compare at `0x00be9820`, spanning `g_stageId`
 (low byte) and `g_roomId` (high).
 
+> **After state 2 the corpse is never posed again, and its `animation_frame_id`
+> reads 0 rather than the frame you can see.** State 1 advances to 2 on
+> `Joint_move` returning 1 - and that is the same call that wraps
+> `animation_frame_id` back to 0 (`PlayerAnimations.cpp`, "Check for animation
+> loop"). States 2, 3 and 4 never call `Joint_move`, so the joints keep the last
+> frame of the fall for ever while the field says 0.
+>
+> Single-player that is invisible, because nothing reads the field again. It is
+> fatal for anything that re-poses a body FROM the field: over the network a
+> client did exactly that and every killed zombie stood back up, with host and
+> client agreeing on every number. See `docs/RAID_COOP.md`, "When a field is
+> sampled is part of what it means".
+
+> **The pool of blood is the ground shadow.** There is no separate blood object:
+> state 2 recolours the entity's own shadow quad at `+0xE4` to `0x00ffff50` via
+> `BillboardSetColor` and shrinks it by 100, and state 3 grows it back 6 a tick
+> while `death_timer` runs down. What puts it on screen is the same
+> `entity_add_fade_sprite` call in `zombie_update` that submits the shadow.
+
 ### 5 · `zombie_attack` @ 0x004342e0 → 0x00435200
 
 | Sub | Phase |
