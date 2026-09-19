@@ -691,24 +691,65 @@ static void coop_pose_current(unsigned int animHeader, unsigned int animBase,
 // So the wire carries the frame the host POSED rather than the frame it would
 // pose next, recorded here where the pose happens - the same trick, and for the
 // same reason, as Coop_NoteJointSource above.
+// A player has the same hole, reached by a different road. The aim behaviour
+// runs as two handlers in one tick, and between them there are ticks on which
+// NOTHING poses: player_behavior_13_gun_hold_input answers a turn by setting
+// action_state 2 and unk_8c 0, and player_behavior_13_gun_raise's case 2 then
+// takes the branch that only rewrites attackAnim and zeroes the frame - no
+// Joint_move at all - before case 3 poses from animHeader/animBase, which is a
+// DIFFERENT pair from the jointMoveData0/1 the hold used.
+//
+// So on those ticks the entity's fields describe an animation nobody has posed
+// yet, while the skeleton still holds the last pose. A client sent those fields
+// drew a pose the host never showed, for one tick, every time the player turned
+// while aiming - which is what the jitter was.
 static unsigned char s_posedAnim[30];
 static unsigned char s_posedFrame[30];
 static unsigned char s_posedValid[30];
+
+static unsigned char s_pPosedAnim[RAID_PLAYERS];
+static unsigned char s_pPosedFrame[RAID_PLAYERS];
+static unsigned char s_pPosedSrc[RAID_PLAYERS];
+static unsigned char s_pPosedMirror[RAID_PLAYERS];
+static unsigned char s_pPosedValid[RAID_PLAYERS];
 
 void Coop_NotePose(void)
 {
     if (!g_coopActive) return;
 
-    // Enemies only. A player's pair is chosen by update_player_anim, which a
-    // client does not run either, but that path already has its own record and
-    // changing it is a separate change with its own in-game check.
     const Entity* e = ENTITY;
+
+    for (int i = 0; i < RAID_PLAYERS; i++) {
+        if (e != (const Entity*)&g_players[i]) continue;
+        // The source is already correct for THIS pose: Coop_NoteJointSource ran
+        // a few lines earlier in the same Joint_move call, off the same
+        // pointers. Capturing it here as well is what makes the four values one
+        // consistent set rather than four fields sampled at different moments.
+        s_pPosedAnim[i]   = e->animationId;
+        s_pPosedFrame[i]  = e->animation_frame_id;
+        s_pPosedSrc[i]    = g_coopJointSrc[i];
+        s_pPosedMirror[i] = g_coopJointMirror[i];
+        s_pPosedValid[i]  = 1;
+        return;
+    }
+
     if (e < &g_EnemiesList[0] || e > &g_EnemiesList[29]) return;
 
     const int slot = (int)(e - &g_EnemiesList[0]);
     s_posedAnim[slot]  = e->animationId;
     s_posedFrame[slot] = e->animation_frame_id;
     s_posedValid[slot] = 1;
+}
+
+int Coop_PosedPlayerPose(int i, unsigned char* anim, unsigned char* frame,
+                         unsigned char* src, unsigned char* mirror)
+{
+    if (i < 0 || i >= RAID_PLAYERS || s_pPosedValid[i] == 0) return 0;
+    *anim   = s_pPosedAnim[i];
+    *frame  = s_pPosedFrame[i];
+    *src    = s_pPosedSrc[i];
+    *mirror = s_pPosedMirror[i];
+    return 1;
 }
 
 int Coop_PosedPose(int slot, unsigned char* anim, unsigned char* frame)

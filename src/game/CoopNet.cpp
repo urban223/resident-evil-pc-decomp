@@ -241,6 +241,11 @@ static void snap_build(CoopNetSnapshot* s)
         w->jointFrameId = ((const Entity*)p)->animation_frame_id;
         w->jointSrc     = g_coopJointSrc[i];
         w->jointMirror  = g_coopJointMirror[i];
+        // ...and, when there is one, the pose the host last actually PUT ON the
+        // skeleton, which on a turn-while-aiming tick is not what these fields
+        // say. See Coop_NotePose.
+        Coop_PosedPlayerPose(i, &w->jointAnimId, &w->jointFrameId,
+                             &w->jointSrc, &w->jointMirror);
         w->flags       = p->flags;
         w->isZombie    = (unsigned char)Coop_IsZombie(i);
         w->zombieSlot  = (g_coopZombieSlot[i] >= 0)

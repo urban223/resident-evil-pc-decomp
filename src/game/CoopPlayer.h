@@ -158,6 +158,13 @@ void Coop_NoteJointSource(unsigned int animHeader, unsigned int animBase, char r
 void Coop_NotePose(void);
 int  Coop_PosedPose(int slot, unsigned char* anim, unsigned char* frame);
 void Coop_ForgetPose(int slot);
+
+// The same for a player, and for the same reason: the aim behaviour leaves
+// ticks on which nothing poses, with the fields already rewritten for an
+// animation that has not been posed yet. All four values are captured in one
+// place so they are one pose rather than four fields read at four moments.
+int Coop_PosedPlayerPose(int i, unsigned char* anim, unsigned char* frame,
+                         unsigned char* src, unsigned char* mirror);
 // One billboard spawn, queued on the host and replayed on the client. Four a
 // tick is the cap: at 30Hz that is far more than any RAID scene produces, and
 // a bound means a burst drops frames of blood rather than growing the packet.
