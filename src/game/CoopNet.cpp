@@ -49,6 +49,9 @@ typedef struct {
     unsigned char jointFrameId; // Entity view 0xBE
     unsigned char jointSrc;     // which of the four animation sources
     unsigned char jointMirror;  // Joint_move's `reverse`
+    unsigned char poseSerial;   // bumped once per pose the host made
+    unsigned char poseBlend;    // blend_counter that pose ran with
+    short         poseStep;     // and its blendStep
     unsigned char flags;        // aim bits and the rest of PlayerEntity.flags
     unsigned char isZombie;     // playing as a zombie: his body is an entity
     unsigned char zombieSlot;   // which enemy slot that body is; 0xFF if none
@@ -77,6 +80,9 @@ typedef struct {
     // layout stays the packed one both ends agree on.
     unsigned char shTint[3];
     short shW, shH, shOx, shOz;
+    unsigned char poseSerial;   // as for a player: which ticks actually posed
+    unsigned char poseMirror;
+    short poseStep;
 } CoopNetEnemy;
 
 typedef struct {
@@ -249,8 +255,16 @@ static void snap_build(CoopNetSnapshot* s)
         // ...and, when there is one, the pose the host last actually PUT ON the
         // skeleton, which on a turn-while-aiming tick is not what these fields
         // say. See Coop_NotePose.
-        Coop_PosedPlayerPose(i, &w->jointAnimId, &w->jointFrameId,
-                             &w->jointSrc, &w->jointMirror);
+        CoopPose pose;
+        if (Coop_PosedPlayerPose(i, &pose)) {
+            w->jointAnimId  = pose.anim;
+            w->jointFrameId = pose.frame;
+            w->jointSrc     = pose.src;
+            w->jointMirror  = pose.mirror;
+            w->poseSerial   = pose.serial;
+            w->poseBlend    = pose.blend;
+            w->poseStep     = pose.step;
+        }
         w->flags       = p->flags;
         w->isZombie    = (unsigned char)Coop_IsZombie(i);
         w->zombieSlot  = (g_coopZombieSlot[i] >= 0)
@@ -294,7 +308,15 @@ static void snap_build(CoopNetSnapshot* s)
         // feet. See Coop_NotePose.
         w->animationId = en->animationId;
         w->animFrameId = en->animation_frame_id;
-        Coop_PosedPose(e, &w->animationId, &w->animFrameId);
+        CoopPose epose;
+        if (Coop_PosedPose(e, &epose)) {
+            w->animationId  = epose.anim;
+            w->animFrameId  = epose.frame;
+            w->blendCounter = epose.blend;
+            w->poseSerial   = epose.serial;
+            w->poseMirror   = epose.mirror;
+            w->poseStep     = epose.step;
+        }
         Coop_ReadShadow(&en->pushVelocity, w->shTint,
                         &w->shW, &w->shH, &w->shOx, &w->shOz);
     }
@@ -329,6 +351,17 @@ static void snap_apply(const CoopNetSnapshot* s)
         ((Entity*)p)->animation_frame_id = w->jointFrameId;
         g_coopJointSrc[i]    = w->jointSrc;
         g_coopJointMirror[i] = w->jointMirror;
+        // Held for game_loop rather than posed here: this runs in main_loop,
+        // which is a different task and therefore a different frame.
+        CoopPose pose;
+        pose.anim   = w->jointAnimId;
+        pose.frame  = w->jointFrameId;
+        pose.src    = w->jointSrc;
+        pose.mirror = w->jointMirror;
+        pose.blend  = w->poseBlend;
+        pose.serial = w->poseSerial;
+        pose.step   = w->poseStep;
+        Coop_SetPlayerPose(i, &pose);
         p->flags          = w->flags;
         // Death is the host's call, and Coop_CheckDeaths only runs there. Without
         // this a client never learned a player had died: it went on drawing the
@@ -386,6 +419,15 @@ static void snap_apply(const CoopNetSnapshot* s)
         // game_loop, next to the pose and just before DrawFadeSpr drains the
         // queue - and this runs in main_loop, which is a different task.
         Coop_SetShadow(e, w->shTint, w->shW, w->shH, w->shOx, w->shOz);
+        CoopPose epose;
+        epose.anim   = w->animationId;
+        epose.frame  = w->animFrameId;
+        epose.src    = 0;
+        epose.mirror = w->poseMirror;
+        epose.blend  = w->blendCounter;
+        epose.serial = w->poseSerial;
+        epose.step   = w->poseStep;
+        Coop_SetEnemyPose(e, &epose);
     }
 
     // Effects last: a billboard's parent is an entity matrix, and it has to be

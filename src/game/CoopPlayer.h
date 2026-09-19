@@ -155,16 +155,35 @@ void Coop_NoteJointSource(unsigned int animHeader, unsigned int animBase, char r
 // ends an animation, and a corpse's handler stops posing right there. Sending
 // the entity's field made every killed zombie stand back up on a client. The
 // host records the posed frame in Joint_move; snap_build sends that.
-void Coop_NotePose(void);
-int  Coop_PosedPose(int slot, unsigned char* anim, unsigned char* frame);
-void Coop_ForgetPose(int slot);
+// One pose, as the host actually put it on a skeleton. Everything Joint_move
+// needs is captured together, at the moment it posed, because these values only
+// mean anything as a set: an id from one tick with a frame from another poses
+// from an animation frame nothing wrote.
+//
+// `serial` is what makes a client pose on the same ticks the host did. It moves
+// only when a pose actually happened - the aim behaviour leaves ticks on which
+// nothing poses - and a client that re-posed on a skipped tick would run the
+// blend a second time and drift ahead of the host.
+typedef struct {
+    unsigned char anim;     // Entity view 0xBD - the id Joint_move reads
+    unsigned char frame;    // 0xBE, BEFORE the advance at the end of the call
+    unsigned char src;      // which of a player's four animation pairs
+    unsigned char mirror;   // Joint_move's `reverse` argument
+    unsigned char blend;    // blend_counter as the call found it
+    unsigned char serial;   // bumped once per pose; wraps, only equality matters
+    short         step;     // the blendStep argument, which differs per call site
+} CoopPose;
 
-// The same for a player, and for the same reason: the aim behaviour leaves
-// ticks on which nothing poses, with the fields already rewritten for an
-// animation that has not been posed yet. All four values are captured in one
-// place so they are one pose rather than four fields read at four moments.
-int Coop_PosedPlayerPose(int i, unsigned char* anim, unsigned char* frame,
-                         unsigned char* src, unsigned char* mirror);
+void Coop_NotePose(char reverse, short blendStep);
+int  Coop_PosedPose(int slot, CoopPose* out);
+void Coop_ForgetPose(int slot);
+int  Coop_PosedPlayerPose(int i, CoopPose* out);
+
+// Client side: the pose that arrived, held until game_loop puts it on the
+// skeleton. Applied there and not in snap_apply, because the two live in
+// different scheduler tasks.
+void Coop_SetEnemyPose(int slot, const CoopPose* p);
+void Coop_SetPlayerPose(int i, const CoopPose* p);
 // One billboard spawn, queued on the host and replayed on the client. Four a
 // tick is the cap: at 30Hz that is far more than any RAID scene produces, and
 // a bound means a burst drops frames of blood rather than growing the packet.

@@ -1253,7 +1253,7 @@ unsigned int Joint_move(char reverse, unsigned int animHeader, unsigned int anim
     // CUSTOM: co-op - past the timing gate this call WILL pose, so record the
     // frame it poses from, before the advance at the bottom moves it on or
     // wraps it to zero. A client has to be sent that frame, not the next one.
-    Coop_NotePose();
+    Coop_NotePose(reverse, blendStep);
 
     // Calculate vertex count per frame from animHeader
     g_playerDisplacement = (int)(*(short*)(animHeader + 6) / 2);

@@ -641,7 +641,7 @@ void Coop_NoteJointSource(unsigned int animHeader, unsigned int animBase, char r
 }
 
 static void coop_pose_current(unsigned int animHeader, unsigned int animBase,
-                              unsigned char mirror)
+                              const CoopPose* p)
 {
     if (animHeader == 0 || animBase == 0) return;
 
@@ -660,9 +660,17 @@ static void coop_pose_current(unsigned int animHeader, unsigned int animBase,
     const unsigned char frame = ENTITY->animation_frame_id;
     const unsigned char timing = ENTITY->timing_control;
 
+    // The blend is replayed rather than skipped. Forcing blend_counter to 0 put
+    // the joints straight onto the wire frame where the host had interpolated
+    // toward it over several ticks - close enough that only a limb mid-turn
+    // showed it, as a leg moving in steps while the rest was smooth. Replaying
+    // needs the host's own counter AND its blendStep, which differs per call
+    // site, and it works only because this now runs on the same ticks the host
+    // posed on: the interpolation starts from the joints the last pose left.
     ENTITY->timing_control = 1;     // 1 poses; anything above it returns early
-    ENTITY->blend_counter  = 0;     // no blend: the wire frame IS the pose
-    Joint_move((char)mirror, animHeader, animBase, 0x400);
+    ENTITY->blend_counter  = p->blend;
+    Joint_move((char)p->mirror, animHeader, animBase,
+               p->step != 0 ? p->step : 0x400);
 
     ENTITY->animation_frame_id = frame;
     ENTITY->timing_control     = timing;
@@ -703,60 +711,62 @@ static void coop_pose_current(unsigned int animHeader, unsigned int animBase,
 // yet, while the skeleton still holds the last pose. A client sent those fields
 // drew a pose the host never showed, for one tick, every time the player turned
 // while aiming - which is what the jitter was.
-static unsigned char s_posedAnim[30];
-static unsigned char s_posedFrame[30];
+static CoopPose      s_posed[30];
 static unsigned char s_posedValid[30];
-
-static unsigned char s_pPosedAnim[RAID_PLAYERS];
-static unsigned char s_pPosedFrame[RAID_PLAYERS];
-static unsigned char s_pPosedSrc[RAID_PLAYERS];
-static unsigned char s_pPosedMirror[RAID_PLAYERS];
+static CoopPose      s_pPosed[RAID_PLAYERS];
 static unsigned char s_pPosedValid[RAID_PLAYERS];
 
-void Coop_NotePose(void)
+void Coop_NotePose(char reverse, short blendStep)
 {
     if (!g_coopActive) return;
 
+    // Past Joint_move's timing gate, so this call WILL pose, and everything
+    // below is what it is about to pose WITH: the frame before the advance at
+    // the end of the call, the blend counter before the blend consumes one, and
+    // the two arguments the call site chose.
     const Entity* e = ENTITY;
 
     for (int i = 0; i < RAID_PLAYERS; i++) {
         if (e != (const Entity*)&g_players[i]) continue;
+        CoopPose* q = &s_pPosed[i];
         // The source is already correct for THIS pose: Coop_NoteJointSource ran
-        // a few lines earlier in the same Joint_move call, off the same
-        // pointers. Capturing it here as well is what makes the four values one
-        // consistent set rather than four fields sampled at different moments.
-        s_pPosedAnim[i]   = e->animationId;
-        s_pPosedFrame[i]  = e->animation_frame_id;
-        s_pPosedSrc[i]    = g_coopJointSrc[i];
-        s_pPosedMirror[i] = g_coopJointMirror[i];
-        s_pPosedValid[i]  = 1;
+        // a few lines earlier in the same call, off the same pointers.
+        q->src    = g_coopJointSrc[i];
+        q->anim   = e->animationId;
+        q->frame  = e->animation_frame_id;
+        q->mirror = (unsigned char)(reverse != 0);
+        q->blend  = e->blend_counter;
+        q->step   = blendStep;
+        q->serial++;
+        s_pPosedValid[i] = 1;
         return;
     }
 
     if (e < &g_EnemiesList[0] || e > &g_EnemiesList[29]) return;
 
     const int slot = (int)(e - &g_EnemiesList[0]);
-    s_posedAnim[slot]  = e->animationId;
-    s_posedFrame[slot] = e->animation_frame_id;
+    CoopPose* q = &s_posed[slot];
+    q->anim   = e->animationId;
+    q->frame  = e->animation_frame_id;
+    q->src    = 0;                  // an enemy always poses from animHeader/animBase
+    q->mirror = (unsigned char)(reverse != 0);
+    q->blend  = e->blend_counter;
+    q->step   = blendStep;
+    q->serial++;
     s_posedValid[slot] = 1;
 }
 
-int Coop_PosedPlayerPose(int i, unsigned char* anim, unsigned char* frame,
-                         unsigned char* src, unsigned char* mirror)
+int Coop_PosedPlayerPose(int i, CoopPose* out)
 {
     if (i < 0 || i >= RAID_PLAYERS || s_pPosedValid[i] == 0) return 0;
-    *anim   = s_pPosedAnim[i];
-    *frame  = s_pPosedFrame[i];
-    *src    = s_pPosedSrc[i];
-    *mirror = s_pPosedMirror[i];
+    *out = s_pPosed[i];
     return 1;
 }
 
-int Coop_PosedPose(int slot, unsigned char* anim, unsigned char* frame)
+int Coop_PosedPose(int slot, CoopPose* out)
 {
     if (slot < 0 || slot >= 30 || s_posedValid[slot] == 0) return 0;
-    *anim  = s_posedAnim[slot];
-    *frame = s_posedFrame[slot];
+    *out = s_posed[slot];
     return 1;
 }
 
@@ -764,6 +774,39 @@ void Coop_ForgetPose(int slot)
 {
     if (slot < 0 || slot >= 30) return;
     s_posedValid[slot] = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Client side: the pose that arrived, and the one already on the skeleton.
+static CoopPose s_cPose[30], s_cpPose[RAID_PLAYERS];
+static int      s_cSerial[30], s_cpSerial[RAID_PLAYERS];
+static int      s_cHave[30], s_cpHave[RAID_PLAYERS];        // a pose has arrived
+static int      s_cDone[30], s_cpDone[RAID_PLAYERS];        // one has been applied
+
+void Coop_SetEnemyPose(int slot, const CoopPose* p)
+{
+    if (slot < 0 || slot >= 30) return;
+    s_cPose[slot] = *p;
+    s_cHave[slot] = 1;
+}
+
+void Coop_SetPlayerPose(int i, const CoopPose* p)
+{
+    if (i < 0 || i >= RAID_PLAYERS) return;
+    s_cpPose[i] = *p;
+    s_cpHave[i] = 1;
+}
+
+// Has the host posed this body since the last time this client did? Anything
+// else - a tick the host skipped, a snapshot repeating the pose already on the
+// skeleton - has to leave the joints alone, exactly as the host left its own.
+static int coop_pose_due(int* lastSerial, int* done, int have, const CoopPose* p)
+{
+    if (!have) return 0;
+    if (*done && *lastSerial == (int)p->serial) return 0;
+    *lastSerial = (int)p->serial;
+    *done = 1;
+    return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -917,10 +960,12 @@ void Coop_ClientPose(void)
 
     for (int i = 0; i < Coop_PlayerCount(); i++) {
         if (Coop_IsZombie(i)) continue;        // his body is an entity now
+        if (!coop_pose_due(&s_cpSerial[i], &s_cpDone[i], s_cpHave[i],
+                           &s_cpPose[i])) continue;
         Coop_BeginPlayer(i);
         unsigned int h = 0, b = 0;
-        coop_pair(&g_players[i], g_coopJointSrc[i], &h, &b);
-        coop_pose_current(h, b, g_coopJointMirror[i]);
+        coop_pair(&g_players[i], s_cpPose[i].src, &h, &b);
+        coop_pose_current(h, b, &s_cpPose[i]);
         Coop_EndPlayer();
     }
 
@@ -931,7 +976,12 @@ void Coop_ClientPose(void)
         Entity* e = &g_EnemiesList[s];
         if ((e->status_flags & ENTITY_STATUS_ACTIVE) == 0) continue;
         ENTITY = e;
-        coop_pose_current(e->animHeader, e->animBase, 0);
+        // The pose is gated on the host having made one; the shadow is not. It
+        // is re-queued every frame because DrawFadeSpr drains the queue every
+        // frame, whether or not anything moved.
+        if (coop_pose_due(&s_cSerial[s], &s_cDone[s], s_cHave[s], &s_cPose[s])) {
+            coop_pose_current(e->animHeader, e->animBase, &s_cPose[s]);
+        }
         coop_client_shadow(e, s);
     }
 
