@@ -8,7 +8,9 @@ If you are here because a networked client is rendering something wrong, read
 [What a snapshot has to carry](#what-a-snapshot-has-to-carry) first. The short
 version: **a snapshot has to carry presentation state, not just world state**,
 and almost every bug in this feature has been a field the renderer reads and
-the wire did not send.
+the wire did not send - or the right field read at the wrong moment, which is
+[a second and nastier shape](#when-a-field-is-sampled-is-part-of-what-it-means)
+of the same mistake.
 
 Configured under `[Coop]` in `config.ini`:
 
@@ -149,11 +151,60 @@ broken" on its own:
 | Death | `Coop_CheckDeaths` runs only on the authority, so without this a client kept drawing a body frozen on the frame that killed it. |
 | The enemy's pose fields | `action_behavior`, `action_state`, `timing_control`, `blend_counter`, `hit_state`, `death_timer`. A client runs no state machine, so whatever it does not receive keeps the value its own spawn left. |
 | Effect events | A billboard is not state - it is an event, queued on the host and replayed. See `Coop_NoteEffect`. |
+| The pose, as one set | Id, frame, source, mirror, blend counter and blendStep, captured together inside `Joint_move`. An id from one tick with a frame from another poses from an animation frame nothing wrote. `CoopPose`. |
+| WHICH TICKS posed | A serial, bumped only when a pose happened. Without it a client cannot tell "the host posed this again" from "the host posed nothing", and a replayed blend runs extra times. |
+| The shadow quad | `entity+0xE4`: tint, half extents and its own offset. Not a field the renderer reads - a quad the entity's own update SUBMITS every frame. See below. |
 
 **A client must not animate on its own.** `Joint_move` advances
 `animation_frame_id` on its way out. `Coop_ClientPose` poses the wire's frame
 and then puts the frame and `timing_control` back, because letting the advance
 stand played the animation a second time on top of the snapshot.
+
+### When a field is sampled is part of what it means
+
+The first shape of this bug is a field the wire does not carry. The second is a
+field it does carry, read at the wrong moment - and it is harder, because the
+value on the wire is *correct*, just not the one that produced what the host is
+showing.
+
+`Joint_move` wraps `animation_frame_id` to 0 on the call that finishes an
+animation and returns 1. Handlers that stop posing on that return value -
+`zombie_dead_animation` for a corpse, and `player_behavior_13_gun_raise`'s case
+2 on a turn - leave the skeleton holding the last frame while the field reads
+something else entirely. On one machine nobody looks at the field again. Over a
+wire, a client poses from exactly that field.
+
+The result was a killed zombie standing back up on the client (frame 0 of the
+fall animation is a zombie on its feet) and a player who jittered for one tick
+every time she turned while aiming. Both looked like corruption, and neither
+was: host and client agreed on every number.
+
+**So the host records what it POSED, at the moment it posed it - inside
+`Joint_move`, past the timing gate - and the wire carries that.** `Coop_NotePose`
+does the recording; `CoopPose` is the set; `snap_build` prefers it over the
+entity's own fields. The same principle covers the blend: an interpolated pose
+is only reproducible if the client starts from the same joints, which means it
+must pose on the same ticks - hence the serial.
+
+The general rule, and the reason this deserves its own heading: **for anything
+the renderer reads, ask not only whether the wire carries it, but whether it
+carries the value that was in effect when the host drew.**
+
+### Some presentation is not a field at all
+
+The ground shadow is a quad *inside* the entity, at `+0xE4`, and the death blood
+pool is that same quad recoloured and resized - not a separate object and not an
+effect. What puts it on screen is `entity_add_fade_sprite`, called once a frame
+by the body's own update, and drained by `DrawFadeSpr`.
+
+A client runs no entity update, so its queue was empty every frame: no shadow
+under anybody, and therefore no pool. No field was missing - a per-frame
+*submission* was. The wire carries the quad's state and `Coop_ClientPose` makes
+the submission itself, from `game_loop`, where the queue is drained.
+
+Three kinds, then, and it is worth knowing which one you are looking at:
+state (position, health), events (billboards), and per-frame submissions
+(shadows). Only the first is what a snapshot naturally is.
 
 ## A trap when instrumenting this
 
@@ -175,6 +226,6 @@ compare across those two.
   frame id and nothing advances the skeleton locally.
 - The zombie a dead player becomes has no attack button bound. State 5 is
   accepted, there is just no input that reaches it.
-- No blood pool on the floor after a kill. That is a different primitive, not
-  `Effect_CreateBillboard`, so the event channel does not carry it.
-- Jill jitters on a client when moving or turning while aiming.
+- A dropped snapshot costs a client one pose: it skips that frame rather than
+  interpolating through it, and a blend that was mid-flight resumes one step
+  short. Harmless on loopback, untested on a real link.
