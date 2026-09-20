@@ -238,6 +238,150 @@ Three kinds, then, and it is worth knowing which one you are looking at:
 state (position, health), events (billboards), and per-frame submissions
 (shadows). Only the first is what a snapshot naturally is.
 
+## Dying, and what gets up
+
+A killed player does not leave the game: he gets up as a zombie and keeps
+playing on the same pad. Three things had to be true for that to read as one
+event rather than a body being swapped for a monster.
+
+**He falls first.** `player_state_01_control` puts a player into state 3 the
+moment his health goes below zero, and state 3 is his own death: the scream, the
+drop, the slide, the pool of blood growing under him. `Coop_CheckDeaths` now
+waits for it - promotion happens when the state machine hands over to state 4
+(input blocked, body settled), with a ten-second timeout for rooms that take a
+different death path. Before this the zombie stood up on the frame the health
+went negative, and the player appeared to vanish.
+
+**He rises rather than appearing upright.** The engine already owns that motion:
+`zombie_falldown`'s sub-state 3 is the get-up - animation 8 played REVERSED,
+which is `Joint_move`'s mirror argument - ending by clearing the laying-down
+height and handing back to the idle state. The promotion starts the entity
+there, lying at `t[1] = 1` where the body fell.
+
+**And the body that rises is his own.** The entity reads its animation and its
+body from two different pointers: `animHeader`/`animBase` are the rig - joint
+hierarchy, rest offsets and frames - and `modelLoadBuffer` is the block each
+joint takes its mesh from. The reserved slot keeps the zombie's animation and is
+handed the player's model, so Jill moves like a zombie as Jill.
+
+### The two rigs number their limbs differently
+
+This is the part that is not guessable, and it is not in either file's header.
+It was read out of the skeletons themselves - the rest pose composed through
+each file's own hierarchy table (`animHeader` + the offset at its first word),
+y negative being up:
+
+| joint | `char10`/`char11` (player) | `em1000` (zombie) |
+|---|---|---|
+| 0 | pelvis | pelvis |
+| 1 | head, a leaf on the pelvis | torso, child of the pelvis |
+| 2 | chest, where the arms hang | head, child of the torso |
+| 3-5 | leg, z+ side | arm, z- side, held forward |
+| 6-8 | leg, z- side | arm, z+ side |
+| 9-11 | arm, z+ side | leg, z- side |
+| 12-14 | arm, z- side | leg, z+ side |
+
+So mesh index *j* means one body part on her and a different one on him. Handing
+joint *j* mesh *j* would have driven her arms with his leg rotations. The mapping
+table is `kCoopZombieMeshMap` in `CoopPlayer.cpp`, kept by side as well as by
+limb so she does not come up mirrored.
+
+What is NOT remapped is anything that could mix two skeletons into one pose: the
+hierarchy, the rest offsets and the frames all stay the zombie's. Only the
+meshes move. The proportions were compared at the same time and left alone - his
+upper arm/forearm are 454/436 against her 422/388, his thigh/shin 663/833
+against her 602/808.
+
+### And the arms have to be turned as well
+
+Putting the right mesh on the right joint is not enough, because a mesh is
+authored in its joint's OWN frame and the two rigs do not agree on that either:
+her arms run down the +Y axis, because they hang at her sides, and his run along
+Z, because a zombie holds them out in front. Her arm mesh on his arm bone is
+right where it should be and a quarter turn wrong in orientation - which is what
+"the arms are twisted" was.
+
+Legs and feet need none of this: both rigs run the leg down +Y and point the
+foot along +X, which is why they looked right from the first build.
+
+So the geometry is turned rather than the skeleton. A quarter turn about X is a
+permutation with a sign - `(x, y, z)` becomes `(x, z, -y)` for his z- arm and
+`(x, -z, y)` for his z+ one - applied to a private copy of the six arm parts'
+vertices and normals. Everything else shares the player's arrays, and every part
+shares his primitive data: a primitive names its vertices by index, and indices
+do not change when vertices turn.
+
+`coop_build_zombie_body` assembles all of it into a block shaped exactly like
+the one the engine loads from a file - a 12-byte `AnimDataHeader` and its
+`slots[]` - so `InitAnimStructure` and `SetupJointStructures` are the stock path
+and nothing downstream knows any of this happened.
+
+**Still not right:** the arms read as slightly detached at the shoulder. The
+turn is correct in direction; what is left is either the roll about the limb's
+own axis or the 75-unit difference between the two rigs' shoulder positions.
+Next thing to try is a small extra rotation about the bone, and to compare her
+shoulder offset with his.
+
+Three things about the two files are load-bearing and were checked rather than
+assumed: `char10`, `char11` and `em1000` all carry `jointCount` 15 at
+`animHeader+4`, stride 176 and a 104-byte frame record. A model that did not
+match would have to be refused rather than posed into nonsense.
+
+### A grab plays out of the attacker's file
+
+Worth knowing before touching anything near this: `emdScratchPtr1`/`2` on a
+PlayerEntity are not his own animation. They are whatever model was loaded last,
+kept on the player because that is who gets posed *from* it - `zombie_attack`
+writes `g_playerEntity.attackAnim` out of a table of animation ids into the
+ZOMBIE's file and puts the victim into state 5, whose animation function
+(`player_anim_attack_recoil`) poses him through those two pointers. The last
+enemy loaded is the one that can grab you, so every enemy load overwriting them
+is correct.
+
+In co-op it was not enough. The fields live on PlayerEntity, enemy models are
+loaded with player 1 current, and player 2's copy therefore stayed zero - his
+half of a grab had no animation data at all. `LoadEntityEMD` now writes both to
+every player. The co-op early-out at the top of `Joint_move` ("animHeader or
+animBase is zero, do not pose") is what had been standing in for this.
+
+### Two traps, both paid for
+
+**`modelLoadBuffer` is not what it was when you set it.** `InitAnimStructure`
+takes a model HEADER, and on its way through it writes the header's `slots[]`
+array back into the field: `SetAnimSlot` stores through `&ENTITY->unk_0c + 8`,
+and 0x0C + 8 is 0x14, which *is* `modelLoadBuffer`. So a set-up entity carries
+the slots, 0xC past the header, and that is what the joint setup indexes.
+Handing that value back in as a header reads the "already resolved" flag out of
+the middle of slot 0, walks a garbage count and dies - which is exactly how this
+crashed on entering the arena. `RaidEnemies_Spawn`'s `prev->modelLoadBuffer -
+0xc` when two enemies share one model is the same fact from the other side.
+
+**A player-zombie must be pointed at its victim BEFORE anything can return
+early.** Every helper the zombie state machine uses reads `g_playerEntity`, and
+for the length of the get-up that pointer was still whoever it had been - his
+own owner, lying dead in the exact spot he is standing up out of. Distance zero
+passes every reach test, so `zombie_chase_player` put him straight into the
+grab: arms up in the bite pose, holding his own corpse, unable to move. It read
+as two separate bugs ("the arms are wrong" and "I cannot move") and was one.
+
+### The zombie's attack
+
+State 5 (`zombie_attack`) was reachable all along and nothing ever pressed it.
+It cannot simply be set: its first sub-state GRABS - it snaps the victim to the
+bite position and drives his animation - so entering it with nobody in reach
+would yank the other player across the room.
+
+The fire button now enters it through the same three tests the AI uses before
+entering the same state (`zombie_chase_player`): inside the cone and in reach
+(`checkAngularViewAndDistance(700, 1500)`), a clear line, and a victim not
+already in somebody's jaws. The AI's own grab is suppressed while a player is
+driving - bit 2 of `behavior_step` is the engine's "follow, do not attack" flag -
+so a player-zombie bites when its player says so.
+
+Who the victim is matters for more than the bite: every helper the zombie state
+machine uses reads `g_playerEntity`, so `Coop_DriveZombie` points it at the
+other player, and a player-zombie is never measured against its own owner.
+
 ## A trap when instrumenting this
 
 `game_loop` and `main_loop` are **different scheduler tasks**. A probe after
@@ -256,8 +400,15 @@ compare across those two.
   the room loads; see the note in `CoopNet.cpp`.
 - A client does not run `update_player_anim`, so poses come off the wire as a
   frame id and nothing advances the skeleton locally.
-- The zombie a dead player becomes has no attack button bound. State 5 is
-  accepted, there is just no input that reaches it.
+- **A risen player's arms read as slightly detached at the shoulder.** The
+  quarter turn onto the zombie's arm bones is right in direction - they are no
+  longer twisted - but not finished. Suspects, in order: the roll about the
+  limb's own axis, and the two rigs' shoulder positions (-2190 on her against
+  -2441 on him, with his arm hanging off the torso joint and hers off the
+  pelvis).
+- The zombie's attack button has not been tried in game yet. The interesting
+  case is the one that does nothing: with the other player out of reach the
+  fire button must not start a grab, or it will drag him across the room.
 - A dropped snapshot costs a client one pose: it skips that frame rather than
   interpolating through it, and a blend that was mid-flight resumes one step
   short. Harmless on loopback, untested on a real link.
