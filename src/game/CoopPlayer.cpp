@@ -20,6 +20,20 @@ unsigned char g_enemyTarget[30] = {};
 
 // Enemy slots held for the zombies the players will become; see Coop_ReserveZombies.
 static int s_reservedSlot[RAID_PLAYERS] = { -1, -1 };
+
+// Dying, but not yet risen. A killed player used to be replaced by a standing
+// zombie on the frame his health went below zero, which reads as the body
+// vanishing. He now plays his OWN death first - player_state_01_control puts
+// him in state 3 the moment health goes negative, and state 3 is the fall: the
+// scream, the drop, the slide, and the pool of blood growing under him. Only
+// when it hands over to state 4 (block input, the body settled) does the zombie
+// stand up out of it.
+#define COOP_PLAYER_STATE_DEAD_DOWN  4     // PlayerEntity.animationId, state 4
+#define COOP_DYING_TIMEOUT         300     // ten seconds, if state 4 never comes
+static unsigned short s_dyingTicks[RAID_PLAYERS];
+// Set while the get-up animation is playing, so the pad cannot cut it short.
+static unsigned char s_rising[RAID_PLAYERS];
+
 // The model loaders, declared the way RaidEnemies.cpp declares them
 // (RaidEnemies.cpp:40-43): the unsigned-int form of SetupJointStructures is the
 // one that returns the advanced arena pointer, and it is deliberately NOT the
@@ -30,6 +44,139 @@ extern void ResetJointTransforms(void);                          // 0x0048bad0
 extern void Entity_SetJoints(Entity* em, unsigned int stride);
 extern void InitAnimStructure(void* animHeaderValue);
 extern unsigned int SetupJointStructures(unsigned int base);
+extern void SetAnimSlot(AnimSlot* slots, int slotPtr, int index);      // TmdAnimation.cpp
+extern unsigned int* CreateAnimObject(int slotPtr, unsigned int* param2);
+
+// ---------------------------------------------------------------------------
+// The player's body on the zombie's rig
+//
+// A dead player rising as somebody else's corpse is the wrong story: it should
+// be HER, moving like a zombie. The two halves are separable because the entity
+// reads them from two different pointers - animHeader/animBase are the rig and
+// the animation (hierarchy, rest offsets, frames), and modelLoadBuffer is the
+// body, the block each joint takes its mesh from. Keep the zombie's animation
+// and hand the joints the player's meshes.
+//
+// What makes that more than a pointer swap is that the two rigs number their
+// limbs DIFFERENTLY, which is not visible in either file's header and was read
+// out of the skeletons themselves (rest pose, composed through the hierarchy
+// tables; y negative is up):
+//
+//        joint   char10/char11 (player)        em1000 (zombie)
+//          0     pelvis                        pelvis
+//          1     head        (leaf on pelvis)  torso       (child of pelvis)
+//          2     chest       (arms hang here)  head        (child of torso)
+//         3-5    leg,  z+ side                 arm,  z- side (held forward)
+//         6-8    leg,  z- side                 arm,  z+ side
+//        9-11    arm,  z+ side                 leg,  z- side
+//       12-14    arm,  z- side                 leg,  z+ side
+//
+// So mesh index j means one body part on her and another on him, and giving
+// joint j mesh j would drive her arms with his leg rotations. The table below
+// is that correspondence, kept by side as well as by limb so she does not come
+// up mirrored. Proportions were checked at the same time and are close enough
+// to leave alone: his upper arm/forearm are 454/436 against her 422/388, his
+// thigh/shin 663/833 against her 602/808.
+//
+// The rig, the rest offsets and the frames all stay the zombie's, so nothing
+// here can put a pose together out of two skeletons - only the meshes move.
+static const unsigned char kCoopZombieMeshMap[15] = {
+     0,      // pelvis
+     2,      // his torso   <- her chest
+     1,      // his head    <- her head
+    12, 13, 14,   // his z- arm  <- her z- arm
+     9, 10, 11,   // his z+ arm  <- her z+ arm
+     6,  7,  8,   // his z- leg  <- her z- leg
+     3,  4,  5    // his z+ leg  <- her z+ leg
+};
+
+// Her arms also have to be TURNED, and that is the second thing the two rigs
+// disagree about. A mesh is authored in its joint's own frame, and the arms do
+// not share one: hers run down the +Y axis, because her arms hang at her sides,
+// while his run along Z, because a zombie holds them out in front. Her arm mesh
+// on his arm bone is therefore correct in position and ninety degrees wrong in
+// orientation - which is exactly what "the arms are twisted" looked like.
+//
+// Legs and feet need none of this: both rigs run the leg down +Y and point the
+// foot along +X, which is why they looked right from the first build.
+//
+// The fix is to turn the geometry rather than the skeleton. Rotating a static
+// mesh about X by a quarter turn is a permutation with a sign, so there is no
+// arithmetic to get wrong: (x, y, z) -> (x, z, -y) for his z- arm, and
+// (x, -z, y) for his z+ one. Normals are directions and take the same turn.
+static void coop_rot_copy(short* dst, const short* src, int count, int zplus)
+{
+    for (int k = 0; k < count; k++) {
+        const short x = src[0], y = src[1], z = src[2], w = src[3];
+        dst[0] = x;
+        dst[1] = (short)(zplus ? -z :  z);
+        dst[2] = (short)(zplus ?  y : -y);
+        dst[3] = w;                       // the 4th short is padding; keep it
+        src += 4;
+        dst += 4;
+    }
+}
+
+// Build the body the player-zombie wears: the player's own meshes, in the
+// zombie's joint order, with the six arm parts turned onto his arm bones.
+//
+// The result is shaped exactly like the model block the engine loads from a
+// file - a 12-byte AnimDataHeader followed by its slots[] - so everything
+// downstream is the stock path and none of it has to know about any of this.
+// The header's `resolved` byte is set because the pointers copied in are
+// already absolute: the player's own load resolved them once, and resolving a
+// second time would add the base to them again.
+//
+// Only the arm parts are copied. Everything else shares the player's own
+// vertex and normal arrays, and every part shares his primitive data, which is
+// read-only here - a primitive names vertices by index, and the indices do not
+// change when the vertices turn.
+static unsigned int coop_build_zombie_body(int i)
+{
+    const AnimSlot* src = (const AnimSlot*)g_players[i].modelLoadBuffer;
+    if (src == 0) return 0;
+
+    unsigned char* mem = (unsigned char*)g_loadDataDestPointer;
+    *(int*)(mem + 0) = 0;
+    mem[4] = 1;                      // resolved: the pointers below are absolute
+    mem[5] = 0; mem[6] = 0; mem[7] = 0;
+    *(int*)(mem + 8) = 15;           // slotCount
+
+    AnimSlot* dst = (AnimSlot*)(mem + 12);
+    for (int j = 0; j < 15; j++) {
+        dst[j] = src[kCoopZombieMeshMap[j]];
+    }
+
+    unsigned char* pool = (unsigned char*)(dst + 15);
+    static const unsigned char kArmJoint[6] = { 3, 4, 5, 6, 7, 8 };
+    for (int a = 0; a < 6; a++) {
+        const int j = kArmJoint[a];
+        const int zplus = (j >= 6);          // his z+ arm turns the other way
+        AnimSlot* sl = &dst[j];
+        const int nv = sl->pad_04;           // the record is a TMD object:
+        const int nn = sl->pad_0c;           // vtop, nvert, ntop, nnorm, ...
+
+        // Refuse nonsense rather than copy it: these counts come from a file,
+        // and a model whose record does not look like one is a model this has
+        // no business rewriting.
+        if (nv <= 0 || nv > 512 || nn < 0 || nn > 2048) continue;
+
+        short* v = (short*)pool;
+        pool += nv * 8;
+        coop_rot_copy(v, (const short*)sl->data0, nv, zplus);
+        sl->data0 = v;
+
+        if (nn > 0) {
+            short* n = (short*)pool;
+            pool += nn * 8;
+            coop_rot_copy(n, (const short*)sl->data1, nn, zplus);
+            sl->data1 = n;
+        }
+    }
+
+    g_loadDataDestPointer = (void*)pool;
+    return (unsigned int)mem;
+}
 
 
 // Player 2's SCA hit-data block. Player 1 uses g_entityDataBlock (0x200 bytes,
@@ -316,7 +463,12 @@ static int coop_free_enemy_slot(void)
 
 void Coop_ReserveZombies(void)
 {
-    for (int i = 0; i < RAID_PLAYERS; i++) { g_coopZombieSlot[i] = -1; s_reservedSlot[i] = -1; }
+    for (int i = 0; i < RAID_PLAYERS; i++) {
+        g_coopZombieSlot[i] = -1;
+        s_reservedSlot[i]   = -1;
+        s_dyingTicks[i]     = 0;
+        s_rising[i]         = 0;
+    }
     if (!g_coopActive) return;
 
     Entity* saveEntity = ENTITY;
@@ -352,8 +504,38 @@ void Coop_ReserveZombies(void)
         z->status_flags = ENTITY_STATUS_ACTIVE;
 
         ENTITY = z;
+
+        // The zombie's EMD for the rig and the animation, the player's own
+        // model for the body. See kCoopZombieMeshMap above for why the second
+        // line is not enough on its own.
+        //
+        // Both files agree on the one thing that cannot be remapped, and it was
+        // read out of them rather than assumed: char10, char11 and em1000 all
+        // carry jointCount 15 at animHeader+4, stride 176 and a 104-byte frame
+        // record. A model that did not match would have to be refused here
+        // rather than posed into nonsense.
         LoadEntityEMD(z, (unsigned char)(z->id + 4));
+        //
+        // What comes back is a model block of our own - the player's meshes in
+        // the zombie's joint order, arms turned - laid out exactly like one
+        // from a file, so InitAnimStructure and SetupJointStructures below are
+        // the stock path.
+        const unsigned int body = coop_build_zombie_body(i);
+        if (body != 0) z->modelLoadBuffer = body;
+
         Entity_SetJoints(z, 0x7c);
+        // Note what this does to the field it is handed: InitAnimStructure
+        // takes the model's HEADER, and on its way through it writes the
+        // header's slots[] back into modelLoadBuffer - SetAnimSlot stores
+        // through &ENTITY->unk_0c + 8, and 0x0C + 8 is 0x14, which IS
+        // modelLoadBuffer. So a set-up entity carries the slots, 0xC past the
+        // header, and that is what the joint setup below indexes.
+        //
+        // RaidEnemies_Spawn's `prev->modelLoadBuffer - 0xc` when two enemies
+        // share a model is the same fact seen from the other side. Handing the
+        // slots base in as a header reads the "already resolved" flag out of
+        // the middle of slot 0, walks a garbage count and dies - which is
+        // exactly how this crashed on entering the arena.
         InitAnimStructure((void*)z->modelLoadBuffer);
         g_loadDataDestPointer =
             (void*)SetupJointStructures((unsigned int)g_loadDataDestPointer);
@@ -471,8 +653,26 @@ int g_coopZombieSlot[RAID_PLAYERS] = { -1, -1 };
 #define COOP_Z_TURN        0x30
 #define COOP_Z_ACT_IDLE    0
 #define COOP_Z_ACT_WALK    1     // zombie_slow_walk: waypoint 5000 ahead of angle
+#define COOP_Z_ACT_FALLDOWN 7    // zombie_falldown: the fall AND the get-up
+#define COOP_Z_FALL_GETUP  3     // its sub-state 3 - animation 8 in reverse
 #define COOP_Z_STATE_RUN   1     // zombie_state_check, the behaviour dispatch
 #define COOP_Z_STATE_ATK   5     // zombie_attack
+#define COOP_Z_ATTACK_BIT  0x40  // the fire button, as the player's own gun reads it
+
+// Who this zombie can bite: the other player, while he is still human. A
+// player-zombie hunting its own owner is meaningless, and with nobody to hunt
+// the zombie's helpers would measure everything against whoever g_pCurPlayer
+// happened to be.
+static int coop_zombie_victim(int owner)
+{
+    for (int q = 0; q < RAID_PLAYERS; q++) {
+        if (q == owner) continue;
+        if (Coop_IsZombie(q)) continue;
+        if (g_players[q].health < 0) continue;
+        return q;
+    }
+    return -1;
+}
 
 int Coop_IsZombie(int i)
 {
@@ -488,7 +688,16 @@ void Coop_CheckDeaths(void)
 
     for (int i = 0; i < RAID_PLAYERS; i++) {
         if (Coop_IsZombie(i)) continue;
-        if (g_players[i].health >= 0) continue;
+        if (g_players[i].health >= 0) { s_dyingTicks[i] = 0; continue; }
+
+        // Let him fall first. His own state machine is already playing it; all
+        // this does is wait for the end of it, with a timeout so a room that
+        // takes a different death path cannot leave him a corpse for ever.
+        if (g_players[i].animationId < COOP_PLAYER_STATE_DEAD_DOWN
+            && ++s_dyingTicks[i] < COOP_DYING_TIMEOUT) {
+            continue;
+        }
+        s_dyingTicks[i] = 0;
 
         const int slot = s_reservedSlot[i];
         if (slot < 0) continue;           // no slot was reserved; he stays a corpse
@@ -501,7 +710,6 @@ void Coop_CheckDeaths(void)
         z->id = ENEMY_ZOMBIE;
         z->status_flags = ENTITY_STATUS_ACTIVE;
         z->state = COOP_Z_STATE_RUN;
-        z->action_behavior = COOP_Z_ACT_IDLE;
         z->action_state = 0;
         z->health = 100;
 
@@ -514,7 +722,6 @@ void Coop_CheckDeaths(void)
         // body. Spawn-path parity again: everything that path does is
         // load-bearing, and none of it lives inside the struct.
         z->timing_control      = 1;
-        z->animationId         = 0;
         z->animation_frame_id  = 0;
         z->behavior_flags      = 0;
         z->ignore_player_flag  = 0;
@@ -531,6 +738,27 @@ void Coop_CheckDeaths(void)
         z->position.y = g_players[i].position.y;
         z->position.z = g_players[i].position.z;
         z->angle = g_players[i].directionAngle;
+
+        // ...and then he RISES out of it, rather than appearing upright. The
+        // engine already owns that motion: zombie_falldown's sub-state 3 is the
+        // get-up - animation 8 played REVERSED, which is Joint_move's mirror
+        // argument - and it ends by clearing the laying-down height, handing
+        // back to the idle state and giving the pad its zombie.
+        //
+        // After the spawn-parity block above, not before: that block sets
+        // hit_state to 0, and the get-up wants the 1 it would have inherited
+        // from the fall it is supposed to be finishing.
+        z->action_behavior = COOP_Z_ACT_FALLDOWN;
+        z->action_state    = COOP_Z_FALL_GETUP;
+        z->animationId     = 8;
+        z->animation_frame_id = 0;
+        z->hit_state       = 1;
+        z->blend_counter   = 0;
+        z->stagger_timer   = 4;    // 0 would only make the get-up replenish it
+        // The laying-down height a prone zombie sits at, the same value
+        // zombie_init and zombie_falldown's own case 0 write.
+        z->scaMatrixData.localMatrix.t[1] = 1;
+        s_rising[i] = 1;
 
         if (slot >= g_enemy_count) g_enemy_count = slot + 1;
 
@@ -551,13 +779,51 @@ void Coop_DriveZombie(int i)
 {
     if (!Coop_IsZombie(i)) return;
 
+    // Who he is a threat to, FIRST - before any of the early returns below.
+    // Every helper the zombie state machine uses reads g_playerEntity, and
+    // left until later the engine spent the whole get-up measuring him against
+    // whoever that happened to be: his OWN owner, lying dead in the exact spot
+    // he is standing up out of. Distance zero passes every reach test, so
+    // zombie_chase_player put him straight into the grab - arms up in the bite
+    // pose, holding his own corpse, unable to move for as long as it lasted.
+    // update_entities restores the pointer after the dispatch, as it does for
+    // the AI's own targeting.
+    const int victim = coop_zombie_victim(i);
+    if (victim >= 0) g_pCurPlayer = &g_players[victim];
+
+    // And the AI does not get to start a grab of its own: bit 2 of
+    // behavior_step is the engine's "follow, do not attack" flag, which
+    // zombie_chase_player tests before entering the attack state. A
+    // player-controlled zombie bites when its player says so. Also before the
+    // early-outs, and for the same reason.
+    ENTITY->behavior_step |= 0x04;
+
+    // Still standing up: the get-up owns him until it is finished. Without
+    // this the pad's own action_behavior would replace zombie_falldown on the
+    // next frame and he would snap upright mid-animation.
+    if (s_rising[i]) {
+        if (ENTITY->action_behavior == COOP_Z_ACT_FALLDOWN) return;
+        s_rising[i] = 0;
+    }
+
     // Read that player's pad without disturbing whoever's block is live: the
     // published words belong to one player at a time, so the zombie's owner
     // gets his own out of the saved block rather than the globals.
     const WORD dpad = (s_padOwner == i) ? g_PlayerDpadHeld : s_pad[i].dpadHeld;
 
+
+    // Mid-bite, the pad has nothing to say. zombie_attack keeps its own
+    // progress in action_state - wind-up, bite, damage loop - and the walk/idle
+    // selection below rewrites exactly that field, which would restart the
+    // grab every frame for as long as the button was held. The target pointer
+    // above is set first on purpose: the bite reads g_playerEntity all the way
+    // through, not just when it starts.
+    if (ENTITY->state == COOP_Z_STATE_ATK) return;
+
+
     // The dpad bits are the same ones player movement reads: 0x8000 up,
-    // 0x4000 down, 0x2000 left, 0x1000 right (PlayerAnimations.cpp's movement).
+    // 0x4000 down, 0x2000 left, 0x1000 right (PlayerAnimations.cpp's movement),
+    // and 0x40 is the fire button - the one a living player shoots with.
     if (dpad & 0x2000) ENTITY->angle = (short)(ENTITY->angle - COOP_Z_TURN);
     if (dpad & 0x1000) ENTITY->angle = (short)(ENTITY->angle + COOP_Z_TURN);
 
@@ -572,6 +838,30 @@ void Coop_DriveZombie(int i)
     }
     if (ENTITY->state != COOP_Z_STATE_RUN && ENTITY->state != COOP_Z_STATE_ATK) {
         ENTITY->state = COOP_Z_STATE_RUN;
+    }
+
+    // Attack, on the fire button. State 5 was reachable all along - nothing
+    // ever pressed it - but it cannot simply be set: zombie_attack's first
+    // sub-state GRABS, snapping the victim to the bite position and driving his
+    // animation. Entered without a victim in reach that would yank the other
+    // player across the room. So the button is gated by the same three tests
+    // the AI uses before it enters the same state (zombie_chase_player): in the
+    // cone, in reach, with a clear line, and not already in somebody's jaws.
+    if ((dpad & COOP_Z_ATTACK_BIT) != 0
+        && victim >= 0
+        && ENTITY->state != COOP_Z_STATE_ATK
+        && checkAngularViewAndDistance(
+               700, 1500, (VECTOR*)&g_playerEntity.scaMatrixData.localMatrix.t)
+        && check_line_of_sight(
+               (VECTOR*)&g_playerEntity.scaMatrixData.localMatrix.t) == 0
+        && g_playerEntity.isBeingAttackedFlag == 0)
+    {
+        ENTITY->angle = getAngleTowardsTarget(
+            g_playerEntity.scaMatrixData.localMatrix.t[0],
+            g_playerEntity.scaMatrixData.localMatrix.t[2]);
+        ENTITY->state = COOP_Z_STATE_ATK;
+        ENTITY->ignore_player_flag = 0;
+        ENTITY->action_state = 0;
     }
 }
 
