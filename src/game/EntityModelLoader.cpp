@@ -5,6 +5,7 @@
 #include "FileLoader.h"
 #include <cstdio>
 #include "../system/AssetPath.h"
+#include "CoopPlayer.h"      // CUSTOM: g_coopActive, for the grab-data note below
 
 // ============================================================================
 // Extern data declarations (not yet extracted to Globals.h)
@@ -546,8 +547,31 @@ void LoadEntityEMD(Entity* em, unsigned char entity_id)
     em->animHeader = (puVar2[1] & 0xFFFFFFFC) + data_pointer;
 
     if (*puVar2 != 0) {
-        g_playerEntity.emdScratchPtr1 = data_pointer;
-        g_playerEntity.emdScratchPtr2 = (*puVar2 & 0xFFFFFFFC) + data_pointer;
+        // These two are not the player's own animation - they are the model
+        // that was just loaded, kept on the player because that is who gets
+        // posed FROM it: a grab plays the victim's motion out of the ATTACKER's
+        // file (zombie_attack sets g_playerEntity.attackAnim from a table of
+        // animation ids into the zombie's own data, and player state 5 poses
+        // through emdScratchPtr1/2). Every enemy load overwrites them, which is
+        // correct - the last enemy loaded is the one that can grab you.
+        //
+        // CUSTOM: co-op - written to EVERY player, not just the current one.
+        // The field lives on PlayerEntity, and enemy models are loaded with
+        // player 1 current, so player 2's copy stayed zero and his half of a
+        // grab had no animation data at all. The co-op early-out at the top of
+        // Joint_move - "animHeader or animBase is zero, do not pose" - is what
+        // has been standing in for this.
+        const unsigned int emdBase = (unsigned int)data_pointer;
+        const unsigned int emdAnim = (*puVar2 & 0xFFFFFFFC) + data_pointer;
+        if (g_coopActive) {
+            for (int q = 0; q < RAID_PLAYERS; q++) {
+                g_players[q].emdScratchPtr1 = emdBase;
+                g_players[q].emdScratchPtr2 = emdAnim;
+            }
+        } else {
+            g_playerEntity.emdScratchPtr1 = emdBase;
+            g_playerEntity.emdScratchPtr2 = emdAnim;
+        }
     }
 }
 
