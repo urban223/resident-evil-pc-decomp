@@ -107,6 +107,11 @@ static float       s_orbitPitch;   // and up (+) or down
 #define SC_TURN_TO_MOVE      0xA0      // directionAngle a frame, turning to face the way she goes
 #define SC_BODY_MAX          0.40f     // radians (~23 deg): how far off the camera's line her body turns, walking sideways - the 70 s recording, 28-34 s, shows her back almost square to the camera
 static float s_moveYaw;                // the L1 view's travel direction this frame (directionAngle's sense)
+static float s_moveScale = 1.0f;       // and how much of the walk's step: the stick's tilt
+// The stick's tilt sets the pace, as in RE2 (2019): a light push creeps, full
+// tilt walks. Run (the run button) is not scaled.
+#define SC_TILT_SLOW        0.22f      // of the walk's step at the lightest push
+#define SC_TILT_FULL        0.97f      // tilt from which it is the whole step
 static int   s_moveRedirect;           // set: RaidShoulderCam_Walk sends the step along it
 // The L1 view sits further back and a little higher than the aim - the RE2
 // (2019) exploration framing, her whole figure in the left of the frame - and
@@ -596,6 +601,16 @@ void RaidShoulderCam_BeforePlayer(int i)
             if (body < -SC_BODY_MAX) body = -SC_BODY_MAX;
             s_moveYaw = s_camYaw + rel;
             s_moveRedirect = 1;
+            s_moveScale = 1.0f;
+            if (pushed) {
+                const float tilt = sqrtf((float)lx * lx + (float)ly * ly) / 32767.0f;
+                const float t0 = (float)SC_LEFT_DEADZONE / 32767.0f;
+                float k = (tilt - t0) / (SC_TILT_FULL - t0);
+                if (k < 0.0f) k = 0.0f;
+                if (k > 1.0f) k = 1.0f;
+                k = k * k;                     // most of the stick's travel is the slow end
+                s_moveScale = SC_TILT_SLOW + (1.0f - SC_TILT_SLOW) * k;
+            }
             const int want = (int)((s_camYaw + body) * (4096.0f / 6.2831853f)) & 0xFFF;
             int diff = (want - g_playerEntity.directionAngle) & 0xFFF;
             if (diff >= 0x800) diff -= 0x1000;
@@ -861,8 +876,11 @@ void RaidShoulderCam_Walk(void)
         const float dx = (float)(t[0] - s_preX), dz = (float)(t[2] - s_preZ);
         const float L = sqrtf(dx * dx + dz * dz);
         if (L > 0.5f && L < 400.0f) {
-            t[0] = s_preX + (int)(cosf(s_moveYaw) * L);       // facing (cos a, -sin a)
-            t[2] = s_preZ - (int)(sinf(s_moveYaw) * L);
+            // A slow push slows the walk; the run keeps its pace (the run
+            // animation's step is far longer than the walk's).
+            const float k = (L > 100.0f) ? 1.0f : s_moveScale;   // the walk steps at most 0x5D a frame
+            t[0] = s_preX + (int)(cosf(s_moveYaw) * L * k);   // facing (cos a, -sin a)
+            t[2] = s_preZ - (int)(sinf(s_moveYaw) * L * k);
         }
     }
     if ((s_walkDir == 0 && s_walkSide == 0) || !RaidShoulderCam_FreeAim()

@@ -19,6 +19,7 @@
 #include "editor/Editor.h"   // CUSTOM: the in-game level editor
 #include "RaidLevel.h"       // CUSTOM: RAID doors
 #include "RaidShoulderCam.h" // CUSTOM: RAID L2 aim + shoulder camera
+#include "entities/EntityCommon.h"   // CUSTOM: the mirror pass, on a co-op client
 #include "../marni/MarniInput.h"
 #include <cstdio>
 #include <cstdlib>
@@ -382,6 +383,13 @@ LAB_00480e89:
                     // count until its owner dies, so the loop can run out of
                     // active entities, walk off the end of g_EnemiesList and
                     // draw whatever memory follows it as entities.
+                    // CUSTOM: a co-op client runs neither update_player_anim nor
+                    // update_entities, which is where the game draws a body's
+                    // reflection in a room's mirror. So the client does it here,
+                    // after the body itself - the same probe, the same pass.
+                    const int clientMirror = g_coopActive && !Coop_IsAuthority()
+                                          && (g_main_state_flags & MSF_MIRROR_ENABLE) != 0;
+#define COOP_CLIENT_MIRROR(ent)                     if (clientMirror && mirror_point_visible(                             (void*)((int)g_RdtPointer[1].lights + (unsigned int)g_roomCameraId * 44 - 4),                             (unsigned char)((g_main_state_flags & MSF_MIRROR_PLANE_X) != 0),                             (int)(ent)->scaMatrixData.localMatrix.t)) {                         entity_draw_mirror_reflection();                     }
                     ENTITY = g_EnemiesList;
                     int entCount = g_enemy_count;
                     int entSlot = 0;
@@ -392,6 +400,7 @@ LAB_00480e89:
                             EntityApplyLookAtRotation();
                             if (g_dwEntityRenderEnabled != 0) {
                                 render_entity(ENTITY);
+                                COOP_CLIENT_MIRROR(ENTITY)
                             }
                         }
                         ENTITY++;
@@ -411,10 +420,13 @@ LAB_00480e89:
                         EntityApplyLookAtRotation();
                         if (g_dwEntityRenderEnabled != 0) {
                             render_entity((Entity*)&g_playerEntity);
+                            ENTITY = (Entity*)&g_playerEntity;
+                            COOP_CLIENT_MIRROR(&g_playerEntity)
                         }
                         Coop_EndPlayer();
                     }
                     ENTITY = (Entity*)&g_playerEntity;
+#undef COOP_CLIENT_MIRROR
 
                     // 0x00480f6e-0x00480f70: 2D effects and room sprites
                     update_2d_effects();
