@@ -136,5 +136,9 @@ void  FlushTmdObjects(void);
 // exact function (see SpriteRenderer.cpp's type-12 branch).
 float TmdViewZToNdc(float vz);
 
+// CUSTOM: the triangles the last FlushTmdObjects drew (count; first vertex and
+// the stride between triangles, in floats). RAID's model shadows read them.
+int   TmdRenderer_FrameTris(const float** first, int* strideFloats);
+
 // Drop every queued object without drawing (frame reset).
 void  TmdQueue_Reset(void);

@@ -30,6 +30,7 @@
 #define RAID_BOX_PROJ     0x08   // textured by projecting the level's backdrops (bgsrc)
 #define RAID_BOX_TEX      0x10   // textured by a tiled material (a `tbox` line): tex, tile
 #define RAID_MESH_GLOW    0x20   // a `mesh` that gives light rather than takes it: a lamp
+#define RAID_MESH_SHADOW  0x80   // a `mesh` that casts a shadow from the level's lights
 #define RAID_BOX_WORLDUV  0x40   // a tbox whose material is laid from the world origin, not
                                  // its own corner - pieces of one wall then line up
 

@@ -86,28 +86,92 @@ def world_quad(V, scale, o, du, dv):
 
 
 def seamless(img, frac=0.18):
-    """Cross-fade each edge into the opposite one so the image repeats."""
+    """Make the image repeat: the last `frac` of each axis is cross-faded INTO
+    the first and then dropped, so the new right edge runs straight on into
+    the left one (and the bottom into the top). The result is that much
+    smaller. (The old version faded each edge toward the far side's PREVIOUS
+    columns, which left a visible step exactly at the repeat.)"""
+    img = img.convert("RGB")
     w, h = img.size
-    px = img.load()
-    out = img.copy()
-    po = out.load()
     bw, bh = max(1, int(w * frac)), max(1, int(h * frac))
+    src = img.load()
+    out = Image.new("RGB", (w - bw, h))
+    po = out.load()
     for y in range(h):
-        for i in range(bw):
-            a = i / bw                      # 0 at the edge -> 1 inside
-            l, r = px[i, y], px[w - bw + i, y]
-            po[i, y] = tuple(int(l[k] * (0.5 + 0.5 * a) + r[k] * (0.5 - 0.5 * a)) for k in range(3))
-            po[w - 1 - i, y] = tuple(int(px[w - 1 - i, y][k] * (0.5 + 0.5 * a)
-                                         + px[bw - 1 - i, y][k] * (0.5 - 0.5 * a)) for k in range(3))
-    px = out.copy().load()
+        for x in range(w - bw):
+            if x < bw:
+                t = x / bw
+                a, b = src[x, y], src[w - bw + x, y]
+                po[x, y] = tuple(int(b[k] * (1 - t) + a[k] * t) for k in range(3))
+            else:
+                po[x, y] = src[x, y]
+    img, w = out, w - bw
+    src = img.load()
+    out = Image.new("RGB", (w, h - bh))
+    po = out.load()
     for x in range(w):
-        for i in range(bh):
-            a = i / bh
-            t, b = px[x, i], px[x, h - bh + i]
-            po[x, i] = tuple(int(t[k] * (0.5 + 0.5 * a) + b[k] * (0.5 - 0.5 * a)) for k in range(3))
-            po[x, h - 1 - i] = tuple(int(px[x, h - 1 - i][k] * (0.5 + 0.5 * a)
-                                         + px[x, bh - 1 - i][k] * (0.5 - 0.5 * a)) for k in range(3))
+        for y in range(h - bh):
+            if y < bh:
+                t = y / bh
+                a, b = src[x, y], src[x, h - bh + y]
+                po[x, y] = tuple(int(b[k] * (1 - t) + a[k] * t) for k in range(3))
+            else:
+                po[x, y] = src[x, y]
     return out
+
+
+def match_level(img, ref):
+    """Scale img per channel so its mean is ref's mean."""
+    from PIL import ImageStat
+    a = ImageStat.Stat(img.convert("RGB")).mean
+    b = ImageStat.Stat(ref.convert("RGB")).mean
+    k = [b[i] / max(a[i], 1.0) for i in range(3)]
+    return Image.merge("RGB", [ch.point(lambda v, g=k[i]: min(255, int(v * g)))
+                               for i, ch in enumerate(img.convert("RGB").split())])
+
+
+def seamless_x(img, frac=0.18):
+    """seamless() along X only: for a band laid once top to bottom."""
+    img = img.convert("RGB")
+    w, h = img.size
+    bw = max(1, int(w * frac))
+    src = img.load()
+    out = Image.new("RGB", (w - bw, h))
+    po = out.load()
+    for y in range(h):
+        for x in range(w - bw):
+            if x < bw:
+                t = x / bw
+                a, b = src[x, y], src[w - bw + x, y]
+                po[x, y] = tuple(int(b[k] * (1 - t) + a[k] * t) for k in range(3))
+            else:
+                po[x, y] = src[x, y]
+    return out
+
+
+def flatten(img, radius):
+    """Take the picture's own lighting out of a repeating material: divide by
+    a wide blur of itself (wrapped, so the result still tiles) and give back
+    the mean. The pictures are lit - darker at the top of a wall, brighter
+    where the lamp falls - and a tile that keeps that gradient shows it as a
+    hard line wherever it repeats. The arena lights the surface itself."""
+    from PIL import ImageStat
+    img = img.convert("RGB")
+    w, h = img.size
+    big = Image.new("RGB", (w * 3, h * 3))
+    for i in range(3):
+        for j in range(3):
+            big.paste(img, (i * w, j * h))
+    blur = big.filter(ImageFilter.GaussianBlur(radius)).crop((w, h, 2 * w, 2 * h))
+    mean = ImageStat.Stat(img).mean
+    out = []
+    for c, (a, b) in enumerate(zip(img.split(), blur.split())):
+        m = mean[c]
+        px = [max(0, min(255, int(x * m / (y + 1.0)))) for x, y in zip(a.getdata(), b.getdata())]
+        ch = Image.new("L", (w, h))
+        ch.putdata(px)
+        out.append(ch)
+    return Image.merge("RGB", out)
 
 
 def save(n, img):
@@ -132,14 +196,23 @@ def main():
     S0, S1 = cam0.width / 320.0, cam1.width / 320.0
 
     # t1 - wall boards: the near wall, head-on from camera 1, above the rail
-    # and clear of the shelves and the cistern.
-    wood = rectify(cam1, world_quad(V1, S1, (4300, -3300, 10818), (1600, 0, 0), (0, 1500, 0)), 512, 480)
-    save(1, seamless(wood))
+    # (stopping short of its dark top, which would print a band at every
+    # repeat) and clear of the shelves and the cistern.
+    wood = rectify(cam1, world_quad(V1, S1, (4300, -3300, 10818), (1600, 0, 0), (0, 1300, 0)), 512, 416)
+    # One repeat is the wall's whole height (tile 1600 across, so 1280 / 512 *
+    # 1600 = 4000 up): the boards run vertically, so stretching them up hides
+    # nothing, and the only horizontal seams left are at the floor and the
+    # ceiling - a seam halfway up showed as a line round the whole room.
+    save(1, seamless(flatten(wood, 70)).resize((512, 1280), Image.BICUBIC))
 
     # t2 - floor tiles: camera 0 looks down on the floor; a patch clear of
     # the rug and the towel rack's feet.
-    floor = rectify(cam0, world_quad(V0, S0, (5300, 0, 6450), (1600, 0, 0), (0, 0, 1600)), 512, 512)
-    save(2, seamless(floor))
+    # The tiles repeat every 812 world units both ways (octagons with a small
+    # square between them, measured on the straightened picture), so the patch
+    # is exactly two repeats: it tiles by itself, no cross-fade to ghost the
+    # grid. raid1.lvl lays it with tile 1624 to match.
+    floor = rectify(cam0, world_quad(V0, S0, (5300, 0, 6450), (1624, 0, 0), (0, 0, 1624)), 512, 512)
+    save(2, seamless(flatten(floor, 30), 0.05))   # tight: no tile lighter than the next; a hairline fade for the edge
 
     # t3 - enamel: the lit floor of the bath, seen from above by camera 0 -
     # pale green with rust, the colour the bath, basin and pan all share.
@@ -152,8 +225,18 @@ def main():
     # t4 - the dark wood rail: the near wall's wainscot band from camera 1.
     # Between the bath's end (x 5200) and the toilet (6660): the bath hides
     # the rail anywhere further left.
-    rail = rectify(cam1, world_quad(V1, S1, (5300, -1700, 10818), (1300, 0, 0), (0, 500, 0)), 512, 196)
-    save(4, seamless(rail))
+    # Its face, exactly the rail body's height (y -1650..-1280, on the pan-side
+    # near wall z 10728): the plank, the groove with its nail heads, the lower
+    # plank and the shadow under it, as the picture has them - so the body box
+    # shows it once, top to bottom, and only repeats along the wall.
+    rail = rectify(cam1, world_quad(V1, S1, (5300, -1650, 10728), (1300, 0, 0), (0, 370, 0)), 512, 146)
+    save(4, seamless_x(flatten(rail, 22), 0.25))   # camera 1 sees the rail at a slant: take its light out hard
+
+    # t27 - the rail's cap: its top board (y -1800..-1650; camera 1 is level
+    # with it, so the board's own picture), so the cap reads as the top board of the rail rather than as a
+    # second copy of the rail's face.
+    cap = rectify(cam1, world_quad(V1, S1, (5300, -1800, 10728), (1300, 0, 0), (0, 150, 0)), 512, 59)
+    save(27, seamless_x(flatten(cap, 22), 0.25))
 
     # t6 - the towel: camera 0's view of the one on the rack.
     towel = rectify(cam0, world_quad(V0, S0, (6100, -950, 5480), (1150, 0, 0), (0, 0, 260)), 256, 64)
@@ -181,12 +264,14 @@ def main():
     tmat = rectify(cam0, world_quad(V0, S0, (6800, -5, 8540), (950, 0, 0), (0, 0, 360)), 256, 96)
     save(15, seamless(tmat, 0.25))
 
-    # t16 - the stained green plaster under the rail; t17 - the skirting.
+    # t16 - the stained green plaster under the rail, its whole height, off
+    # the far wall between the door and the towel horse (camera 1's stretch
+    # of it is full of the bath and the pan); t17 - the skirting.
     # Both off the far wall between the door and the towel rack.
-    plaster = rectify(cam0, world_quad(V0, S0, (3750, -1140, 5454), (2200, 0, 0), (0, 640, 0)), 512, 150)
-    save(16, seamless(plaster, 0.12))
+    plaster = rectify(cam0, world_quad(V0, S0, (3750, -1280, 5454), (2200, 0, 0), (0, 810, 0)), 512, 189)
+    save(16, seamless_x(flatten(plaster, 22), 0.2))   # the band's whole height, once
     skirt = rectify(cam0, world_quad(V0, S0, (3750, -470, 5454), (2200, 0, 0), (0, 470, 0)), 512, 110)
-    save(17, seamless(skirt, 0.12))
+    save(17, seamless(flatten(skirt, 22), 0.2))
 
     # t18 - the bath's outside, which is dark: camera 1 sees its long side.
     outside = rectify(cam1, world_quad(V1, S1, (2700, -1000, 9040), (900, 0, 0), (0, 800, 0)), 256, 228)
@@ -196,11 +281,18 @@ def main():
     cist = rectify(cam0, world_quad(V0, S0, (6680, -1800, 10160), (1200, 0, 0), (0, 0, 570)), 384, 182)
     save(19, seamless(cist, 0.2))
 
+    # t26 - the cistern box's sides: camera 1 sees its front square on, a
+    # plain grey (its right end, against the wall, left out); brought to the
+    # level of t19, its top from camera 0.
+    cfront = rectify(cam1, world_quad(V1, S1, (6720, -1700, 10160), (950, 0, 0), (0, 760, 0)), 384, 307)
+    save(26, seamless(match_level(cfront, cist), 0.2))
+
     # t20 - the rusted lid of the pan; t21 - the towel over the bath.
     lid = cam0.crop(tuple(int(c) for c in P(300, 630) + P(366, 716))).resize((128, 128), Image.BICUBIC)
     save(20, seamless(lid, 0.3))
     btowel = cam0.crop(tuple(int(c) for c in P(700, 650) + P(836, 690))).resize((256, 76), Image.BICUBIC)
     save(21, seamless(btowel, 0.2))
+
 
 
 if __name__ == "__main__":

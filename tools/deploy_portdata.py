@@ -60,6 +60,8 @@ DERIVED = [
     ("USA/Data/raidtex/t19.bin", "tools/build_raid_textures.py"),
     ("USA/Data/raidtex/t20.bin", "tools/build_raid_textures.py"),
     ("USA/Data/raidtex/t21.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t26.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t27.bin", "tools/build_raid_textures.py"),
 ]
 
 # These two generators write OVER a path the game already ships - W12.EMW gains

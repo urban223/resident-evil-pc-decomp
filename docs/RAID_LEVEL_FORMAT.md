@@ -57,7 +57,9 @@ mirror  <axis> <plane> <min> <max> <ytop> <ybot>
 - `mesh` places `Data/raidmesh/m<id>.obj` (game units, Y negative up) at
   (x, y, z), turned by `yaw` (4096 to the turn) and scaled by `scale` percent,
   in material `tex` (0: the model's own colour). Flag `32` makes it a lamp that
-  shows its own light. A mesh never collides - boxes do that.
+  shows its own light; flag `128` makes it cast a shadow from the level's
+  lights onto the room's faces (by its bounds). A mesh never collides -
+  boxes do that.
 - `bgsrc` names one of the game's pre-rendered backgrounds and the camera it
   was rendered from; boxes and meshes with flag `8` are textured by projecting
   it back out of that camera.

@@ -770,6 +770,14 @@ void MarniDX::SetViewportTransform(float originX, float originY,
     p->vpSY = (scaleY != 0.0f) ? scaleY : 1.0f;
 }
 
+// CUSTOM: the default framebuffer is not asked for an alpha channel, so the
+// mask blend modes (RAID's model shadows) are not offered here - the arena
+// skips them rather than darken the whole frame through a missing alpha.
+bool MarniDX::SupportsDestAlpha() const
+{
+    return false;
+}
+
 void MarniDX::GetViewportTransform(float* outOriginX, float* outOriginY,
                                    float* outScaleX, float* outScaleY) const
 {

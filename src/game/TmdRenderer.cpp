@@ -157,6 +157,18 @@ struct TmdTri {
 };
 static TmdTri g_tmdTris[TMD_MAX_TRIS_COLLECT];
 static int    g_tmdTriOrder[TMD_MAX_TRIS_COLLECT];
+static int    s_frameTris = 0;     // CUSTOM: how many the last flush drew (TmdRenderer_FrameTris)
+
+// CUSTOM: the triangles the last FlushTmdObjects drew - screen space, the
+// 10-float layout DrawTriangles3D takes - for RAID's model shadows
+// (RaidArena.cpp), which flatten them onto the floor. Valid until the next
+// flush collects.
+int TmdRenderer_FrameTris(const float** first, int* strideFloats)
+{
+    if (first) *first = g_tmdTris[0].v;
+    if (strideFloats) *strideFloats = (int)(sizeof(TmdTri) / sizeof(float));
+    return s_frameTris;
+}
 
 // ============================================================================
 // TmdQueue_Reset
@@ -365,6 +377,7 @@ static void TmdComputeLight(const TmdLightState* ls, const float* n, const float
 void FlushTmdObjects(void)
 {
     int queued = g_tmdQueueCount;
+    s_frameTris = 0;                      // CUSTOM
 
     unsigned int maskDepths[TMD_MAX_SCENE_DEPTHS];
     const int    maskCount  = SpriteQueue_CollectSceneDepths(maskDepths, TMD_MAX_SCENE_DEPTHS);
@@ -691,6 +704,7 @@ void FlushTmdObjects(void)
         // wash first, opaque over the top, punched texels keeping the wash. The
         // collection index is the last resort, so the whole order is
         // deterministic frame to frame.
+        s_frameTris = collected;          // CUSTOM: for the RAID shadows
         std::sort(g_tmdTriOrder, g_tmdTriOrder + collected, [](int a, int b) {
             const TmdTri& ta = g_tmdTris[a];
             const TmdTri& tb = g_tmdTris[b];

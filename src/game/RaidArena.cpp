@@ -327,7 +327,9 @@ static void RaShade(const RaView& V, RaVert& p, float br, float tr, float tg, fl
 // level's own `ambient` and `light` lines, per vertex, with a normal - a lamp
 // lights what faces it and leaves the underside of a bath in shade. Fog as
 // above. `n` is the outward unit normal.
-static void RaShadeLit(const RaView& V, RaVert& p, const float* n, float br)
+static float RaContactShadow(const float* p);
+
+static void RaShadeLit(const RaView& V, RaVert& p, const float* n, float br, int shadows = 0)
 {
     float dx = p.x - V.fromX, dy = p.y - V.fromY, dz = p.z - V.fromZ;
     float d  = sqrtf(dx*dx + dy*dy + dz*dz);
@@ -359,6 +361,13 @@ static void RaShadeLit(const RaView& V, RaVert& p, const float* n, float br)
     p.cr = r * m > 1.0f ? 1.0f : r * m;
     p.cg = g * m > 1.0f ? 1.0f : g * m;
     p.cb = b * m > 1.0f ? 1.0f : b * m;
+    // The shadow AFTER the clamp: the floor under the lamp is lit past white,
+    // and a shadow multiplied in before the clamp is clamped away with it.
+    if (shadows) {
+        const float pp[3] = { p.x, p.y, p.z };
+        const float k = RaContactShadow(pp);
+        p.cr *= k; p.cg *= k; p.cb *= k;
+    }
 }
 
 static void RaQuad(const RaView& V,
@@ -750,6 +759,42 @@ static void RaOverFlush(int k)
 // own colour, not some other object's picture.
 static float s_meshLo[RAID_MAX_MESH][3], s_meshHi[RAID_MAX_MESH][3];
 static int   s_meshLive[RAID_MAX_MESH];
+
+// ---------------------------------------------------------------------------
+// CUSTOM: shadows - the contact kind, which is what the pictures show: the
+// floor darkening round the foot of the bath, the pan, the basin, the towel
+// hanging over the rim. Each model flagged RAID_MESH_SHADOW that reaches down
+// to the floor darkens it by its distance from the model's footprint, pushed
+// a little away from the room's main light so the shadow has a side.
+//
+// Smooth by construction, and that is the point: a shadow cast by a ray test
+// is a hard edge, and an edge evaluated per vertex - which is how this arena
+// lights - lands mid-cell and draws a long straight seam across the face.
+// That is what the first try did on the walls. So: floors only, no edges.
+// ---------------------------------------------------------------------------
+static float RaContactShadow(const float* p)
+{
+    float lx = 0.0f, lz = 0.0f;
+    if (g_raidLevel.nlight > 0) { lx = (float)g_raidLevel.light[0].x; lz = (float)g_raidLevel.light[0].z; }
+    float k = 1.0f;
+    for (int m = 0; m < g_raidLevel.nmesh && m < RAID_MAX_MESH; m++) {
+        if (!s_meshLive[m] || (g_raidLevel.mesh[m].flags & RAID_MESH_SHADOW) == 0) continue;
+        const float* lo = s_meshLo[m];
+        const float* hi = s_meshHi[m];
+        if (hi[1] < -250.0f) continue;                       // does not reach the floor
+        // the footprint, nudged away from the light
+        float cx = (lo[0] + hi[0]) * 0.5f, cz = (lo[2] + hi[2]) * 0.5f;
+        float ox = cx - lx, oz = cz - lz;
+        const float ol = sqrtf(ox * ox + oz * oz);
+        if (ol > 1.0f) { ox = ox / ol * 140.0f; oz = oz / ol * 140.0f; } else { ox = oz = 0.0f; }
+        float dx = 0.0f, dz = 0.0f;
+        if (p[0] < lo[0] + ox) dx = lo[0] + ox - p[0]; else if (p[0] > hi[0] + ox) dx = p[0] - hi[0] - ox;
+        if (p[2] < lo[2] + oz) dz = lo[2] + oz - p[2]; else if (p[2] > hi[2] + oz) dz = p[2] - hi[2] - oz;
+        const float d = sqrtf(dx * dx + dz * dz);
+        k *= 1.0f - 0.55f * expf(-d / 380.0f);
+    }
+    return k;
+}
 static float s_meshCol[RAID_MAX_MESH][3];        // a model's own colour (RaMeshColour)
 static int   s_meshColValid[RAID_MAX_MESH];
 
@@ -1291,28 +1336,55 @@ static void RaPolyMat(const RaView& V, const RaVert* in, int n, int tex,
 // A material face, cut into the usual light cells (RA_CELL: the lighting is
 // per vertex) and lit like any box face. `au`/`av` are the world axes the
 // face spans: the texture's across and down.
+// Where a face running from world coordinate a0 for `len` along one axis is
+// cut: at every multiple of `cell` strictly inside it, plus its two ends, as
+// fractions 0..1 in t[]. Returns the number of cells (at most maxCells).
+static int RaCellCuts(float a0, float len, float* t, float cell, int maxCells)
+{
+    int n = 0;
+    t[0] = 0.0f;
+    if (len > 1.0f) {
+        const float a1 = a0 + len;
+        for (float w = (floorf(a0 / cell) + 1.0f) * cell; w < a1 - 1.0f && n < maxCells - 1; w += cell) {
+            if (w > a0 + 1.0f) t[++n] = (w - a0) / len;
+        }
+    }
+    t[++n] = 1.0f;
+    return n;
+}
+
 static void RaGridMat(const RaView& V, int tex, float tile, int au, int av,
                       const float* origin, const float* nrm,
                       float ax, float ay, float az,
                       float ux, float uy, float uz,
                       float vx, float vy, float vz, float br)
 {
-    const float ul = sqrtf(ux*ux + uy*uy + uz*uz);
-    const float vl = sqrtf(vx*vx + vy*vy + vz*vz);
-    int nu = (int)(ul / RA_CELL) + 1;
-    int nv = (int)(vl / RA_CELL) + 1;
-    if (nu > 16) nu = 16;
-    if (nv > 16) nv = 16;
+    // The cells are cut on a WORLD grid, not the face's own: two
+    // boxes that meet edge to edge (a wall cut round the mirror's glass) then
+    // have their light evaluated at the same points along the seam, and the
+    // per-vertex light runs on across it instead of stepping.
+    const float ua = (ux != 0.0f) ? ax : (uy != 0.0f ? ay : az);
+    const float va = (vx != 0.0f) ? ax : (vy != 0.0f ? ay : az);
+    // A floor is cut finer: it is what the contact shadows fall on, and they
+    // are evaluated per vertex like the rest of the light.
+    // Walls too: a lamp near a wall makes its light change fast along it, and
+    // a coarse grid draws that change as creases along its rows.
+    const int floor_ = nrm[1] < -0.5f;
+    const float cell = RA_CELL * 0.25f;
+    const int maxCells = 40;
+    float tu[42], tv[42];
+    const int nu = RaCellCuts(ua, ux + uy + uz, tu, cell, maxCells);
+    const int nv = RaCellCuts(va, vx + vy + vz, tv, cell, maxCells);
     for (int i = 0; i < nu; i++) {
-        const float a0 = (float)i / nu, a1 = (float)(i + 1) / nu;
+        const float a0 = tu[i], a1 = tu[i + 1];
         for (int j = 0; j < nv; j++) {
-            const float b0 = (float)j / nv, b1 = (float)(j + 1) / nv;
+            const float b0 = tv[j], b1 = tv[j + 1];
             RaVert q[4];
             q[0].x = ax + ux*a0 + vx*b0; q[0].y = ay + uy*a0 + vy*b0; q[0].z = az + uz*a0 + vz*b0;
             q[1].x = ax + ux*a1 + vx*b0; q[1].y = ay + uy*a1 + vy*b0; q[1].z = az + uz*a1 + vz*b0;
             q[2].x = ax + ux*a1 + vx*b1; q[2].y = ay + uy*a1 + vy*b1; q[2].z = az + uz*a1 + vz*b1;
             q[3].x = ax + ux*a0 + vx*b1; q[3].y = ay + uy*a0 + vy*b1; q[3].z = az + uz*a0 + vz*b1;
-            for (int c = 0; c < 4; c++) RaShadeLit(V, q[c], nrm, br);
+            for (int c = 0; c < 4; c++) RaShadeLit(V, q[c], nrm, br, floor_);
             RaPolyMat(V, q, 4, tex, au, av, tile, origin);
         }
     }
@@ -2081,10 +2153,109 @@ static void RaDrawGlass(const RaView& V)
     s_cursor   = 0;
 }
 
+// ---------------------------------------------------------------------------
+// CUSTOM: dynamic shadows - the characters' (and anything else the model pass
+// drew: the pickups, the reflections, which land behind the mirror's wall and
+// are hidden there).
+//
+// The model pass leaves this frame's triangles in screen space
+// (TmdRenderer_FrameTris). Each vertex is taken back to the world through the
+// same view the arena projects with - x and y across, its view depth along -
+// flattened onto the floor along the ray from the room's main light, and
+// projected again. That is the body's real silhouette, posed this frame.
+//
+// It must darken once however many triangles overlap, so it is drawn as a MASK
+// in the frame's alpha channel (MARNI_BLEND_ALPHA_ONLY: cleared by one quad,
+// then written by the flattened triangles, depth-tested against the room and
+// the bodies so nothing standing in front of the floor is shadowed), and one
+// more quad darkens by it (MARNI_BLEND_DARKEN_DESTA). Only where the backend
+// keeps an alpha channel (SupportsDestAlpha: D3D11 yes, the GL backend no).
+// ---------------------------------------------------------------------------
+#define RA_SHADOW_ALPHA   0.42f       // how dark: the share of the light taken
+#define RA_SHADOW_Y     -14.0f        // just off the floor - and over the mats (-8)
+
+static float s_stris[(RA_MAX_TRIS + 2) * 3 * RA_FLOATS];
+
+static void RaShadowQuad(float alpha, MarniBlend blend)
+{
+    // The whole screen, at the nearest depth: passes every depth test.
+    static const float xy[6][2] = { { -8192, -8192 }, { 8192, -8192 }, { 8192, 8192 },
+                                    { -8192, -8192 }, { 8192, 8192 }, { -8192, 8192 } };
+    float q[6 * RA_FLOATS];
+    for (int i = 0; i < 6; i++) {
+        float* p = &q[i * RA_FLOATS];
+        p[0] = xy[i][0]; p[1] = xy[i][1]; p[2] = 0.0f; p[3] = 1.0f;
+        p[4] = p[5] = 0.0f;
+        p[6] = p[7] = p[8] = 0.0f; p[9] = alpha;
+    }
+    s_dx->DrawTriangles3D(q, 2, MARNI_NULL_HANDLE, MARNI_SAMPLER_POINT, blend, false);
+}
+
+static void RaDrawModelShadows(const RaView& V)
+{
+    if (s_dx == NULL || !s_dx->SupportsDestAlpha() || g_raidLevel.nlight == 0) return;
+    const float* tri = NULL;
+    int stride = 0;
+    const int count = TmdRenderer_FrameTris(&tri, &stride);
+    if (count <= 0 || tri == NULL) return;
+
+    // The main light, lifted: it hangs low, and a shadow cast from it would
+    // fling a head's shadow across the room, away from the body.
+    const float L[3] = { (float)g_raidLevel.light[0].x, (float)g_raidLevel.light[0].y * 3.0f,
+                         (float)g_raidLevel.light[0].z };
+
+    RaShadowQuad(0.0f, MARNI_BLEND_ALPHA_ONLY);          // clear the mask
+
+    int n = 0;
+    for (int t = 0; t < count; t++, tri += stride) {
+        float* out = &s_stris[n * 3 * RA_FLOATS];
+        int ok = 1;
+        for (int e = 0; e < 3 && ok; e++) {
+            const float* v = tri + e * RA_FLOATS;
+            const float sx = v[0], sy = v[1], vz = v[3];
+            if (vz <= 1.0f) { ok = 0; break; }
+            // back to the world: the inverse of RaProject
+            const float a = (sx - V.cx) * vz / V.f;
+            const float b = (sy - V.cy) * vz / V.f;
+            RaVert w;
+            w.x = V.fromX + V.r[0] * a + V.u[0] * b + V.n[0] * vz;
+            w.y = V.fromY + V.r[1] * a + V.u[1] * b + V.n[1] * vz;
+            w.z = V.fromZ + V.r[2] * a + V.u[2] * b + V.n[2] * vz;
+            if (w.y <= L[1] + 50.0f) { ok = 0; break; }   // above the light
+            // down the light's ray to the floor
+            const float k = (RA_SHADOW_Y - L[1]) / (w.y - L[1]);
+            w.x = L[0] + (w.x - L[0]) * k;
+            w.z = L[2] + (w.z - L[2]) * k;
+            w.y = RA_SHADOW_Y;
+            const float d = RaDepth(V, w);
+            if (d < RA_NEAR) { ok = 0; break; }
+            float px, py;
+            RaProject(V, w, d, &px, &py);
+            float* p = &out[e * RA_FLOATS];
+            p[0] = px; p[1] = py; p[2] = TmdViewZToNdc(d); p[3] = d;
+            p[4] = p[5] = 0.0f;
+            p[6] = p[7] = p[8] = 0.0f; p[9] = RA_SHADOW_ALPHA;
+        }
+        if (!ok) continue;
+        if (++n >= RA_MAX_TRIS) {
+            s_dx->DrawTriangles3D(s_stris, n, MARNI_NULL_HANDLE, MARNI_SAMPLER_POINT,
+                                  MARNI_BLEND_ALPHA_ONLY, false);
+            n = 0;
+        }
+    }
+    if (n > 0) {
+        s_dx->DrawTriangles3D(s_stris, n, MARNI_NULL_HANDLE, MARNI_SAMPLER_POINT,
+                              MARNI_BLEND_ALPHA_ONLY, false);
+    }
+
+    RaShadowQuad(0.0f, MARNI_BLEND_DARKEN_DESTA);        // and darken by it
+}
+
 void RaidArena_DrawLate(void)
 {
     if (!s_lateValid || g_raidMode == 0 || !g_raidLevel.loaded) return;
     s_lateValid = 0;
     s_dx = Marni_DX();
+    RaDrawModelShadows(s_lateView);     // the characters' shadows, cast from their models
     RaDrawGlass(s_lateView);
 }

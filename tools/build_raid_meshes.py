@@ -51,7 +51,14 @@ class Mesh:
         self.tri(a, b, c, inside)
         self.tri(a, c, d, inside)
 
-    def save(self, name):
+    def save(self, name, double=False):
+        """`double`: also write every face reversed, on vertices of its own
+        (so the smooth normals of the two sides do not cancel) - for cloth,
+        thin enough that a face the culling drops shows what is behind it."""
+        if double:
+            base = len(self.v)
+            self.v += list(self.v)
+            self.f += [(a + base, c + base, b + base) for a, b, c in self.f]
         os.makedirs(OUT, exist_ok=True)
         with open(os.path.join(OUT, name), "w", newline="\n") as fh:
             fh.write("# %s - tools/build_raid_meshes.py. Game units, Y negative up.\n" % name)
@@ -245,12 +252,16 @@ def toilet_lid():
 def cistern_fittings():
     """The low cistern box is a tbox (x 6680..7880, y -1800..-900, z
     10160..10728); these are its brass: the flush lever on its low-X side and
-    the pipe down into the pan's back. Placed at the box's middle."""
+    the bent pipe down into the pan's side. Placed at the box's middle."""
     m = Mesh()
     tube(m, (-600, -1450, -120), (-700, -1450, -120), 30, None, 8)
     tube(m, (-700, -1450, -120), (-720, -1300, -200), 22, 16, 8)
-    tube(m, (120, -900, -150), (120, -700, -150), 36, None, 10, (False, False))
-    tube(m, (120, -700, -150), (120, -560, -340), 36, None, 10, (False, True))
+    # the flush pipe: out of the box's underside, down, and round into the
+    # left side of the pan's back block (x 7170, z 9950..10170), as camera 1
+    # shows it curving in at the seat's height
+    pts = [(-330, -900, -195), (-345, -640, -270), (-290, -480, -360), (-100, -445, -380)]
+    for a, b in zip(pts, pts[1:]):
+        tube(m, a, b, 32, 32, 10)
     m.save("m4.obj")
 
 
@@ -302,12 +313,13 @@ def bottle():
 
 
 def towel_rack():
-    """The free-standing rack: two posts on feet and a top rail."""
+    """The towel horse, LEANING on the far wall as camera 0 shows it: its top
+    rail against the wall (z -50 here), its two legs - feet cast onto the
+    floor at x 6084 and 7120, z 6210 - reaching 560 out into the room. Placed at the rail's middle."""
     m = Mesh()
-    for x in (-640.0, 640.0):
-        box(m, x - 30, -1000, -30, x + 30, 0, 30, 1)          # post
-        box(m, x - 30, -40, -260, x + 30, 0, 260, 1)          # foot
-    box(m, -670, -1030, -35, 670, -970, 35, 4)                # top rail
+    for x in (-518.0, 518.0):
+        tube(m, (x, -1030, -50), (x, 0, 510), 28, 24, 6)           # a leg
+    box(m, -560, -1030, -85, 560, -970, -15, 4)                  # the top rail
     m.save("m7.obj")
 
 
@@ -359,14 +371,14 @@ def drape(m, prof, half, nx, pleats, amp, th):
 
 
 def towel():
-    """The towel over the rack's top rail (rail at 1000, 70 thick): folded
-    over it and falling both sides to about 480, in soft pleats - camera 0's
-    blue-grey cloth."""
+    """The towel over the rack's top rail (rail at 1000, 70 thick, z -50):
+    folded over it and falling both sides to about 480, in soft pleats -
+    camera 0's blue-grey cloth."""
     m = Mesh()
-    prof = [(-58, -470), (-56, -760), (-52, -960), (-34, -1045), (0, -1062),
-            (34, -1045), (52, -960), (56, -760), (58, -520)]
-    drape(m, prof, 560.0, 16, 2, 22.0, 22.0)
-    m.save("m8.obj")
+    prof = [(-108, -470), (-106, -760), (-102, -960), (-84, -1045), (-50, -1062),
+            (-16, -1045), (2, -960), (6, -760), (8, -520)]
+    drape(m, prof, 500.0, 16, 2, 22.0, 22.0)
+    m.save("m8.obj", double=True)
 
 
 def bath_taps():
@@ -390,27 +402,24 @@ def bath_taps():
 
 
 def shower():
-    """The hand shower: a bent nickel pipe from the bar's far end down into
-    the bath. Camera 0's silver arc, cast onto heights that camera 1 agrees
-    with (it sees the pipe drop at once, then lose itself behind the bath's
-    near side): the arc is a bend sideways, not up. Ends in its rose."""
+    """The hand shower: a nickel pipe out of the mixer's CENTRE body - the
+    diverter under the spout, where a period bath mixer takes its hand
+    shower; camera 1 shows its curve leaving the middle of the bar, below it -
+    dropping and arcing over into the bath, the rose down on the bath's floor.
+    A smooth curve, so it bends rather than kinks. (The dark arc beside it in
+    camera 0's picture is its shadow on the enamel, not a hose.)"""
     m = Mesh()
-    pts = [(0, -1300, 285), (60, -1250, 253), (306, -900, 57), (640, -700, -107),
-           (871, -600, 15), (1060, -530, 215)]
+    tube(m, (0.0, -1300.0, 0.0), (0.0, -1215.0, 0.0), 34, 30, 10)     # the diverter, under the spout
+    P0, P1, P2, P3 = (0.0, -1215.0, 0.0), (40.0, -1080.0, 120.0), (600.0, -1250.0, -240.0), (1060.0, -580.0, 170.0)
+    pts = []
+    for k in range(14):
+        t = k / 13.0
+        a, b, c, d = (1 - t) ** 3, 3 * t * (1 - t) ** 2, 3 * t * t * (1 - t), t ** 3
+        pts.append(tuple(a * P0[i] + b * P1[i] + c * P2[i] + d * P3[i] for i in range(3)))
     for a, b in zip(pts, pts[1:]):
         tube(m, a, b, 20, 20, 8)
-    tube(m, (1060, -530, 215), (1130, -510, 300), 40, 50, 10)           # the rose
+    tube(m, pts[-1], (1120.0, -500.0, 260.0), 40, 52, 10)              # the rose, down on the floor
     m.save("m25.obj")
-
-
-def shower_hose():
-    """Its dark rubber hose, looping from the bar's end down into the bath."""
-    m = Mesh()
-    pts = [(10, -1290, 300), (40, -1100, 380), (90, -880, 420), (200, -700, 380),
-           (330, -560, 300), (470, -500, 230)]
-    for a, b in zip(pts, pts[1:]):
-        tube(m, a, b, 16, 16, 6)
-    m.save("m26.obj")
 
 
 def basin_taps():
@@ -449,9 +458,11 @@ def soap():
 
 
 def head_tray():
-    """The enamel tray on the wall at the bath's head (low X), 238 x 1060."""
+    """The enamel tray on the wall at the bath's head (low X): 400 out from
+    the wall x 1090 along it, its rim at 2220 - camera 0 and camera 1 agree
+    on all three."""
     m = Mesh()
-    vessel(m, 0.0, 0.0, 119.0, 530.0, -2070.0, -2150.0, 50.0, 22.0, n=28, power=6.0,
+    vessel(m, 0.0, 0.0, 200.0, 545.0, -2140.0, -2220.0, 50.0, 22.0, n=28, power=6.0,
            flare=(0.92, 0.98), inner_floor=0.92, lip=8.0)
     m.save("m15.obj")
 
@@ -462,8 +473,10 @@ def bath_towel():
     three rolls are their tops. A thin closed slab; the rim's outer edge is
     at z 0, the bath toward +z."""
     m = Mesh()
-    prof = [(160, -950), (140, -1060), (85, -1115), (20, -1125), (-35, -1095),
-            (-58, -1010), (-62, -760), (-66, -420), (-70, -110)]
+    # Clear of the rim: the bath's rolled lip stands to y -1092 and out to
+    # z -25 here, and the cloth's thickness hangs below this profile.
+    prof = [(230, -1040), (180, -1130), (100, -1172), (20, -1180), (-50, -1145),
+            (-80, -1050), (-86, -780), (-90, -430), (-92, -110)]
     nx, half, th = 18, 570.0, 28.0
     def surf(off):
         g = []
@@ -495,12 +508,22 @@ def bath_towel():
             ctr = [sum(m.v[g[ii][k]][c] for g in (out, inn) for ii in (i, i + 1)) / 4 for c in range(3)]
             ctr[1] += -20 if k == K - 1 else 20
             m.quad(out[i][k], out[i + 1][k], inn[i + 1][k], inn[i][k], ctr)
-    m.save("m16.obj")
+    m.save("m16.obj", double=True)
 
 
-def sponge():
+def jug():
+    """The white jug on that tray: what camera 0 shows as a white spot from
+    above is, from camera 1, a jug about 300 tall with a narrow neck."""
     m = Mesh()
-    box(m, -60, -70, -110, 60, 0, 110, 1)
+    prof = [(120, 0), (132, -50), (128, -150), (100, -225), (52, -265), (40, -290), (50, -305)]
+    r = [ring(m, 0.0, 0.0, rr, rr, y, 16, 2.0) for rr, y in prof]
+    for r0, r1 in zip(r, r[1:]):
+        band(m, r0, r1, (0.0, -150.0, 0.0))
+    cap(m, r[0], (0.0, 0.0, 0.0), (0.0, -10.0, 0.0))
+    cap(m, r[-1], (0.0, -305.0, 0.0), (0.0, -295.0, 0.0))
+    tube(m, (0, -235, 105), (0, -200, 175), 16, None, 6)            # the handle
+    tube(m, (0, -200, 175), (0, -90, 165), 16, None, 6)
+    tube(m, (0, -90, 165), (0, -60, 125), 16, None, 6)
     m.save("m17.obj")
 
 
@@ -555,6 +578,6 @@ if __name__ == "__main__":
             os.remove(os.path.join(OUT, name))
     for f in (bath_outer, bath_inner, toilet, toilet_lid, cistern_fittings, sink, sink_shelf,
               bottle, towel_rack, towel, bath_taps, basin_taps, trough, soap, head_tray,
-              bath_towel, sponge, brush, paper_holder, paper_roll, door_knob, shower,
-              shower_hose, mirror_frame):
+              bath_towel, jug, brush, paper_holder, paper_roll, door_knob, shower,
+              mirror_frame):
         f()

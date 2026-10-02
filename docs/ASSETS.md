@@ -74,7 +74,7 @@ audio, so they are not tracked either. Their generators are:
 | `USA/players/{W1F,W2F,W3F}.EMW` | `tools/build_inhand_pistol.py` | `W12.EMW`'s animation half, grafted |
 | `USA/players/W12.EMW` | `tools/build_beretta_barrel.py` | the stock file, **patched in place** |
 | `USA/Stage1/ROOM110{0,1}.RDT` | `tools/build_raid_room.py` | nothing — it fills an empty slot |
-| `USA/Data/raidtex/t{1-6,10,15-21}.bin` | `tools/build_raid_textures.py` | the RAID bathroom's materials (boards, tiles, enamel, rail, door, towels, mats, plaster, skirting, cistern, lid), cut out of its backgrounds and straightened; run `tools/build_bg_hd.py` first, and pass `--pack` for the RE-ENHANCE repaint of camera 0. The painted ones (t7, 9, 11, 13, 14, 23, 24) and the models (`raidmesh/`) are ours and tracked in `portdata/` - see `docs/RAID_BATHROOM.md` |
+| `USA/Data/raidtex/t{1-6,10,15-21,26,27}.bin` | `tools/build_raid_textures.py` | the RAID bathroom's materials (boards, tiles, enamel, rail, door, towels, mats, plaster, skirting, cistern, lid), cut out of its backgrounds and straightened; run `tools/build_bg_hd.py` first, and pass `--pack` for the RE-ENHANCE repaint of camera 0. The painted ones (t7, 9, 11, 13, 14, 23, 24) and the models (`raidmesh/`) are ours and tracked in `portdata/` - see `docs/RAID_BATHROOM.md` |
 | `USA/Data/bghd/rc*.bin` | `tools/build_bg_hd.py` | the backgrounds a RAID level projects (`bgsrc`), upscaled x4 by Real-ESRGAN, or taken from an HD pack where it has the room (`--pack`, matched by content); optional — without them the stock 320x240 is used |
 
 `deploy_portdata.py --check` names the missing ones at the end of its run.

@@ -39,6 +39,10 @@ typedef enum MarniBlend : DWORD32 {
     MARNI_BLEND_ALPHA    = 0,   // src*srcA + dst*(1-srcA) — standard alpha blend
     MARNI_BLEND_ADD      = 1,   // src + dst (light/flash effects)
     MARNI_BLEND_DISABLE = 2,   // no blending — straight overwrite
+    // CUSTOM, for RAID's model shadows (RaidArena.cpp), which keep their mask
+    // in the frame's own alpha channel. Only where SupportsDestAlpha().
+    MARNI_BLEND_ALPHA_ONLY   = 3,  // write the source alpha into dest alpha; colour untouched
+    MARNI_BLEND_DARKEN_DESTA = 4,  // dst.rgb *= 1 - dst.a; the source colour is ignored
 } MarniBlend;
 
 // ============================================================================
@@ -199,6 +203,11 @@ public:
     // depth-disabled state the 2D path assumes is restored afterwards. The
     // depth buffer is cleared once per frame by Clear(). Max 1024 triangles
     // per call.
+    // CUSTOM: whether the frame has an alpha channel the two blend modes
+    // above can keep a mask in. D3D11's back buffer does; the GL backend's
+    // default framebuffer may not, and says no.
+    bool SupportsDestAlpha() const;
+
     void DrawTriangles3D(const float* verts, int triCount, MarniHandle tex,
                          MarniSampler sampler = MARNI_SAMPLER_POINT,
                          MarniBlend  blend   = MARNI_BLEND_ALPHA,

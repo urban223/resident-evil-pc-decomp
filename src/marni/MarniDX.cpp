@@ -142,6 +142,8 @@ struct MarniDX::Impl {
     ID3D11BlendState*        blendAlpha    = nullptr;
     ID3D11BlendState*        blendAdd      = nullptr;
     ID3D11BlendState*        blendDisabled = nullptr;
+    ID3D11BlendState*        blendAlphaOnly = nullptr;   // CUSTOM: MARNI_BLEND_ALPHA_ONLY
+    ID3D11BlendState*        blendDarkenDstA = nullptr;  // CUSTOM: MARNI_BLEND_DARKEN_DESTA
     ID3D11SamplerState*      sampLinear    = nullptr;
     ID3D11SamplerState*      sampPoint     = nullptr;
     ID3D11SamplerState*      sampWrap      = nullptr;   // CUSTOM: MARNI_SAMPLER_LINEAR_WRAP
@@ -452,6 +454,8 @@ void MarniDX::Impl::ReleaseAllState()
     if (blendAlpha)    { blendAlpha->Release();    blendAlpha    = nullptr; }
     if (blendAdd)      { blendAdd->Release();      blendAdd      = nullptr; }
     if (blendDisabled) { blendDisabled->Release(); blendDisabled = nullptr; }
+    if (blendAlphaOnly)  { blendAlphaOnly->Release();  blendAlphaOnly  = nullptr; }
+    if (blendDarkenDstA) { blendDarkenDstA->Release(); blendDarkenDstA = nullptr; }
     if (sampLinear)    { sampLinear->Release();    sampLinear    = nullptr; }
     if (sampPoint)     { sampPoint->Release();     sampPoint     = nullptr; }
     if (sampWrap)      { sampWrap->Release();      sampWrap      = nullptr; }
@@ -597,6 +601,22 @@ BOOL MarniDX::Create(HWND hWnd, int width, int height, BOOL fullScreen,
     D3D11_BLEND_DESC bdOff = {};
     bdOff.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     p->device->CreateBlendState(&bdOff, &p->blendDisabled);
+
+    // CUSTOM: a mask in the back buffer's alpha (RAID's model shadows):
+    // overwrite alpha alone, then darken the colour by it.
+    D3D11_BLEND_DESC bdA = {};
+    bdA.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALPHA;
+    p->device->CreateBlendState(&bdA, &p->blendAlphaOnly);
+    D3D11_BLEND_DESC bdD = {};
+    bdD.RenderTarget[0].BlendEnable        = TRUE;
+    bdD.RenderTarget[0].SrcBlend           = D3D11_BLEND_ZERO;
+    bdD.RenderTarget[0].DestBlend          = D3D11_BLEND_INV_DEST_ALPHA;
+    bdD.RenderTarget[0].BlendOp            = D3D11_BLEND_OP_ADD;
+    bdD.RenderTarget[0].SrcBlendAlpha      = D3D11_BLEND_ZERO;
+    bdD.RenderTarget[0].DestBlendAlpha     = D3D11_BLEND_ONE;
+    bdD.RenderTarget[0].BlendOpAlpha       = D3D11_BLEND_OP_ADD;
+    bdD.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    p->device->CreateBlendState(&bdD, &p->blendDarkenDstA);
 
     // samplers
     D3D11_SAMPLER_DESC ss = {};
@@ -1242,6 +1262,12 @@ void MarniDX::DrawTriangles(const float* verts, int triCount, MarniHandle tex,
     p->context->Draw((UINT)(triCount * 3), 0);
 }
 
+// CUSTOM: the back buffer is R8G8B8A8_UNORM, so the two mask blend modes work.
+bool MarniDX::SupportsDestAlpha() const
+{
+    return m_pImpl && m_pImpl->blendAlphaOnly && m_pImpl->blendDarkenDstA;
+}
+
 void MarniDX::DrawTriangles3D(const float* verts, int triCount, MarniHandle tex,
                               MarniSampler sampler, MarniBlend blend,
                               bool depthWrite)
@@ -1289,7 +1315,13 @@ void MarniDX::DrawTriangles3D(const float* verts, int triCount, MarniHandle tex,
     ID3D11BlendState* bs = p->blendAlpha;
     if (blend == MARNI_BLEND_ADD)       bs = p->blendAdd;
     else if (blend == MARNI_BLEND_DISABLE) bs = p->blendDisabled;
-    if (!bs) bs = p->blendAlpha;
+    else if (blend == MARNI_BLEND_ALPHA_ONLY)   bs = p->blendAlphaOnly;    // CUSTOM
+    else if (blend == MARNI_BLEND_DARKEN_DESTA) bs = p->blendDarkenDstA;   // CUSTOM
+    if (!bs) {
+        // CUSTOM: never draw a mask pass as plain colour
+        if (blend == MARNI_BLEND_ALPHA_ONLY || blend == MARNI_BLEND_DARKEN_DESTA) return;
+        bs = p->blendAlpha;
+    }
     float bf[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     p->context->OMSetBlendState(bs, bf, 0xFFFFFFFFu);
 

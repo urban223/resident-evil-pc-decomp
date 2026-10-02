@@ -35,6 +35,11 @@ Findings that changed the room: the door is 1180 x 3195 (it had been guessed
 to 470, stained green plaster to 1150 and a deep rail to 1915; the bath is
 2930 x 1600 with its rim at 1080, the basin's rim is at 1250, the cistern is a
 low wide box behind the pan, and the shelf under the mirror really is at 2107.
+A second pass found the towel horse leaning on the far wall rather than
+standing, the tray at the bath's head higher and deeper with a white jug on it
+(from above only its top shows), and the flush pipe bent into the pan's side.
+(A rust stain on the plaster behind the pan was tried as a decal box and
+dropped: an opaque patch cannot fade into the plaster round it.)
 
 ## What it is made of
 
@@ -45,9 +50,10 @@ low wide box behind the pan, and the shelf under the mirror really is at 2107.
     tracked): t1 boards, t2 floor tiles, t3 enamel, t4 dark wood, t5 the door,
     t6 the rack's towel, t10 the bath mat, t15 the mat by the pan, t16 green
     plaster, t17 skirting, t18 the bath's outside, t19 the cistern, t20 the
-    pan's lid, t21 the bath towel. Each is extracted along the world axes the
-    arena lays that face by, from the face's low corner, so a one-off picture
-    (the door, a mat) lands on its box exactly.
+    pan's lid, t21 the bath towel, t26 the cistern's sides, t27 the rail's
+    cap. Each is extracted along the world axes the arena lays that face by,
+    from the face's low corner, so a one-off picture (the door, a mat) lands
+    on its box exactly.
   - painted from noise by `tools/build_raid_materials.py` (ours, tracked in
     `portdata`): t7 brass, t9 towel cloth, t11 porcelain, t13 iron, t14 soap,
     t23 nickel, t24 the bottle.
@@ -56,13 +62,50 @@ low wide box behind the pan, and the shelf under the mirror really is at 2107.
   wound outward. The bath (outside and inside are separate meshes, so the
   enamel and the dark shell take different materials), pan, lid, basin, the
   shelf under the mirror and its bottle, the trough and tray over the bath,
-  the mixer with its short spout, the hand shower and its hose, the towel
-  draped over the rim, the rack and its towel, soap, sponge, cistern brass,
+  the mixer with its short spout, the hand shower (off the diverter under the spout - a
+  period mixer takes it there, and camera 1 shows it leaving the middle of the
+  bar), the towel
+  draped over the rim, the rack and its towel, soap, a white jug, cistern brass,
   paper holder, door knob, mirror frame.
 - **Light.** The level's own `ambient` and `light` lines, per vertex with a
   normal (`RaShadeLit`), smooth normals on the models. One light over the mat
   and the bath where the pictures have their pool of light, one over the basin
   corner, one dim fill.
+
+## Shadows
+
+- **Contact shadows** (`RaContactShadow`): the floor darkens with distance
+  from the footprint of every model flagged `128` that reaches the floor (the
+  bath, the pan, the basin, the towel over the rim), nudged away from the main
+  light. Floors only, and smooth by construction: an earlier ray-tested
+  version put hard shadow edges on the walls, which per-vertex light turned
+  into long straight seams.
+- **The characters' shadows** (`RaDrawModelShadows`): after the model pass,
+  this frame's triangles (`TmdRenderer_FrameTris`) are taken back to the world,
+  flattened onto the floor along the ray from the main light (lifted, so a low
+  lamp does not fling a head's shadow across the room) and drawn as a MASK in
+  the frame's alpha channel - cleared, written, then one quad darkens by it -
+  so overlapping triangles darken once. Two blend modes were added for it
+  (`MARNI_BLEND_ALPHA_ONLY`, `MARNI_BLEND_DARKEN_DESTA`); the GL backend does
+  not offer them (`SupportsDestAlpha`), so on Linux there are no character
+  shadows yet. The game's own round blob under the feet stays.
+
+## Making a material repeat
+
+A patch cut out of a picture carries the picture's light, and a tiled copy of
+it shows that light as a seam at every repeat. So each one is FLATTENED (divided
+by a wrapped blur of itself) and then made seamless by cross-fading its last
+strip into its first and dropping it (`seamless`, `seamless_x`). Where the
+pattern has a period of its own, the cut is that period instead: the floor's
+octagons repeat every 812, and its patch is two of them. The wall boards are
+stretched to one repeat per wall height, so their only horizontal seams are at
+the floor and the ceiling; the rail's body and cap are each cut to their own
+height and repeat only along the wall.
+
+The rail's heights come from camera 1, which sees the near wall head-on: the
+cap 1650..1800, the body 1280..1650, the plaster 470..1280. Camera 0, high
+above, had put them some 120 higher, its parallax on a face that stands out
+from the wall.
 
 ## The mirror
 
@@ -99,7 +142,8 @@ crosses the glass - stand in front of it to see yourself.
 - A co-op **client** shows the reflected room but no reflected characters: a
   client runs neither `update_player_anim` nor `update_entities`, which is
   where the mirror pass lives.
-- No shadows. The pictures have strong ones (the towel's in the bath).
+- Shadows fall on the floor only: nothing shadows a model (the towel's shadow
+  in the bath, which the pictures have) and the walls take none.
 - The shelf under the mirror is narrower than the pictures (300 deep against
   575) on purpose, so it does not hide the basin's taps from the shoulder
   camera.
