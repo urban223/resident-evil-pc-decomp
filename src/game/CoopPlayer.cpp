@@ -33,6 +33,8 @@ static int s_reservedSlot[RAID_PLAYERS] = { -1, -1 };
 static unsigned short s_dyingTicks[RAID_PLAYERS];
 // Set while the get-up animation is playing, so the pad cannot cut it short.
 static unsigned char s_rising[RAID_PLAYERS];
+static unsigned char s_lunging[RAID_PLAYERS];   // an attack that found nobody to grab
+static WORD          s_zPrevDpad[RAID_PLAYERS]; // to see the attack button go DOWN
 
 // The model loaders, declared the way RaidEnemies.cpp declares them
 // (RaidEnemies.cpp:40-43): the unsigned-int form of SetupJointStructures is the
@@ -723,6 +725,10 @@ int g_coopZombieSlot[RAID_PLAYERS] = { -1, -1 };
 #define COOP_Z_STATE_RUN   1     // zombie_state_check, the behaviour dispatch
 #define COOP_Z_STATE_ATK   5     // zombie_attack
 #define COOP_Z_ATTACK_BIT  0x40  // the fire button, as the player's own gun reads it
+#define COOP_Z_STATE_HIT   2     // zombie_damaged
+#define COOP_Z_STATE_DIE   3     // zombie_die
+#define COOP_Z_STATE_NONE  4     // zombie_no_action: a bare RET, so WE pose him
+#define COOP_Z_LUNGE_ANIM  0x11  // zombie_attack's standing wind-up (attack_anim_tbl[0])
 
 // Who this zombie can bite: the other player, while he is still human. A
 // player-zombie hunting its own owner is meaningless, and with nobody to hunt
@@ -856,6 +862,27 @@ void Coop_DriveZombie(int i)
     const int victim = coop_zombie_victim(i);
     if (victim >= 0) g_pCurPlayer = &g_players[victim];
 
+    // Shot, or dying: the engine's own zombie reaction and death, untouched -
+    // the push-back, the stagger, the leg blown off, the fall and the pool of
+    // blood. Two things used to stop that, and both are here on purpose:
+    //
+    //   - the state below was forced back to RUN unless it was RUN or ATTACK,
+    //     so zombie_damaged / zombie_die were overwritten on the very frame
+    //     apply_weapon_damage put him in them;
+    //   - behavior_step bit 2, which this function sets every frame so the AI
+    //     does not start grabs of its own, is ALSO what zombie_damaged reads on
+    //     its first frame as "do not react to this hit" (it restores the old
+    //     state and clears hit_state). So it comes off while he is hit.
+    //
+    // The hit lands in the shooter's update, before update_entities, so this
+    // sees state 2 or 3 before zombie_damaged's first frame does.
+    if (ENTITY->state == COOP_Z_STATE_HIT || ENTITY->state == COOP_Z_STATE_DIE) {
+        s_lunging[i] = 0;
+        s_zPrevDpad[i] = 0;
+        ENTITY->behavior_step &= (unsigned char)~0x04;
+        return;
+    }
+
     // And the AI does not get to start a grab of its own: bit 2 of
     // behavior_step is the engine's "follow, do not attack" flag, which
     // zombie_chase_player tests before entering the attack state. A
@@ -894,6 +921,17 @@ void Coop_DriveZombie(int i)
 
     const unsigned char want = (dpad & 0x8000) ? COOP_Z_ACT_WALK : COOP_Z_ACT_IDLE;
 
+    // From here on the pad is driving him, so no hit reaction is playing - and
+    // hit_state must say so. apply_weapon_damage only considers an enemy whose
+    // hit_state is 0 (a reacting zombie cannot be hit again mid-reaction). A
+    // reaction hands back with state 1 and a behaviour whose tail is what
+    // clears it; the pad replaces that behaviour on the next frame, so the tail
+    // never ran and he stayed unhittable for good: logged as a shot that tested
+    // every enemy in the room except him.
+    ENTITY->hit_state = 0;
+
+    if (s_lunging[i]) goto attack;            // the lunge owns him until it ends
+
     // action_state is the handler's own "have I started yet" latch; clearing it
     // on a change is what makes zombie_slow_walk re-run its init branch and lay
     // down a fresh waypoint along the new angle.
@@ -905,22 +943,56 @@ void Coop_DriveZombie(int i)
         ENTITY->state = COOP_Z_STATE_RUN;
     }
 
+attack:
     // Attack, on the fire button. State 5 was reachable all along - nothing
     // ever pressed it - but it cannot simply be set: zombie_attack's first
     // sub-state GRABS, snapping the victim to the bite position and driving his
     // animation. Entered without a victim in reach that would yank the other
-    // player across the room. So the button is gated by the same three tests
-    // the AI uses before it enters the same state (zombie_chase_player): in the
+    // player across the room. So the GRAB is gated by the same three tests the
+    // AI uses before it enters the same state (zombie_chase_player): in the
     // cone, in reach, with a clear line, and not already in somebody's jaws.
-    if ((dpad & COOP_Z_ATTACK_BIT) != 0
-        && victim >= 0
-        && ENTITY->state != COOP_Z_STATE_ATK
+    const int inReach = victim >= 0
         && checkAngularViewAndDistance(
                700, 1500, (VECTOR*)&g_playerEntity.scaMatrixData.localMatrix.t)
         && check_line_of_sight(
                (VECTOR*)&g_playerEntity.scaMatrixData.localMatrix.t) == 0
-        && g_playerEntity.isBeingAttackedFlag == 0)
-    {
+        && g_playerEntity.isBeingAttackedFlag == 0;
+
+    // Out of reach the button still DOES something: he lunges at nothing -
+    // zombie_attack's own wind-up (animation 0x11, with its roar and its root
+    // motion), played here with the state machine parked on zombie_no_action
+    // so nothing else poses him. If the victim comes into reach mid-lunge the
+    // lunge turns into the real grab below.
+    const int pressed = (dpad & COOP_Z_ATTACK_BIT) != 0
+                     && (s_zPrevDpad[i] & COOP_Z_ATTACK_BIT) == 0;
+
+    s_zPrevDpad[i] = dpad;
+
+    if (s_lunging[i] && !inReach) {
+        entity_apply_anim_vertex(ENTITY, ENTITY->animHeader, ENTITY->animBase);
+        if ((char)Joint_move(0, ENTITY->animHeader, ENTITY->animBase, 0x400) != 0) {
+            s_lunging[i] = 0;                 // the wind-up is over: stand again
+            ENTITY->state = COOP_Z_STATE_RUN;
+            ENTITY->action_behavior = COOP_Z_ACT_IDLE;
+            ENTITY->action_state = 0;
+            ENTITY->blend_counter = 3;
+        }
+        return;
+    }
+
+    if (pressed && !inReach && !s_lunging[i]) {
+        s_lunging[i] = 1;
+        ENTITY->state = COOP_Z_STATE_NONE;
+        ENTITY->animationId = COOP_Z_LUNGE_ANIM;
+        ENTITY->animation_frame_id = 0;
+        ENTITY->timing_control = 0;
+        ENTITY->blend_counter = 3;
+        Snd_em(4);                            // zombie_attack's roar
+        return;
+    }
+
+    if (((dpad & COOP_Z_ATTACK_BIT) != 0 || s_lunging[i]) && inReach) {
+        s_lunging[i] = 0;
         ENTITY->angle = getAngleTowardsTarget(
             g_playerEntity.scaMatrixData.localMatrix.t[0],
             g_playerEntity.scaMatrixData.localMatrix.t[2]);
