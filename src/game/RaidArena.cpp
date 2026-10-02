@@ -1333,6 +1333,64 @@ static void RaPolyMat(const RaView& V, const RaVert* in, int n, int tex,
     }
 }
 
+// CUSTOM: a material triangle whose UVs come from its own model-space corners
+// (`loc`), not from the world - for a mesh that moves (a door). Clipped to the
+// near plane like RaPolyMat, the model coordinates carried through the clip.
+static void RaPolyMatLocal(const RaView& V, const RaVert* in, const float loc[3][3],
+                           int tex, int au, int av, float tile)
+{
+    if (RaMatGet(tex) == MARNI_NULL_HANDLE) { RaPoly(V, in, 3); return; }
+    if (tex != s_mcur) { RaMatFlush(); s_mcur = tex; }
+
+    RaVert out[8];
+    float  ol[8][3];
+    float  vz[8];
+    int    m = 0;
+    for (int i = 0; i < 3 && m < 8; i++) {
+        const int j = (i + 1) % 3;
+        const RaVert& a = in[i];
+        const RaVert& b = in[j];
+        const float da = RaDepth(V, a), db = RaDepth(V, b);
+        if (da >= RA_NEAR) {
+            out[m] = a; vz[m] = da;
+            ol[m][0] = loc[i][0]; ol[m][1] = loc[i][1]; ol[m][2] = loc[i][2];
+            m++;
+        }
+        if ((da >= RA_NEAR) != (db >= RA_NEAR) && m < 8) {
+            const float t = (RA_NEAR - da) / (db - da);
+            RaVert c;
+            c.x  = a.x  + (b.x  - a.x)  * t;
+            c.y  = a.y  + (b.y  - a.y)  * t;
+            c.z  = a.z  + (b.z  - a.z)  * t;
+            c.cr = a.cr + (b.cr - a.cr) * t;
+            c.cg = a.cg + (b.cg - a.cg) * t;
+            c.cb = a.cb + (b.cb - a.cb) * t;
+            out[m] = c; vz[m] = RA_NEAR;
+            for (int k = 0; k < 3; k++) ol[m][k] = loc[i][k] + (loc[j][k] - loc[i][k]) * t;
+            m++;
+        }
+    }
+    if (m < 3) return;
+    if (s_mcount + (m - 2) > RA_MAX_TRIS) RaMatFlush();
+    const float inv  = 1.0f / (tile > 1.0f ? tile : 1.0f);
+    const float invV = inv / (s_matAspect[tex] > 0.01f ? s_matAspect[tex] : 1.0f);
+    float sx[8], sy[8];
+    for (int i = 0; i < m; i++) RaProject(V, out[i], vz[i], &sx[i], &sy[i]);
+    for (int i = 1; i + 1 < m; i++) {
+        const int idx[3] = { 0, i, i + 1 };
+        for (int e = 0; e < 3; e++) {
+            const int j = idx[e];
+            float* p = &s_mtris[s_mcount * 3 * RA_FLOATS + e * RA_FLOATS];
+            p[0] = sx[j]; p[1] = sy[j];
+            p[2] = TmdViewZToNdc(vz[j]); p[3] = vz[j];
+            p[4] = ol[j][au] * inv;
+            p[5] = ol[j][av] * invV;
+            p[6] = out[j].cr; p[7] = out[j].cg; p[8] = out[j].cb; p[9] = 1.0f;
+        }
+        s_mcount++;
+    }
+}
+
 // A material face, cut into the usual light cells (RA_CELL: the lighting is
 // per vertex) and lit like any box face. `au`/`av` are the world axes the
 // face spans: the texture's across and down.
@@ -1682,6 +1740,34 @@ static void RaDrawMeshes(const RaView& V)
                 if (ay_ >= ax_ && ay_ >= az_) { au = 0; av = 2; }
                 else if (ax_ >= az_)          { au = 2; av = 1; }
                 else                           { au = 0; av = 1; }
+                if (M->flags & RAID_MESH_LOCALUV) {
+                    // A moving model (a door) keeps its picture: the axes and
+                    // the UVs come from the MODEL's own coordinates, so the
+                    // material turns with it instead of sliding over it.
+                    const float* a0 = &F->v[F->t[t*3+0] * 3];
+                    const float* b0 = &F->v[F->t[t*3+1] * 3];
+                    const float* c0 = &F->v[F->t[t*3+2] * 3];
+                    float ln[3];
+                    RaTriNormal(a0, b0, c0, ln);
+                    const float lx = fabsf(ln[0]), ly = fabsf(ln[1]), lz = fabsf(ln[2]);
+                    if (ly >= lx && ly >= lz) { au = 0; av = 2; }
+                    else if (lx >= lz)        { au = 2; av = 1; }
+                    else                      { au = 0; av = 1; }
+                    float lv[3][3];
+                    for (int e = 0; e < 3; e++)
+                        for (int k = 0; k < 3; k++) lv[e][k] = F->v[F->t[t*3+e] * 3 + k];
+                    RaVert lq[3];
+                    for (int e = 0; e < 3; e++) {
+                        const float* vn = &F->n[F->t[t*3+e] * 3];
+                        const float a = (float)(M->yaw & 0xFFF) * (6.2831853f / 4096.0f);
+                        const float c = cosf(a), sn = sinf(a);
+                        const float wn[3] = { c * vn[0] + sn * vn[2], vn[1], -sn * vn[0] + c * vn[2] };
+                        RaShadeLit(V, q[e], wn, 1.0f);
+                        lq[e] = q[e];
+                    }
+                    RaPolyMatLocal(V, lq, lv, M->tex, au, av, (float)M->tile);
+                    continue;
+                }
                 if (M->flags & RAID_MESH_GLOW) {
                     // A lamp: its own light, only the fog over it.
                     for (int e = 0; e < 3; e++) { q[e].cr = q[e].cg = q[e].cb = 1.0f; }
@@ -1926,6 +2012,7 @@ static void RaDrawItems(const RaView& V)
 
 static void RaDrawBoxes(const RaView& V);
 static void RaDrawMirror(const RaView& V);
+static void RaDoorsUpdate(void);
 static void RaDrawGlass(const RaView& V);
 
 // This frame's view, kept for RaidArena_DrawLate - the mirror's glass goes
@@ -1956,6 +2043,10 @@ void RaidArena_Draw(void)
     }
 
     if (!g_raidLevel.loaded) return;
+
+    RaDoorsUpdate();      // CUSTOM: the doors swing before anything is drawn
+    RaidLevel_LightsNear(g_players[0].scaMatrixData.localMatrix.t[0],
+                         g_players[0].scaMatrixData.localMatrix.t[2]);
 
     s_dx = Marni_DX();
     if (s_dx == NULL) return;
@@ -2249,6 +2340,130 @@ static void RaDrawModelShadows(const RaView& V)
     }
 
     RaShadowQuad(0.0f, MARNI_BLEND_DARKEN_DESTA);        // and darken by it
+}
+
+// ---------------------------------------------------------------------------
+// CUSTOM: doors, the way Resident Evil 2 (2019) does them (`door` lines) -
+// no cut to a loading screen, the next room is simply there behind the leaf.
+//
+//   - Come up to a shut door and it opens away from you: walking at it from
+//     a little way off sets it ajar, and right up against it it opens all the
+//     way. Nothing asks which way she faces or whether she moved: a shut door
+//     is exactly what stops her moving, and a facing test only made it hard
+//     to open.
+//   - The action button, within reach, opens it all the way - or,
+//     open, shuts it. Doors stay as you leave them.
+//   - Its doorway stops you only while the leaf is still across it, and it
+//     never shuts on somebody standing in it.
+//
+// RaidDoors_Player runs inside game_loop's per-player block (the pad and the
+// facing are that player's there); RaDoorsUpdate, from the draw, swings the
+// leaves and keeps the doorway boxes in step. Every mesh placed exactly at the
+// hinge is posed by the angle (the leaf, its brass): a mesh's yaw is a turn
+// about its own origin, which is the hinge.
+// ---------------------------------------------------------------------------
+#define RA_DOOR_REACH     1300.0f   // from the doorway: the action button
+#define RA_DOOR_AJAR      1100.0f   // walking at it from inside this: it opens ajar
+#define RA_DOOR_BUMP       700.0f   // and inside this: all the way
+#define RA_DOOR_FULL      1.75f     // radians: wide open (a right angle and a little)
+#define RA_DOOR_HALF      0.70f     // ajar
+#define RA_DOOR_PASS      0.95f     // the doorway is clear past this
+#define RA_DOOR_SPEED     0.14f     // radians a frame, opening
+#define RA_DOOR_SHUT      0.10f     // and shutting
+#define RA_DOOR_BUTTON   0x80       // the action button, as the pickups read it (RaidItems.cpp)
+#define RA_DOOR_WALK     0x00FF     // any direction on the pad (PlayerPad_Update's remap)
+
+static int RaDoorOccupied(const RaidDoor* D)
+{
+    for (int i = 0; i < Coop_PlayerCount(); i++) {
+        const int* t = g_players[i].scaMatrixData.localMatrix.t;
+        if (t[0] > D->hx - 250 && t[0] < D->hx + D->width + 250
+            && t[2] > D->hz - D->depth && t[2] < D->hz + D->depth) return 1;
+    }
+    return 0;
+}
+
+void RaidDoors_Player(int i)
+{
+    if (g_raidMode == 0 || !g_raidLevel.loaded || i < 0 || i >= RAID_PLAYERS) return;
+    const int* t = g_playerEntity.scaMatrixData.localMatrix.t;
+    const float px = (float)t[0], pz = (float)t[2];
+    const float a = (float)(g_playerEntity.directionAngle & 0xFFF) * (6.2831853f / 4096.0f);
+    const float fx = cosf(a), fz = sinf(a);
+    const int act  = (g_PlayerDpadPressed & RA_DOOR_BUTTON) != 0;
+    const int walk = (g_PlayerDpadHeld & RA_DOOR_WALK) != 0;
+
+    for (int d = 0; d < g_raidLevel.ndoor && d < RAID_MAX_DOOR; d++) {
+        RaidDoor* D = &g_raidLevel.door[d];
+        // To the doorway's nearest point: a wide door is walked into anywhere.
+        const float x0 = (float)D->hx, x1 = (float)(D->hx + D->width);
+        const float nx = px < x0 ? x0 : (px > x1 ? x1 : px);
+        const float dx = nx - px, dz = (float)D->hz - pz;
+        const float dist = sqrtf(dx * dx + dz * dz);
+        if (dist > RA_DOOR_REACH) continue;
+        (void)fx; (void)fz;    // facing is not asked: it made the door hard to open
+        const float away = pz > (float)D->hz ? 1.0f : -1.0f;   // from +Z it swings toward -Z
+
+        if (act) {
+            if (fabsf(D->target) < 0.05f) D->target = away * RA_DOOR_FULL;
+            else if (!RaDoorOccupied(D)) { D->target = 0.0f; D->idle = 1; }   // shut by hand:
+            continue;                                    // it stays shut until she steps back
+        }
+        if (D->idle) continue;
+        if (dist < RA_DOOR_BUMP) {
+            // Up against it: open, whatever the pad says - standing at a shut
+            // door is asking for it to open.
+            if (fabsf(D->target) < RA_DOOR_FULL - 0.01f)
+                D->target = (fabsf(D->target) > 0.05f ? (D->target > 0.0f ? 1.0f : -1.0f) : away) * RA_DOOR_FULL;
+        } else if (walk && dist < RA_DOOR_AJAR && fabsf(D->target) < 0.05f) {
+            D->target = away * RA_DOOR_HALF;
+        }
+    }
+}
+
+static void RaDoorsUpdate(void)
+{
+    int collisionDirty = 0;
+    for (int d = 0; d < g_raidLevel.ndoor && d < RAID_MAX_DOOR; d++) {
+        RaidDoor* D = &g_raidLevel.door[d];
+        if (D->idle) {                                   // shut by hand: free again once
+            int near_ = 0;                               // everybody has stepped back
+            for (int i = 0; i < Coop_PlayerCount(); i++) {
+                const int* t = g_players[i].scaMatrixData.localMatrix.t;
+                const float x0 = (float)D->hx, x1 = (float)(D->hx + D->width);
+                const float px = (float)t[0], nx = px < x0 ? x0 : (px > x1 ? x1 : px);
+                const float dx = nx - px, dz = (float)D->hz - (float)t[2];
+                if (dx * dx + dz * dz < RA_DOOR_AJAR * RA_DOOR_AJAR) near_ = 1;
+            }
+            if (!near_) D->idle = 0;
+        }
+        if (D->target == 0.0f && D->angle != 0.0f && RaDoorOccupied(D)) {
+            D->target = D->angle;                        // never shut on somebody
+        }
+        const float step = (fabsf(D->target) > fabsf(D->angle)) ? RA_DOOR_SPEED : RA_DOOR_SHUT;
+        if (D->angle < D->target) { D->angle += step; if (D->angle > D->target) D->angle = D->target; }
+        else if (D->angle > D->target) { D->angle -= step; if (D->angle < D->target) D->angle = D->target; }
+
+        // The meshes at the hinge. Yaw is 4096 to the turn and turns +X toward
+        // -Z for a positive angle (RaMeshXform).
+        const short yaw = (short)(int)(D->angle * (4096.0f / 6.2831853f));
+        for (int m = 0; m < g_raidLevel.nmesh && m < RAID_MAX_MESH; m++) {
+            RaidMesh* M = &g_raidLevel.mesh[m];
+            if (M->x == D->hx && M->z == D->hz) M->yaw = yaw;
+        }
+
+        // The doorway: open once the leaf is clear of it.
+        if (D->box >= 0 && D->box < g_raidLevel.nbox) {
+            RaidBox* B = &g_raidLevel.box[D->box];
+            const int solid = fabsf(D->angle) < RA_DOOR_PASS;
+            const int was = (B->flags & RAID_BOX_SOLID) != 0;
+            if (solid != was) {
+                if (solid) B->flags |= RAID_BOX_SOLID; else B->flags &= ~RAID_BOX_SOLID;
+                collisionDirty = 1;
+            }
+        }
+    }
+    if (collisionDirty) RaidLevel_RebuildCollision();
 }
 
 void RaidArena_DrawLate(void)

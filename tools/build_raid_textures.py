@@ -29,7 +29,7 @@ RE-ENHANCE pack's own repaint of it, which is much the better picture:
 """
 
 import os, struct, sys, math
-from PIL import Image, ImageFilter, ImageEnhance
+from PIL import Image, ImageFilter, ImageEnhance, ImageDraw
 
 ROOT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, "tools", ".cache")
@@ -253,7 +253,17 @@ def main():
     # t5 again - the door: the leaf is 1180 x 3195 (x 2407..3586), not the
     # 1450 x 2392 guessed before, which is what skewed the old picture.
     door = rectify(cam0, world_quad(V0, S0, (2407, -3195, 5500), (1180, 0, 0), (0, 3195, 0)), 320, 866)
-    save(5, door)
+    # Its brass plate and knob are a model now (raid1.lvl `door`, m31): paint
+    # them out of the picture with the stile above them, feathered in.
+    door = door.convert("RGB")
+    patch = door.crop((250, 300, 316, 450)).resize((66, 140))
+    mask = Image.new("L", (66, 140), 0)
+    ImageDraw.Draw(mask).rectangle((6, 8, 59, 131), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(5))
+    door.paste(patch, (250, 455), mask)
+    # Laid on a leaf widened to 1400 (raid1.lvl), so it is that shape now - a
+    # 1180-shaped picture on a 1400 tile ran its top off the leaf.
+    save(5, door.resize((320, 730), Image.BICUBIC))
 
     # t10 - the bath mat, by its own corners (it lies a few degrees askew).
     # Its box's low X / low Z corner is the picture's top right.

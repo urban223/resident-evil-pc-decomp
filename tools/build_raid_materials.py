@@ -2,7 +2,7 @@
 """
 CUSTOM: the RAID bathroom's PAINTED materials - the ones no background has a
 clean patch of (brass, mirror, towel cloth, the rug, porcelain, the lamp's
-glass, iron, soap, nickel, a bottle). Drawn here from noise and a seed, so they are this
+glass, iron, soap, nickel, a bottle, amber glass). Drawn here from noise and a seed, so they are this
 project's own and reproducible, and tracked:
 
     portdata/USA/Data/raidtex/t<n>.bin   'RTEX' + u32 w + u32 h + RGBA
@@ -99,6 +99,12 @@ def bottle():
     return im
 
 
+def amber():
+    """Brown glass, with the rust of the lid's ring a little darker."""
+    g = wrap_blur(noise(64, 64, 16, seed=101), 3)
+    return tint(g, (58, 30, 10), (132, 74, 30))
+
+
 def porcelain():
     g = wrap_blur(noise(128, 128, 14, seed=41), 2)
     im = tint(g, (196, 196, 186), (240, 238, 228))
@@ -133,3 +139,4 @@ if __name__ == "__main__":
     save(14, soap())
     save(23, nickel())
     save(24, bottle())
+    save(28, amber())

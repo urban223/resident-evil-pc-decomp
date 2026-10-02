@@ -137,11 +137,45 @@ from the wall.
 A character is reflected only when the line from the camera to its reflection
 crosses the glass - stand in front of it to see yourself.
 
+## The door, and room 003 behind it
+
+The bathroom door is a model (`m30` leaf, `m31` brass) on a `door` line, and
+opens the way Resident Evil 2 (2019) does: no cut to a loading screen, the
+next room is simply there.
+
+- Come up to it and it opens away from you: walking at it from about 1100 off
+  sets it ajar, against it (700) it opens all the way. The action button within
+  reach opens it, or, open, shuts it - and a door shut by hand stays shut until
+  you step back. Doors never shut on their own, nor on somebody in the doorway.
+- Neither which way she faces nor whether she moved is asked: a shut doorway is
+  exactly what stops her moving, and a facing test made it hard to open (two
+  rounds of "it barely opens" taught that).
+- Its doorway is a solid box the loader makes (`RAID_BOX_DOOR`), clear once the
+  leaf has turned past ~55 degrees. Every mesh placed exactly at the hinge
+  swings with it; the leaf's picture is laid in model space (mesh flag `512`)
+  so it turns with the leaf instead of sliding over it. The picture's painted
+  knob is painted out - the model's is the only one - and the leaf is widened
+  to 1400 from the picture's 1180.
+
+Behind it is room 003 (`ROOM4060`), as in the story: in its own coordinates
+the bathroom is the notch of its L, and its RDT's door to the bathroom sits on
+its corridor wall. It is moved by (-304, +1104), so that wall backs onto the
+bathroom's far wall and the two doors are one. Its walls stand on its own
+collision records (moved the same; the record for the notch is left out, the
+bathroom's walls are that), its two cameras are its own (1 and 4, moved), and
+camera zones switch between the three. The furniture is blocked out from its
+records: a desk and chair at the corridor's end, two beds, a rug, its other
+door shut. A level may now carry 8 lights: the arena is lit by all of them,
+the characters by the three nearest player 1.
+
 ## Known gaps
 
 - A co-op **client** shows the reflected room but no reflected characters: a
   client runs neither `update_player_anim` nor `update_entities`, which is
   where the mirror pass lives.
+- Room 003 is blocked out, not modelled: its pictures are not cut into
+  materials yet (it borrows the bathroom's boards, in blue light), and its
+  furniture is boxes.
 - Shadows fall on the floor only: nothing shadows a model (the towel's shadow
   in the bath, which the pictures have) and the walls take none.
 - The shelf under the mirror is narrower than the pictures (300 deep against

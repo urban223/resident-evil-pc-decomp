@@ -16,7 +16,8 @@
 #define RAID_MAX_CAM      8
 #define RAID_MAX_ZONE    32
 #define RAID_MAX_ENEMY   32
-#define RAID_MAX_LIGHT    3
+#define RAID_MAX_LIGHT    8   // the arena lights by all of them; the RDT's 3 slots get the nearest
+#define RAID_MAX_DOOR     4
 #define RAID_MAX_ITEM    32
 #define RAID_MAX_GIVE     8   // Jill's whole inventory; there is nowhere to put a ninth
 #define RAID_MAX_BGSRC    4   // backdrop images a level can project
@@ -31,6 +32,8 @@
 #define RAID_BOX_TEX      0x10   // textured by a tiled material (a `tbox` line): tex, tile
 #define RAID_MESH_GLOW    0x20   // a `mesh` that gives light rather than takes it: a lamp
 #define RAID_MESH_SHADOW  0x80   // a `mesh` that casts a shadow from the level's lights
+#define RAID_BOX_DOOR     0x100  // the box a `door` line made for its doorway: solid while it is shut
+#define RAID_MESH_LOCALUV 0x200  // a `mesh` whose material follows the model, not the world: it moves
 #define RAID_BOX_WORLDUV  0x40   // a tbox whose material is laid from the world origin, not
                                  // its own corner - pieces of one wall then line up
 
@@ -124,9 +127,24 @@ struct RaidMirror {
     int ytop, ybot;              // and up the wall (Y negative up: ytop < ybot)
 };
 
+// A door (`door` line) that swings open as you walk into it, the way
+// Resident Evil 2 (2019) does it, instead of cutting to a loading screen: the
+// leaf turns about a vertical hinge at (hx, hz), and its doorway is a solid
+// box (made by the loader, RAID_BOX_DOOR) only while it is shut. Every mesh
+// placed exactly at the hinge swings with it. Runtime state lives here too.
+struct RaidDoor {
+    int   hx, hz;                // the hinge
+    int   width;                 // along +X from the hinge, shut
+    int   depth;                 // the doorway's thickness, across the wall
+    int   box;                   // its doorway box in box[]
+    float angle;                 // now, radians: + opens toward -Z, - toward +Z
+    float target;
+    int   idle;                  // shut by hand: it will not open by itself until she steps back
+};
+
 struct RaidLevel {
     int  loaded;
-    int  nbox, ncam, nzone, nlight, nenemy, nitem, ngive, nbgsrc, nmesh;
+    int  nbox, ncam, nzone, nlight, nenemy, nitem, ngive, nbgsrc, nmesh, ndoor;
     short ambR, ambG, ambB;
     int  spawnX, spawnZ, spawnAngle;
     RaidBox   box[RAID_MAX_BOX];
@@ -139,6 +157,7 @@ struct RaidLevel {
     RaidBgSrc bgsrc[RAID_MAX_BGSRC];
     RaidMesh  mesh[RAID_MAX_MESH];
     RaidMirror mirror;
+    RaidDoor  door[RAID_MAX_DOOR];
 };
 
 extern RaidLevel g_raidLevel;
@@ -147,6 +166,9 @@ extern int g_raidReloadRequest;   // set by the reload key, consumed at draw tim
 int  RaidLevel_Load(void);        // read the file; 1 on success, level untouched on failure
 void RaidLevel_Apply(void);       // push camera, lights and collision into the loaded RDT
 void RaidMirror_Arm(void);        // once per room entry, after every body is set up
+void RaidLevel_RebuildCollision(void);      // after a door opened or shut
+void RaidDoors_Player(int i);              // RaidArena.cpp: player i walks into / works a door
+void RaidLevel_LightsNear(int x, int z);    // the RDT's 3 light slots <- the nearest level lights
 
 // RaidItems.cpp - the pickups lying in the room.
 void RaidItems_Reset(void);       // a (re)loaded level has taken nothing

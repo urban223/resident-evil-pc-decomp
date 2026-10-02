@@ -36,7 +36,7 @@ so a ceiling is a negative number, and a box's `y0` is its TOP.
 ```
 ver     1
 ambient <r> <g> <b>                          12-bit channels, 0..4095
-light   <x> <y> <z> <r> <g> <b> <radius>     up to 3; radius 0 is a BLACK light
+light   <x> <y> <z> <r> <g> <b> <radius>     up to 8; radius 0 is a BLACK light
 cam     <fx> <fy> <fz> <tx> <ty> <tz> <fov>  fov is a focal length, not an angle
 camzone <cam> <x0> <z0> <x1> <z1>            walk in here, switch to that camera
 spawn   <x> <z> <angle>                      0 = +X, 0x400 = +Z, 4096 = a turn
@@ -48,6 +48,7 @@ bgsrc   <stage> <room> <cam> <fx> <fy> <fz> <tx> <ty> <tz> <fov>
 mesh    <id> <x> <y> <z> <yaw> <scale> <flags> <tex> <tile>
 tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>
 mirror  <axis> <plane> <min> <max> <ytop> <ybot>
+door    <hx> <hz> <width> <depth>
 ```
 
 - `tbox` is a box covered with a material, `Data/raidtex/t<tex>.bin`, repeating
@@ -68,16 +69,21 @@ mirror  <axis> <plane> <min> <max> <ytop> <ybot>
   spanning `min..max` along the other floor axis and `ytop..ybot` up the wall.
   The level must leave a hole in the wall there. See `docs/RAID_BATHROOM.md`.
 
+- `door` is a door that swings open (`docs/RAID_BATHROOM.md`): hinged at
+  (`hx`, `hz`), `width` along +X when shut, its doorway `depth` thick. The
+  loader makes the doorway's box; every `mesh` placed at the hinge swings with
+  it. Mesh flag `512` lays a mesh's material in model space, so it moves with it.
+
 `box` flags: `1` draw, `2` collide, `4` checkerboard. `shade` is brightness in
 hundredths (72 = 0.72), so the whole file stays integers and an editor never has
 to think about locales and decimal points. `type` on `item` and `give` is an
 `ITEM_*` id from `Types.h`.
 
-Limits, from `RaidLevel.h`: 128 boxes, 8 cameras, 32 zones, 3 lights, 32
-enemies, 32 pickups, 8 `give` slots, 4 `bgsrc`, 32 meshes, one mirror. A bad line is skipped rather than fatal — a
-level that loses one wall is a better failure than a level that crashes. A file
-with no camera or no box is rejected outright and the level already loaded is
-kept.
+Limits, from `RaidLevel.h`: 128 boxes, 8 cameras, 32 zones, 8 lights, 32
+enemies, 32 pickups, 8 `give` slots, 4 `bgsrc`, 32 meshes, one mirror, 4 doors.
+A bad line is skipped rather than fatal — a level that loses one
+wall is a better failure than a level that crashes. A file with no camera or no
+box is rejected outright and the level already loaded is kept.
 
 ## Constraints worth knowing
 

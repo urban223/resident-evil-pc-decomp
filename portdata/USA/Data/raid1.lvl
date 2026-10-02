@@ -10,7 +10,7 @@
 # below 32768.
 #
 #   ambient <r> <g> <b>                          12-bit channels, 0..4095
-#   light   <x> <y> <z> <r> <g> <b> <radius>     up to 3; radius 0 is a BLACK light
+#   light   <x> <y> <z> <r> <g> <b> <radius>     up to 8; radius 0 is a BLACK light
 #   cam     <fx> <fy> <fz> <tx> <ty> <tz> <fov>  fov is a focal length, not an angle
 #   camzone <cam> <x0> <z0> <x1> <z1>            walk in here, switch to that camera
 #   spawn   <x> <z> <angle>                      0 = +X, 0x400 = +Z, 4096 = a turn
@@ -39,7 +39,7 @@ ver 1
 #     t26 the cistern's sides  t27 the rail's cap
 #   painted by tools/build_raid_materials.py (tracked):
 #     t7 brass  t9 towel cloth  t11 porcelain  t13 iron  t14 soap  t23 nickel
-#     t24 the bottle
+#     t24 the bottle  t28 amber glass
 # ---------------------------------------------------------------------------
 
 ambient 600 580 620
@@ -50,9 +50,19 @@ ambient 600 580 620
 light 3900 -3000 8300 255 226 180 8500
 light 7300 -2400 9600  80  84  96 6500
 light 6900 -3100 6600 200 190 170 6500
+light 5200 -3000  4100  90 104 150 6500    # room 003's corridor
+light 12000 -3200 7000 110 128 190 9500    # its bedroom
 
 # The room's own camera 0, high over the door.
 cam  4914 -7812  9936   5094  -936  7866  230
+# Room 003 next door (ROOM4060, its own cameras 1 and 4, moved with the room -
+# see "Room 003" below): down its corridor, and over its bedroom.
+cam  6554  -558  3984   1748 -1908  4254  230
+cam 13448 -3636  9726  10766 -1116  4866  230
+
+camzone 0   1872  5454   8298 10818     # the bathroom
+camzone 1   1730  3012   9290  5154     # room 003's corridor
+camzone 2   9290  3012  14528 11562     # room 003's bedroom
 
 spawn 6000 8000 2048
 
@@ -68,7 +78,9 @@ tbox  8298 -4000  5154   8598         0  6140  65 1 1600 100
 tbox  8298 -4000  6980   8598         0 11118  65 1 1600 100
 tbox  8298 -4000  6140   8598 -3130  6980  65 1 1600 100
 tbox  8298 -2080  6140   8598         0  6980  65 1 1600 100
-tbox  1872 -4000  5154   8298         0  5454   1 1 1600 100   # far (door)
+tbox  1872 -4000  5154   2407         0  5454  65 1 1600 100   # far, round the doorway
+tbox  3807 -4000  5154   8298         0  5454  65 1 1600 100
+tbox  2407 -4000  5154   3807 -3195  5454  65 1 1600 100
 tbox  1872 -4000 10728   3690         0 11028   65 1 1600 100   # near, bath side - one plane with the pan side (the collision
 #   record is 90 deeper here; drawn at 10818 it showed a step up the wall)
 tbox  3690 -4000 10728   8298         0 11118   65 1 1600 100   # near, pan side
@@ -79,36 +91,42 @@ tbox  3690 -4000 10728   8298         0 11118   65 1 1600 100   # near, pan side
 #   the near wall head-on, so its heights are the ones taken).
 # skirting
 tbox  1872   -470  5454   2310         0  5494  1 17 2200 100
-tbox  3680   -470  5454   8298         0  5494  1 17 2200 100
+tbox  3901   -470  5454   8298         0  5494  1 17 2200 100
 tbox  1872  -470 10688   8298     0 10728  1 17 2200 100
 tbox  1872   -470  5494   1912         0 10778  1 17 2200 100
 tbox  8258   -470  5494   8298         0 10688  1 17 2200 100
 # plaster
 tbox  1872 -1280  5454   2310   -470  5462  1 16 1760 100
-tbox  3680 -1280  5454   8298   -470  5462  1 16 1760 100
+tbox  3901 -1280  5454   8298   -470  5462  1 16 1760 100
 tbox  1872 -1280 10720   8298  -470 10728  1 16 1760 100
 tbox  1872 -1280  5462   1880   -470 10810  1 16 1760 100
 tbox  8290 -1280  5462   8298   -470 10720  1 16 1760 100
 # rail
 tbox  1872 -1650  5454   2310 -1280  5524  1 4 975 100
-tbox  3680 -1650  5454   8298 -1280  5524  1 4 975 100
+tbox  3901 -1650  5454   8298 -1280  5524  1 4 975 100
 tbox  1872 -1650 10658   8298 -1280 10728  1 4 975 100
 tbox  1872 -1650  5524   1942 -1280 10748  1 4 975 100
 tbox  8228 -1650  5524   8298 -1280 10658  1 4 975 100
 # rail cap
 tbox  1872 -1800  5454   2310 -1650  5569  1 27 975 100
-tbox  3680 -1800  5454   8298 -1650  5569  1 27 975 100
+tbox  3901 -1800  5454   8298 -1650  5569  1 27 975 100
 tbox  1872 -1800 10613   8298 -1650 10728  1 27 975 100
 tbox  1872 -1800  5569   1987 -1650 10703  1 27 975 100
 tbox  8183 -1800  5569   8298 -1650 10613  1 27 975 100
 
-# The door: 1180 x 3195 (x 2407..3586) - it was guessed 1450 x 2392 before,
-# which is what skewed its picture - in a dark frame.
-tbox  2407 -3195  5454   3586         0  5500   1 5 1180 100
-mesh 24  3462 -1243  5500     0 100 1   7  200   # its knob, on the brass plate in t5
+# The doorway: the picture's door is 1180 x 3195 (x 2407..3586) - it was
+# guessed 1450 x 2392 before, which skewed its picture - widened to 1400
+# (x 2407..3807), in a dark frame.
+# The door itself swings (`door`): walk into it and it opens away from you,
+# and room 003 is just there behind it - no cut, no loading. The meshes at its
+# hinge swing with it: the leaf (flag 512: its picture turns with it) and its
+# brass.
+door  2407  5477  1400 300
+mesh 30  2407     0  5477     0 100 513  5 1400   # the leaf
+mesh 31  2407     0  5477     0 100 1    7  300   # its knobs, plates and hinges
 tbox  2310 -3320  5454   2407         0  5540   1 4 1300 90
-tbox  3586 -3320  5454   3680         0  5540   1 4 1300 90
-tbox  2310 -3320  5454   3680 -3195  5540   1 4 1300 90
+tbox  3807 -3320  5454   3901         0  5540   1 4 1300 90
+tbox  2310 -3320  5454   3901 -3195  5540   1 4 1300 90
 
 # The mirror over the basin: a real one. The glass is the hole above; the
 # game reflects the characters in it (its own mirror pass, armed as SCD
@@ -133,12 +151,14 @@ mesh 16  4050     0  9015     0 100 129  21  600   # the towel over its rim
 mesh 9   2320     0 10000     0 100 1   7  300   # its mixer: two valves and a short spout
 mesh 25  2320     0 10000     0 100 1  23  400   # ... the hand shower, into the bath
 mesh 13  3265     0 10590     0 100 129   3  900   # the trough over it
-mesh 14  2913 -2010 10686     0 100 1  20  200   # ... a soap in it
-mesh 18  3429 -2010 10700     0 100 1   7  300   # ... and a brass-capped bottle
+mesh 14  2909 -2010 10560     0 100 1  28  250   # ... a brown glass jar in it
+mesh 18  3527 -2010 10610     0 100 1  23  300   # ... and a safety razor
 mesh 15  2072     0  9879     0 100 129   3  700   # the tray at its head
-mesh 17  2036 -2170  9556     0 100 1  11  300   # ... a white jug on it
+mesh 17  2009 -2165  9582  3072 100 1  11  300   # ... a crumpled rubber glove in it
 mesh 2   7400     0  9530     0 100 129   3  900   # the pan
 mesh 3   7400     0  9530     0 100 1  20  900   # its lid
+mesh 28  7400     0  9530     0 100 1  23  300   # ... its chrome hinges and edge
+mesh 29  6560  -150 10728     0 100 1  23  300   # the stop valve by the cistern
 mesh 4   7280     0 10445     0 100 1   7  300   # the cistern's lever and pipe
 mesh 19  8298 -1400  9570  1024 100 1  23  300   # the paper holder
 mesh 20  8298 -1400  9570  1024 100 1   9  300   # ... and its roll
@@ -149,16 +169,73 @@ mesh 12  8160 -1976  6207     0 100 1  24  400   # ... a bottle on it
 mesh 7   6602     0  5700     0 100 1   4  600   # the towel horse, leaning on the wall
 mesh 8   6602     0  5700     0 100 1   6  600   # ... and its towel
 
-# What STOPS you: ROOM4070's own collision records (RDT +0x4C), exactly, and
-# invisible (flag 2 only). Walls and fixtures alike.
-box    36 -4000  4032   1872     0 11772   2 40 0 0 0
+# What STOPS you: ROOM4070's own collision records (RDT +0x4C), and
+# invisible (flag 2 only). Walls and fixtures alike - trimmed where room 003
+# now stands, and the far wall cut for the doorway.
+box    36 -4000  5154   1872     0 11772   2 40 0 0 0
 box  3690 -4000 10728   8676     0 11862   2 40 0 0 0
-box     0 -4000  4086   9468     0  5454   2 40 0 0 0
-box  8298 -4000  4086   9540     0 11844   2 40 0 0 0
-box     0 -4000 10818   9594     0 12672   2 40 0 0 0
+box     0 -4000  5154   2407     0  5454   2 40 0 0 0
+box  3807 -4000  5154   9290     0  5454   2 40 0 0 0
+box  8298 -4000  5154   9290     0 11844   2 40 0 0 0
+box     0 -4000 10818   9290     0 12672   2 40 0 0 0
 box     0  -750  9072   5202     0 11124   2 40 0 0 0
-box  7542 -1000  4086   9468     0  6984   2 40 0 0 0
-box  6660  -900  9072   9522     0 11736   2 40 0 0 0
+box  7542 -1000  5454   9290     0  6984   2 40 0 0 0
+box  6660  -900  9072   9290     0 11736   2 40 0 0 0
+
+# ---------------------------------------------------------------------------
+# Room 003 (ROOM4060), through the bathroom door - the way the story has them:
+# the bathroom is the notch in its L. Its RDT puts the door to the bathroom on
+# its corridor's wall at z 4050; it is moved by (-304, +1104) so that wall
+# backs onto the bathroom's far wall and the two doors are one. Walls from its
+# own collision records, moved the same; the furniture is blocked out where
+# its records are, as the pictures show it: a desk at the corridor's end, a
+# bed against each wall of the bedroom, a rug between them. Blue light.
+# ---------------------------------------------------------------------------
+tbox  1730     0  3012   9290     0  5154  65 1 1600 70     # corridor floor: boards
+tbox  9290     0  3012  14528     0 11562  65 1 1600 70     # bedroom floor
+tbox  1430 -4000  2712   9290 -4000  5154  65 1 1600 35
+tbox  9290 -4000  2712  14828 -4000 11862  65 1 1600 35
+tbox  1430 -4000  2712  14828     0  3012  65 1 1600 100    # low Z
+tbox 14528 -4000  3012  14828     0 11862  65 1 1600 100    # high X
+tbox  9290 -4000 11562  14528     0 11862  65 1 1600 100    # high Z
+tbox  1430 -4000  3012   1730     0  5154  65 1 1600 100    # low X, the corridor's end
+tbox  8598 -4000  5154   9290     0 11562  67 1 1600 100    # the bathroom's back, from the bedroom
+tbox  1430 -4000  5154   1572     0  5454  65 1 1600 100
+# its other door, shut (to the guardhouse corridor)
+tbox  1725 -3195  3300   1730     0  4700   1 5 1400 100
+tbox  1700 -3320  3220   1730     0  3300   1 4 1300 90
+tbox  1700 -3320  4700   1730     0  4780   1 4 1300 90
+tbox  1700 -3320  3220   1730 -3195  4780   1 4 1300 90
+# the desk at the corridor's end, and its chair
+tbox  9900  -820  3012  11500  -760  3800   3 4  900 100
+tbox  9950  -760  3060  10050     0  3160   1 4  900 100
+tbox 11350  -760  3060  11450     0  3160   1 4  900 100
+tbox  9950  -760  3650  10050     0  3750   1 4  900 100
+tbox 11350  -760  3650  11450     0  3750   1 4  900 100
+tbox 10400  -480  4000  10900  -430  4500   3 4  900 100
+tbox 10420 -1100  4440  10880  -480  4500   1 4  900 100
+# the beds: a mattress and blanket on a frame
+tbox 13300  -460  3200  14500  -200  5400   3 4  900 100
+tbox 13280  -640  3180  14520  -460  5420   1 9  700 100
+tbox 13300 -1300  3100  14500 -1240  3180   1 7  300 100    # the brass head rail
+tbox 11500  -460 10300  13700  -200 11500   3 4  900 100
+tbox 11480  -640 10280  13720  -460 11520   1 9  700 100
+tbox 13700 -1300 10300  13780 -1240 11500   1 7  300 100
+# the rug
+tbox 10400   -10  6200  13000     0  8600   1 10 2600 100
+
+# Room 003's own collision records, moved by (-304, +1104): the walls and
+# the furniture it keeps you off. (Its record for the block the bathroom
+# fills is left out - the bathroom's walls are that here.)
+box 14528 -4000  1140  16328     0 13452   2 40 0 0 0
+box     0 -4000 11562  15662     0 13362   2 40 0 0 0
+box     0 -4000  1986   1730     0 12894   2 40 0 0 0
+box     0 -4000  1104  16094     0  3012   2 40 0 0 0
+box  9848  -900  1104  11612     0  4002   2 40 0 0 0
+box 12422  -700  1968  15698     0  6846   2 40 0 0 0
+box 11270  -700 10032  15680     0 12660   2 40 0 0 0
+box 12692 -4000 10230  15752     0 13020   2 40 0 0 0
+box  8598 -4000  5154   9290     0 11562   2 40 0 0 0
 
 # No pickups and no enemies: the room is for the two players.
 

@@ -244,9 +244,19 @@ def toilet_lid():
     bot = ring(m, 0.0, -20.0, 410.0, 500.0, -440.0, 28, 2.2)
     band(m, bot, top, (0.0, -470.0, -20.0))
     cap(m, top, (0.0, -500.0, -20.0), (0.0, -470.0, -20.0))
-    for x in (-150, 150):                                 # the hinges
-        tube(m, (x - 50, -520, 470), (x + 50, -520, 470), 28, None, 8)
     m.save("m3.obj")
+
+
+def toilet_hinges():
+    """The lid's chrome: the hinges at its back and the thin band round its
+    edge the repaint shows."""
+    m = Mesh()
+    for x in (-150, 150):
+        tube(m, (x - 50, -520, 470), (x + 50, -520, 470), 28, None, 8)
+    rr = [ring(m, 0.0, -20.0, 416.0 + d, 506.0 + d, y, 32, 2.2) for d, y in ((0, -495), (6, -470), (0, -445))]
+    band(m, rr[0], rr[1], (0.0, -470.0, -20.0))
+    band(m, rr[1], rr[2], (0.0, -470.0, -20.0))
+    m.save("m28.obj")
 
 
 def cistern_fittings():
@@ -452,8 +462,18 @@ def trough():
 
 
 def soap():
+    """The brown glass jar in the trough over the bath (the RE-ENHANCE
+    repaint shows it square, amber, its lid rusted): 170 square, 150 tall,
+    rounded at the edges, and a low lid."""
     m = Mesh()
-    box(m, -80, -70, -60, 80, 0, 60, 1)
+    lo = ring(m, 0.0, 0.0, 85.0, 85.0, 0.0, 20, 6.0)
+    hi = ring(m, 0.0, 0.0, 85.0, 85.0, -140.0, 20, 6.0)
+    band(m, lo, hi, (0.0, -70.0, 0.0))
+    cap(m, lo, (0.0, 0.0, 0.0), (0.0, -10.0, 0.0))
+    lid0 = ring(m, 0.0, 0.0, 78.0, 78.0, -140.0, 20, 6.0)
+    lid1 = ring(m, 0.0, 0.0, 78.0, 78.0, -175.0, 20, 6.0)
+    band(m, lid0, lid1, (0.0, -158.0, 0.0))
+    cap(m, lid1, (0.0, -175.0, 0.0), (0.0, -165.0, 0.0))
     m.save("m14.obj")
 
 
@@ -512,26 +532,30 @@ def bath_towel():
 
 
 def jug():
-    """The white jug on that tray: what camera 0 shows as a white spot from
-    above is, from camera 1, a jug about 300 tall with a narrow neck."""
+    """What lies in the tray at the bath's head: the RE-ENHANCE repaint shows a
+    crumpled white rubber glove (camera 1's tall silhouette is it standing
+    half up against the wall). A crumpled palm and four fingers and a thumb."""
     m = Mesh()
-    prof = [(120, 0), (132, -50), (128, -150), (100, -225), (52, -265), (40, -290), (50, -305)]
-    r = [ring(m, 0.0, 0.0, rr, rr, y, 16, 2.0) for rr, y in prof]
-    for r0, r1 in zip(r, r[1:]):
-        band(m, r0, r1, (0.0, -150.0, 0.0))
-    cap(m, r[0], (0.0, 0.0, 0.0), (0.0, -10.0, 0.0))
-    cap(m, r[-1], (0.0, -305.0, 0.0), (0.0, -295.0, 0.0))
-    tube(m, (0, -235, 105), (0, -200, 175), 16, None, 6)            # the handle
-    tube(m, (0, -200, 175), (0, -90, 165), 16, None, 6)
-    tube(m, (0, -90, 165), (0, -60, 125), 16, None, 6)
+    palm = [ring(m, 0.0, z, a, b, y, 14, 2.0) for a, b, y, z in
+            ((95, 140, 0, 0), (110, 155, -45, 10), (90, 130, -95, 30), (55, 90, -125, 40))]
+    for r0, r1 in zip(palm, palm[1:]):
+        band(m, r0, r1, (0.0, -60.0, 20.0))
+    cap(m, palm[0], (0.0, 0.0, 0.0), (0.0, -10.0, 0.0))
+    cap(m, palm[-1], (0.0, -125.0, 40.0), (0.0, -100.0, 40.0))
+    for k, (dx, dz, up) in enumerate(((-60, -150, 40), (-20, -175, 70), (25, -170, 55), (65, -140, 30))):
+        tube(m, (dx * 0.6, -60, -60), (dx, -60 - up, dz), 22, 18, 6)            # the fingers, curled
+        tube(m, (dx, -60 - up, dz), (dx * 1.1, -40 - up * 0.5, dz - 50), 18, 14, 6)
+    tube(m, (90, -40, 40), (170, -90, -20), 22, 18, 6)                         # the thumb
+    tube(m, (0, -110, 120), (0, -250, 260), 70, 60, 10)                        # the cuff, rolled up the wall
     m.save("m17.obj")
 
 
 def brush():
-    """The brass-capped bottle on the trough."""
+    """The safety razor standing in the trough: a knurled handle and its head."""
     m = Mesh()
-    tube(m, (0, 0, 0), (0, -150, 0), 34, 30, 10)
-    tube(m, (0, -150, 0), (0, -200, 0), 18, 18, 8)
+    tube(m, (0, 0, 0), (0, -170, 0), 16, 16, 8)                      # the handle
+    tube(m, (0, -170, 0), (0, -190, 0), 22, 22, 8)
+    box(m, -70, -215, -18, 70, -190, 18, 1)                          # the head
     m.save("m18.obj")
 
 
@@ -572,6 +596,54 @@ def mirror_frame():
     m.save("m27.obj")
 
 
+def stop_valve():
+    """The stop valve low on the near wall by the cistern: a chrome elbow out
+    of the wall and its little wheel; the wall at z 0, the room toward -z."""
+    m = Mesh()
+    tube(m, (0, 0, 0), (0, 0, -60), 40, 34, 10)
+    tube(m, (0, 0, -60), (0, 0, -120), 30, 30, 10)
+    tube(m, (0, 0, -120), (0, 150, -120), 24, 24, 8, (True, False))
+    tube(m, (0, -10, -90), (0, -70, -90), 10, 10, 6)
+    tube(m, (-40, -80, -90), (40, -80, -90), 12, 12, 6)
+    tube(m, (0, -80, -130), (0, -80, -50), 12, 12, 6)
+    m.save("m29.obj")
+
+
+DOOR_W = 1400.0     # wider than the picture's 1180: the user's call; the picture is stretched to it
+
+
+def door_leaf():
+    """The bathroom door as a model of its own, so it can swing (`door` line,
+    RaidArena.cpp): a leaf DOOR_W x 3195, 46 thick, its origin at the HINGE
+    (low X, the floor, the middle of its thickness), shut along +X. Its
+    picture (t5) is laid on it in model space (mesh flag 512), so it turns
+    with it. The four panels stand a little proud of the stiles, where the
+    picture has them."""
+    m = Mesh()
+    W, H, T = DOOR_W, 3195.0, 23.0
+    k = W / 1180.0
+    box(m, 0, -H, -T, W, 0, T, 1)
+    for x0, x1 in ((130 * k, 480 * k), (535 * k, 922 * k)):
+        for y0, y1 in ((-2992, -1553), (-1203, -207)):
+            box(m, x0, y0, -T - 10, x1, y1, -T, 1)
+            box(m, x0, y0, T, x1, y1, T + 10, 1)
+    m.save("m30.obj")
+
+
+def door_knobs():
+    """Its brass, the only knob it has (painted out of the picture): a plate
+    and a knob each side, 140 in from the leaf's free edge and 1243 up, and
+    three hinge knuckles at the hinge."""
+    m = Mesh()
+    kx = DOOR_W - 140.0
+    for s_ in (-1, 1):
+        box(m, kx - 40, -1360, s_ * 23, kx + 40, -1130, s_ * 31)
+        tube(m, (kx, -1243, s_ * 31), (kx, -1243, s_ * 85), 14, None, 8)
+        tube(m, (kx, -1243, s_ * 85), (kx, -1243, s_ * 125), 44, 38, 12)
+    for y in (-2900, -1600, -300):
+        tube(m, (-6, y - 110, 0), (-6, y + 110, 0), 20, None, 8)
+    m.save("m31.obj")
+
 if __name__ == "__main__":
     for name in os.listdir(OUT):
         if name.endswith(".obj"):
@@ -579,5 +651,6 @@ if __name__ == "__main__":
     for f in (bath_outer, bath_inner, toilet, toilet_lid, cistern_fittings, sink, sink_shelf,
               bottle, towel_rack, towel, bath_taps, basin_taps, trough, soap, head_tray,
               bath_towel, jug, brush, paper_holder, paper_roll, door_knob, shower,
-              mirror_frame):
+              mirror_frame, toilet_hinges, stop_valve,
+              door_leaf, door_knobs):
         f()

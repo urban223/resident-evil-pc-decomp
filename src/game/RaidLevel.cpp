@@ -11,7 +11,7 @@
 //
 //   ver     1
 //   ambient <r> <g> <b>                          12-bit channels, 0..4095
-//   light   <x> <y> <z> <r> <g> <b> <radius>     up to 3; radius 0 is a BLACK light
+//   light   <x> <y> <z> <r> <g> <b> <radius>     up to 8; radius 0 is a BLACK light
 //   cam     <fx> <fy> <fz> <tx> <ty> <tz> <fov>  fov is a focal length, not an angle
 //   camzone <cam> <x0> <z0> <x1> <z1>            walk in here, switch to that camera
 //   spawn   <x> <z> <angle>                      angle: 0 = +X, 0x400 = +Z, 4096 = a turn
@@ -23,6 +23,7 @@
 //   mesh    <id> <x> <y> <z> <yaw> <scale> <flags> <tex> <tile>
 //   tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>
 //   mirror  <axis> <plane> <min> <max> <ytop> <ybot>
+//   door    <hx> <hz> <width> <depth>
 //
 // `bgsrc` names one of the game's pre-rendered backgrounds (StageS\RCSRRC.pak,
 // stage 1-based, room and camera as in the file name) and the camera it was
@@ -48,6 +49,13 @@
 // characters are reflected by the original code; the arena draws the room's
 // reflection itself, which shows through a hole the level must leave in the
 // wall there. One per level.
+//
+// `door` is a door that swings open as you walk into it, instead of cutting
+// to another room: hinged at (hx, hz), `width` along +X when shut, its
+// doorway `depth` thick across the wall. The loader makes the doorway's solid
+// box itself; every `mesh` placed exactly at the hinge swings with the door.
+// `light` lines may number up to 8: the arena is lit by all of them, the
+// characters (the RDT's three light slots) by the three nearest player 1.
 //
 // `type` in both is an ITEM_* id from Types.h. `give` lines are taken in order
 // and fill the eight slots; a level with no `give` line at all keeps the mode's
@@ -265,6 +273,24 @@ static void raid_mirror(RaidLevel* lv, const int* v)
     M->ybot  = v[4] < v[5] ? v[5] : v[4];
 }
 
+static void raid_door(RaidLevel* lv, const int* v)
+{
+    if (lv->ndoor >= RAID_MAX_DOOR || v[2] <= 0) return;
+    RaidDoor* D = &lv->door[lv->ndoor];
+    memset(D, 0, sizeof(*D));
+    D->hx = v[0]; D->hz = v[1]; D->width = v[2]; D->depth = v[3] > 0 ? v[3] : 300;
+    // The doorway: solid while the door is shut. Drawn by nothing - the door
+    // leaf is a mesh - and written back by nothing (EditorSave skips it).
+    const int half = D->depth / 2;
+    int b[11] = { D->hx, -4000, D->hz - half, D->hx + D->width, 0, D->hz + half,
+                  RAID_BOX_SOLID | RAID_BOX_DOOR, 40, 0, 0, 0 };
+    const int before = lv->nbox;
+    raid_box(lv, b);
+    if (lv->nbox == before) return;
+    D->box = lv->nbox - 1;
+    lv->ndoor++;
+}
+
 // "ver" is not in here, and neither is anything unknown: both are ignored on
 // purpose, so an older build reads a newer file instead of refusing it.
 static const RaidDirective kRaidDirectives[] = {
@@ -281,6 +307,7 @@ static const RaidDirective kRaidDirectives[] = {
     { "mesh",     9, raid_mesh },
     { "tbox",    10, raid_tbox },
     { "mirror",   6, raid_mirror },
+    { "door",     4, raid_door },
 };
 
 static const RaidDirective* raid_directive(const char* key)
@@ -515,6 +542,38 @@ void RaidLevel_Apply(void)
                            | (g_raidLevel.mirror.axis ? MSF_MIRROR_PLANE_X : 0);
     } else {
         g_main_state_flags &= ~(MSF_MIRROR_ENABLE | MSF_MIRROR_PLANE_X);
+    }
+}
+
+void RaidLevel_RebuildCollision(void)
+{
+    if (!g_raidLevel.loaded || g_RdtPointer == NULL) return;
+    raid_build_collision();
+}
+
+// The RDT has three light slots, and they light the characters. A level with
+// more lights than that (a second room through a door) gives them the three
+// nearest the given point - player 1, every frame.
+void RaidLevel_LightsNear(int x, int z)
+{
+    if (!g_raidLevel.loaded || g_RdtPointer == NULL || g_raidLevel.nlight <= 3) return;
+    int pick[3] = { -1, -1, -1 };
+    for (int k = 0; k < 3; k++) {
+        double best = 1e30;
+        for (int i = 0; i < g_raidLevel.nlight && i < RAID_MAX_LIGHT; i++) {
+            if (i == pick[0] || i == pick[1]) continue;
+            const double dx = g_raidLevel.light[i].x - x, dz = g_raidLevel.light[i].z - z;
+            const double d = dx * dx + dz * dz;
+            if (d < best) { best = d; pick[k] = i; }
+        }
+    }
+    RDT_Light* dst = g_RdtPointer->lights;
+    for (int k = 0; k < 3; k++) {
+        if (pick[k] < 0) continue;
+        const RaidLight* L = &g_raidLevel.light[pick[k]];
+        dst[k].pos_x = L->x; dst[k].pos_y = L->y; dst[k].pos_z = L->z;
+        dst[k].red = L->r; dst[k].green = L->g; dst[k].blue = L->b;
+        dst[k].radius = L->radius;
     }
 }
 

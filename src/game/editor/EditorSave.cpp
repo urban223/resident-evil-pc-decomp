@@ -42,7 +42,7 @@ static const char* const ED_HEADER =
 "# below 32768.\n"
 "#\n"
 "#   ambient <r> <g> <b>                          12-bit channels, 0..4095\n"
-"#   light   <x> <y> <z> <r> <g> <b> <radius>     up to 3; radius 0 is a BLACK light\n"
+"#   light   <x> <y> <z> <r> <g> <b> <radius>     up to 8; radius 0 is a BLACK light\n"
 "#   cam     <fx> <fy> <fz> <tx> <ty> <tz> <fov>  fov is a focal length, not an angle\n"
 "#   camzone <cam> <x0> <z0> <x1> <z1>            walk in here, switch to that camera\n"
 "#   spawn   <x> <z> <angle>                      0 = +X, 0x400 = +Z, 4096 = a turn\n"
@@ -54,6 +54,7 @@ static const char* const ED_HEADER =
 "#   mesh    <id> <x> <y> <z> <yaw> <scale> <flags> <tex> <tile>\n"
 "#   tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>\n"
 "#   mirror  <axis> <plane> <min> <max> <ytop> <ybot>\n"
+"#   door    <hx> <hz> <width> <depth>\n"
 "#\n"
 "# box flags: 1 draw, 2 collide, 4 checkerboard, 8 projected from the bgsrc\n"
 "# backdrops.   shade is in hundredths.\n"
@@ -120,8 +121,15 @@ static size_t ed_serialize(char* out, size_t cap)
 
     ED_PUT("spawn %d %d %d\n\n", L->spawnX, L->spawnZ, L->spawnAngle);
 
+    for (int i = 0; i < L->ndoor; i++) {
+        const RaidDoor* d = &L->door[i];
+        ED_PUT("door %6d %6d  %d %d\n", d->hx, d->hz, d->width, d->depth);
+    }
+    if (L->ndoor) ED_PUT("\n");
+
     for (int i = 0; i < L->nbox; i++) {
         const RaidBox* b = &L->box[i];
+        if (b->flags & RAID_BOX_DOOR) continue;   // the `door` line above makes it
         if (b->flags & RAID_BOX_TEX) {
             // A material box goes back out as the tbox line it came from.
             ED_PUT("tbox %6d %6d %6d  %6d %6d %6d  %d %d %d %d\n",

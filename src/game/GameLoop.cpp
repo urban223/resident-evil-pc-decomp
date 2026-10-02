@@ -17,6 +17,7 @@
 #include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "CoopNet.h"      // CUSTOM: RAID co-op transport
 #include "editor/Editor.h"   // CUSTOM: the in-game level editor
+#include "RaidLevel.h"       // CUSTOM: RAID doors
 #include "RaidShoulderCam.h" // CUSTOM: RAID L2 aim + shoulder camera
 #include "../marni/MarniInput.h"
 #include <cstdio>
@@ -342,6 +343,7 @@ LAB_00480e89:
                     update_player_position(&g_playerEntity, 1);
 
                     RaidShoulderCam_AfterPlayer(coopP);    // CUSTOM: RAID free aim
+                    RaidDoors_Player(coopP);               // CUSTOM: RAID doors, RE2-style
 
                     Coop_EndPlayer();
                 }
