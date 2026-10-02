@@ -63,9 +63,9 @@ extern unsigned int* CreateAnimObject(int slotPtr, unsigned int* param2);
 // tables; y negative is up):
 //
 //        joint   char10/char11 (player)        em1000 (zombie)
-//          0     pelvis                        pelvis
-//          1     head        (leaf on pelvis)  torso       (child of pelvis)
-//          2     chest       (arms hang here)  head        (child of torso)
+//          0     torso (root; arms hang here)  hips (root; legs hang here)
+//          1     head        (leaf on torso)   torso       (child of hips)
+//          2     hips  (legs hang here)        head        (child of torso)
 //         3-5    leg,  z+ side                 arm,  z- side (held forward)
 //         6-8    leg,  z- side                 arm,  z+ side
 //        9-11    arm,  z+ side                 leg,  z- side
@@ -78,11 +78,20 @@ extern unsigned int* CreateAnimObject(int slotPtr, unsigned int* param2);
 // to leave alone: his upper arm/forearm are 454/436 against her 422/388, his
 // thigh/shin 663/833 against her 602/808.
 //
-// The rig, the rest offsets and the frames all stay the zombie's, so nothing
-// here can put a pose together out of two skeletons - only the meshes move.
+// The two ROOTS are different body parts, and that is the easy one to get
+// wrong: the player's root carries the torso (its mesh runs UP from the joint,
+// y -714..35 on char11) and the hips are a child of it, while the zombie's root
+// is the hips (mesh runs down, y -3..388) and the torso is the child. Mapping
+// root to root put her torso on his hips, so whenever he bent at the waist her
+// chest stayed with his pelvis while her arms went with his torso - which is
+// what "the arms look detached at the shoulder" was.
+//
+// The rig and the frames stay the zombie's, so nothing here can put a pose
+// together out of two skeletons. The rest offsets of the head and arms are the
+// one exception, and coop_fit_zombie_bones below says why.
 static const unsigned char kCoopZombieMeshMap[15] = {
-     0,      // pelvis
-     2,      // his torso   <- her chest
+     2,      // his hips    <- her hips
+     0,      // his torso   <- her torso
      1,      // his head    <- her head
     12, 13, 14,   // his z- arm  <- her z- arm
      9, 10, 11,   // his z+ arm  <- her z+ arm
@@ -176,6 +185,61 @@ static unsigned int coop_build_zombie_body(int i)
 
     g_loadDataDestPointer = (void*)pool;
     return (unsigned int)mem;
+}
+
+// Put the zombie's head and arm joints where the PLAYER's are.
+//
+// Her meshes on his bones still meet badly if the bones are his length: his
+// shoulders sit 421 out from the torso against her 276 (char11), so her arms
+// hung off the air beside her own shoulders, and his head sits 75 higher than
+// hers. A mesh only fits the bone it was modelled around, so those bones take
+// her offsets.
+//
+// That is safe to do per entity because Joint_move only ever writes the ROOT's
+// translation; every other joint's transform.t is the rest offset
+// ResetJointTransforms copied in and nothing touches it again.
+//
+// The shoulders hang off the torso in both rigs and both torsos are authored
+// upright, so her shoulder offsets go in as they are. Further down the arm the
+// offsets are in the arm's own frame, so they take the same quarter turn the
+// arm meshes take in coop_rot_copy - turning the bones and the meshes together
+// is what keeps the elbow and wrist on the mesh. Her offsets come from her own
+// file (animHeader+8, three shorts per joint), so this is right for Chris too.
+//
+// Legs are left alone: their lengths are also what puts the feet on the floor
+// under a root height that comes out of the zombie's frames.
+static void coop_fit_zombie_bones(int i, Entity* z)
+{
+    const PlayerEntity* p = &g_players[i];
+    if (p->animHeader == 0 || z->jointsStructs == 0) return;
+    if (*(const unsigned char*)(p->animHeader + 4) != 15 || z->jointCount != 15) return;
+
+    const short* rest = (const short*)(p->animHeader + 8);
+    JointStruct* jt = z->jointsStructs;
+
+    // zombie joint <- player joint, and whether the arm turn applies
+    static const struct { unsigned char zj, pj, turn; } kFit[] = {
+        { 2,  1, 0 },   // head      (off the torso in both, once remapped)
+        { 3, 12, 0 },   // z- shoulder
+        { 4, 13, 1 },   // z- elbow
+        { 5, 14, 1 },   // z- wrist
+        { 6,  9, 0 },   // z+ shoulder
+        { 7, 10, 1 },   // z+ elbow
+        { 8, 11, 1 },   // z+ wrist
+    };
+    for (unsigned k = 0; k < sizeof(kFit) / sizeof(kFit[0]); k++) {
+        short v[4] = { rest[kFit[k].pj * 3 + 0], rest[kFit[k].pj * 3 + 1],
+                       rest[kFit[k].pj * 3 + 2], 0 };
+        if (kFit[k].turn) {
+            short t[4];
+            coop_rot_copy(t, v, 1, kFit[k].zj >= 6);
+            v[0] = t[0]; v[1] = t[1]; v[2] = t[2];
+        }
+        JointStruct* j = &jt[kFit[k].zj];
+        j->transform.t[0] = v[0];
+        j->transform.t[1] = v[1];
+        j->transform.t[2] = v[2];
+    }
 }
 
 
@@ -552,6 +616,7 @@ void Coop_ReserveZombies(void)
         // against a healthy arena zombie's j00=(6782,-1856,3450) j07=(6597,-2206,3034).
         // Done here rather than at the wake-up so nothing allocates mid-game.
         ResetJointTransforms();
+        if (body != 0) coop_fit_zombie_bones(i, z);
 
         z->status_flags = 0;          // asleep until its owner dies
         s_reservedSlot[i] = slot;

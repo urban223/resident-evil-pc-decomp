@@ -273,9 +273,9 @@ y negative being up:
 
 | joint | `char10`/`char11` (player) | `em1000` (zombie) |
 |---|---|---|
-| 0 | pelvis | pelvis |
-| 1 | head, a leaf on the pelvis | torso, child of the pelvis |
-| 2 | chest, where the arms hang | head, child of the torso |
+| 0 | torso (root; the arms hang here) | hips (root; the legs hang here) |
+| 1 | head, a leaf on the torso | torso, child of the hips |
+| 2 | hips, where the legs hang | head, child of the torso |
 | 3-5 | leg, z+ side | arm, z- side, held forward |
 | 6-8 | leg, z- side | arm, z+ side |
 | 9-11 | arm, z+ side | leg, z- side |
@@ -316,11 +316,49 @@ the one the engine loads from a file - a 12-byte `AnimDataHeader` and its
 `slots[]` - so `InitAnimStructure` and `SetupJointStructures` are the stock path
 and nothing downstream knows any of this happened.
 
-**Still not right:** the arms read as slightly detached at the shoulder. The
-turn is correct in direction; what is left is either the roll about the limb's
-own axis or the 75-unit difference between the two rigs' shoulder positions.
-Next thing to try is a small extra rotation about the bone, and to compare her
-shoulder offset with his.
+### The detached shoulders: found, fixed, NOT yet tested in game
+
+The first version of the table above had rows 0 and 2 of the player wrong
+("pelvis" / "chest"). Dumping the mesh bounds settles it: on `char11` the
+root's mesh runs UP from the joint (y -714..35) and joint 2's runs down
+(-77..310), so the player's root is the torso and joint 2 the hips. The
+zombie's root is the hips (mesh y -3..388) and the torso is its child.
+`kCoopZombieMeshMap` mapped root to root, which put her torso on his hips:
+whenever he bent at the waist her chest stayed with his pelvis while her arms
+went with his torso. That is what "detached at the shoulder" was.
+
+The second half is bone length. Rest offsets (`animHeader+8`, three shorts per
+joint), `char11` against `em1000`:
+
+| bone | player (`char11`) | zombie (`em1000`) |
+|---|---|---|
+| head off torso | (-20, -618, 0) | (-17, -693, 0) |
+| z+ shoulder off torso | (-36, -576, 276) | (-78, -576, 421) |
+| z- shoulder off torso | (-37, -565, -266) | (-77, -578, -418) |
+| z+ elbow / wrist | (-8, 422, 64) / (14, 388, 54) | (1, 0, 452) / (0, 0, 434) |
+| z- elbow / wrist | (0, 399, -67) / (13, 358, -45) | (0, 0, -454) / (0, 0, -436) |
+
+His shoulders are 145 units wider, so her arm meshes on his bones hung beside
+her own shoulders. (`Char10`'s shoulders are at y -694 / z ±388; it differs
+again, which is why nothing below is hardcoded.)
+
+The fix, in `CoopPlayer.cpp`, uncommitted:
+
+1. `kCoopZombieMeshMap` now starts `2, 0, 1`: hips on hips, torso on torso.
+2. `coop_fit_zombie_bones`, called right after `ResetJointTransforms` in
+   `Coop_ReserveZombies`, gives zombie joints 2-8 (head, both arms) the
+   PLAYER's rest offsets, read from her own `animHeader`. Shoulders and head
+   go in unchanged (both torsos are authored upright). Elbows and wrists take
+   the same quarter turn `coop_rot_copy` gives the arm meshes, so bones and
+   meshes turn together. This holds per entity because `Joint_move` writes
+   only the root's `transform.t`; every other joint keeps the rest offset.
+3. Legs left as the zombie's: their lengths also put the feet on the floor
+   under a root height that comes from the zombie's frames. Her legs are about
+   85 units shorter; if the knees or ankles show a gap, that is where it comes
+   from.
+
+To check in game: arms on the shoulders, including when he bends at the
+waist; head on the neck; hips and legs unchanged from before.
 
 Three things about the two files are load-bearing and were checked rather than
 assumed: `char10`, `char11` and `em1000` all carry `jointCount` 15 at
@@ -400,12 +438,9 @@ compare across those two.
   the room loads; see the note in `CoopNet.cpp`.
 - A client does not run `update_player_anim`, so poses come off the wire as a
   frame id and nothing advances the skeleton locally.
-- **A risen player's arms read as slightly detached at the shoulder.** The
-  quarter turn onto the zombie's arm bones is right in direction - they are no
-  longer twisted - but not finished. Suspects, in order: the roll about the
-  limb's own axis, and the two rigs' shoulder positions (-2190 on her against
-  -2441 on him, with his arm hanging off the torso joint and hers off the
-  pelvis).
+- **A risen player's arms read as slightly detached at the shoulder.** Cause
+  found and a fix built, but not yet tested in game or committed; see "The
+  detached shoulders" above.
 - The zombie's attack button has not been tried in game yet. The interesting
   case is the one that does nothing: with the other player out of reach the
   fire button must not start a grab, or it will drag him across the room.
