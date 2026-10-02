@@ -105,7 +105,7 @@ static int         s_l1Key, s_l1Pad, s_l1Was;
 static float       s_camYaw;       // the view's own yaw, in directionAngle's sense, radians
 static float       s_orbitPitch;   // and up (+) or down
 #define SC_TURN_TO_MOVE      0xA0      // directionAngle a frame, turning to face the way she goes
-#define SC_BODY_MAX          0.80f     // radians: how far off the camera's line her body turns, walking sideways
+#define SC_BODY_MAX          0.40f     // radians (~23 deg): how far off the camera's line her body turns, walking sideways - the 70 s recording, 28-34 s, shows her back almost square to the camera
 static float s_moveYaw;                // the L1 view's travel direction this frame (directionAngle's sense)
 static int   s_moveRedirect;           // set: RaidShoulderCam_Walk sends the step along it
 // The L1 view sits further back and a little higher than the aim - the RE2
@@ -584,7 +584,7 @@ void RaidShoulderCam_BeforePlayer(int i)
             // What recorded RE2 (2019) play shows, frame by frame against the
             // stick: she travels exactly where the stick points (relative to
             // the camera), but her BODY turns only part of the way - straight
-            // ahead fully, sideways by about half, and pulled back not at all:
+            // ahead fully, sideways only a little, and pulled back not at all:
             // she steps back toward the camera with her back still to it. So
             // the facing is the travel turned at most SC_BODY_MAX off the
             // camera's line, the game's own walk (or back-step, for a stick

@@ -33,7 +33,7 @@ whether or not she aims - the way Resident Evil 2 (2019) explores:
 | Input | In the L1 view, not aiming |
 |---|---|
 | right stick | swings the camera round her and tips it; it stays where it is put |
-| left stick | moves her relative to the CAMERA, exactly where it points (analogue, any angle): her body turns fully for forward, about half way for sideways, and not at all pulled back - she steps back toward the camera with her back to it |
+| left stick | moves her relative to the CAMERA, exactly where it points (analogue, any angle): her body turns fully for forward, only ~23 degrees for sideways, and not at all pulled back - she steps back toward the camera with her back to it |
 | L2 | raises the gun where the camera looks (she turns to it); the aim is as above |
 
 The view sits further back and higher than the aim (3000 behind, the RE2
