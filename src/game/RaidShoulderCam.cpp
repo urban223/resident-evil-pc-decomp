@@ -27,6 +27,7 @@
 #include "CoopPlayer.h"
 #include "CoopNet.h"
 #include "editor/Editor.h"
+#include "RaidLevel.h"   // the level's boxes: the camera must not go through a wall
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>   // rand: an unfocused shot's spread
@@ -83,6 +84,37 @@ static RDT_Camera  s_saved;        // that slot as the level wrote it
 static int         s_blend;        // 0 = the room's camera, SC_BLEND_FRAMES = ours
 static int         s_zoom;         // 0 = walking distance, SC_ZOOM_FRAMES = the aim one
 
+#define SC_STICK_DEADZONE  7849     // XInput's own right-stick deadzone
+static int           s_stickY;          // player 1's right stick, up positive
+static int           s_stickX;          // ...and right positive
+
+// L1: the shoulder camera as a VIEW, not only an aim - the way Resident Evil
+// 2 (2019) explores. Toggled on:
+//   - the camera sits over her right shoulder at walking distance and is the
+//     PLAYER's: the right stick swings it round her and tips it up and down,
+//     and it stays where it is put - it does not follow her turning;
+//   - the left stick moves her RELATIVE TO THE CAMERA: up walks away from it,
+//     down toward it, left and right across it, and she turns briskly to face
+//     where she is going (the game's own walk and run carry her);
+//   - L2 raises the gun where the camera looks: she turns to it, and the aim
+//     is exactly as before.
+// Off, the room's fixed camera and the original tank controls.
+static int         s_viewMode;     // 1 = the shoulder view is on
+static int         s_l1Key, s_l1Pad, s_l1Was;
+static float       s_camYaw;       // the view's own yaw, in directionAngle's sense, radians
+static float       s_orbitPitch;   // and up (+) or down
+#define SC_TURN_TO_MOVE      0xA0      // directionAngle a frame, turning to face the way she goes
+// The L1 view sits further back and a little higher than the aim - the RE2
+// (2019) exploration framing, her whole figure in the left of the frame - and
+// it follows her with a little lag rather than being nailed to her back.
+#define SC_BACK_VIEW       3000.0f
+#define SC_EYE_Y_VIEW     -2800.0f
+#define SC_RIGHT_VIEW       850.0f
+#define SC_FOLLOW            0.30f     // of the way to where the eye should be, a frame
+#define SC_ORBIT_YAW_RATE    0.075f    // radians a frame at full deflection
+#define SC_ORBIT_PITCH_RATE  0.045f
+#define SC_ORBIT_PITCH_MAX   0.60f     // about 35 degrees either way
+
 void RaidShoulderCam_NoteRaw(unsigned int raw)
 {
     const int who = (g_coopPadSource > 0 && g_coopPadSource < RAID_PLAYERS) ? g_coopPadSource : 0;
@@ -108,6 +140,23 @@ static RDT_Camera* sc_cameras(void)
     return (RDT_Camera*)((char*)g_RdtPointer + sizeof(RDT));
 }
 
+// Whether the shoulder camera may be up at all (aiming or not): he is alive,
+// has the pad, and this machine runs him.
+static int sc_allowed(void)
+{
+    const PlayerEntity* p = &g_players[0];
+    if (g_coopActive && !Coop_IsAuthority()) return 0;   // a client runs no player
+    if (Coop_IsZombie(0) || p->health <= 0) return 0;
+    if ((p->zoneFlags & 0x20) != 0 || (g_message_flags & 0x100) == 0) return 0;
+    return 1;
+}
+
+void RaidShoulderCam_NoteL1(int held, int pad)
+{
+    if (pad) s_l1Pad = held ? 1 : 0;
+    else     s_l1Key = held ? 1 : 0;
+}
+
 static int sc_wanted(void)
 {
     const PlayerEntity* p = &g_players[0];
@@ -119,6 +168,59 @@ static int sc_wanted(void)
     // cannot come up then, so neither should the camera.
     if ((p->zoneFlags & 0x20) != 0 || (g_message_flags & 0x100) == 0) return 0;
     return 1;
+}
+
+// ---------------------------------------------------------------------------
+// The camera against the level's walls. Every drawn box that stands up (not a
+// floor or ceiling plate, not a door's doorway) is a wall to it. The pull is
+// eased back out, not snapped: walking past a wall's end, the eye slides back
+// to its place instead of jumping.
+// ---------------------------------------------------------------------------
+#define SC_WALL_MARGIN   120.0f    // the eye's distance from the wall it is stopped by
+#define SC_EYE_RETURN    0.12f     // of the way back out, a frame
+
+static float s_eyeX, s_eyeY, s_eyeZ;
+static float s_eyeFrac = 1.0f;     // how far out along the line the eye is allowed
+static int   s_followOk;           // s_eye* holds last frame's eye
+
+static void sc_clip_eye(float ox, float oy, float oz, float* ex, float* ey, float* ez)
+{
+    const float d[3] = { *ex - ox, *ey - oy, *ez - oz };
+    const float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (len < 1.0f) return;
+    float hit = 1.0f;
+    for (int i = 0; i < g_raidLevel.nbox; i++) {
+        const RaidBox* B = &g_raidLevel.box[i];
+        if ((B->flags & RAID_BOX_DRAW) == 0 || (B->flags & RAID_BOX_DOOR) != 0) continue;
+        if (B->y0 == B->y1) continue;                    // a floor or ceiling plate
+        const float lo[3] = { (float)B->x0, (float)B->y0, (float)B->z0 };
+        const float hi[3] = { (float)B->x1, (float)B->y1, (float)B->z1 };
+        const float o[3] = { ox, oy, oz };
+        float t0 = 0.0f, t1 = hit;
+        int miss = 0;
+        for (int k = 0; k < 3 && !miss; k++) {
+            if (fabsf(d[k]) < 1e-4f) {
+                if (o[k] < lo[k] || o[k] > hi[k]) miss = 1;
+                continue;
+            }
+            float u0 = (lo[k] - o[k]) / d[k], u1 = (hi[k] - o[k]) / d[k];
+            if (u0 > u1) { const float tt = u0; u0 = u1; u1 = tt; }
+            if (u0 > t0) t0 = u0;
+            if (u1 < t1) t1 = u1;
+            if (t0 > t1) miss = 1;
+        }
+        if (miss) continue;
+        if (t0 <= 0.0f) continue;                        // he is inside it: not a wall in the way
+        if (t0 < hit) hit = t0;
+    }
+    float want = hit < 1.0f ? hit - SC_WALL_MARGIN / len : 1.0f;
+    if (want < 0.15f) want = 0.15f;
+    // In at once (never through the wall), out gently.
+    if (want < s_eyeFrac) s_eyeFrac = want;
+    else s_eyeFrac += (want - s_eyeFrac) * SC_EYE_RETURN;
+    *ex = ox + d[0] * s_eyeFrac;
+    *ey = oy + d[1] * s_eyeFrac;
+    *ez = oz + d[2] * s_eyeFrac;
 }
 
 static int sc_lerp(int a, float b, float t)
@@ -139,7 +241,42 @@ void RaidShoulderCam_Update(void)
         return;
     }
 
-    const int want = sc_wanted();
+    // L1, on its press: the shoulder view on or off.
+    {
+        const int l1 = (s_l1Key || s_l1Pad) && g_raidMode;
+        if (l1 && !s_l1Was) {
+            s_viewMode = !s_viewMode;
+            s_camYaw = (float)(g_players[0].directionAngle & 0xFFF) * (6.2831853f / 4096.0f);
+            s_orbitPitch = 0.0f;
+        }
+        s_l1Was = l1;
+    }
+    const int aiming = sc_wanted();
+    const int want = aiming || (s_viewMode && sc_allowed());
+
+    // The right stick swings the view while she is NOT aiming (aiming, it
+    // turns her, as before). Right swings it right, up tips it up.
+    if (want && !RaidShoulderCam_FreeAim()) {
+        const int dz = SC_STICK_DEADZONE;
+        int x = s_stickX, y = s_stickY;
+        if (x > dz || x < -dz) {
+            const float k = (float)((x < 0 ? -x : x) - dz) / (float)(32767 - dz);
+            s_camYaw += (x < 0 ? -1.0f : 1.0f) * (0.4f * k + 0.6f * k * k) * SC_ORBIT_YAW_RATE;
+        }
+        if (y > dz || y < -dz) {
+            const float k = (float)((y < 0 ? -y : y) - dz) / (float)(32767 - dz);
+            s_orbitPitch += (y < 0 ? -1.0f : 1.0f) * (0.4f * k + 0.6f * k * k) * SC_ORBIT_PITCH_RATE;
+        }
+        if (s_orbitPitch >  SC_ORBIT_PITCH_MAX) s_orbitPitch =  SC_ORBIT_PITCH_MAX;
+        if (s_orbitPitch < -SC_ORBIT_PITCH_MAX) s_orbitPitch = -SC_ORBIT_PITCH_MAX;
+        while (s_camYaw >  6.2831853f) s_camYaw -= 6.2831853f;
+        while (s_camYaw <  0.0f)       s_camYaw += 6.2831853f;
+    }
+    // Aiming, the view is hers again (it turns with her); keep the free yaw on
+    // her so that lowering the gun leaves the view exactly where it was.
+    if (RaidShoulderCam_FreeAim() || !s_viewMode) {
+        s_camYaw = (float)(g_players[0].directionAngle & 0xFFF) * (6.2831853f / 4096.0f);
+    }
     if (!s_active && !want) return;
 
     if (!s_active) {
@@ -161,12 +298,17 @@ void RaidShoulderCam_Update(void)
     // Only with a weapon in hand: without one L2 raises nothing, and the
     // close aim framing just puts the camera in his back.
     const int armed = g_players[0].equippedWeaponId != 0;
-    s_zoom += (want && armed) ? 1 : -2;
+    s_zoom += (aiming && armed) ? 1 : -2;
     if (s_zoom > SC_ZOOM_FRAMES) s_zoom = SC_ZOOM_FRAMES;
     if (s_zoom < 0) s_zoom = 0;
     float zt = (float)s_zoom / (float)SC_ZOOM_FRAMES;
     zt = zt * zt * (3.0f - 2.0f * zt);
-    const float back = SC_BACK + (SC_BACK_AIM - SC_BACK) * zt;
+    // Walking distance: the L1 view's when it is on, else the plain one.
+    const float vt = s_viewMode ? 1.0f : 0.0f;
+    const float baseBack = SC_BACK + (SC_BACK_VIEW - SC_BACK) * vt;
+    const float eyeYOff  = SC_EYE_Y + (SC_EYE_Y_VIEW - SC_EYE_Y) * vt * (1.0f - zt);
+    const float rightOff = SC_RIGHT + (SC_RIGHT_VIEW - SC_RIGHT) * vt * (1.0f - zt);
+    const float back = baseBack + (SC_BACK_AIM - baseBack) * zt;
     const float fov  = (float)SC_FOV + (float)(SC_FOV_AIM - SC_FOV) * zt;
 
     RDT_Camera* C = &cams[g_roomCameraId];
@@ -175,6 +317,7 @@ void RaidShoulderCam_Update(void)
         Room_SetupCamera();
         s_active = 0;
         s_blend  = 0;
+        s_followOk = 0;
         return;
     }
 
@@ -184,7 +327,9 @@ void RaidShoulderCam_Update(void)
     // derives r = (dz, 0, -dx) / |d| from the look direction, which for this
     // facing is exactly (-sin a, 0, -cos a). Y is negative upwards.
     const PlayerEntity* p = &g_players[0];
-    const float a  = (float)(p->directionAngle & 0xFFF) * (6.2831853f / 4096.0f);
+    // The view's yaw: the free camera's in the L1 view, her facing otherwise
+    // (and while she aims, when the two are the same).
+    const float a  = s_camYaw;
     const float fx = cosf(a), fz = -sinf(a);
     const float rx = -sinf(a), rz = -cosf(a);
     const float px = (float)p->scaMatrixData.localMatrix.t[0];
@@ -201,7 +346,7 @@ void RaidShoulderCam_Update(void)
     // exactly as much as the body does, so on screen nothing moves but the
     // room - the arms, the torso and the crosshair all sit still. With most
     // of it, the view follows the aim and the aim still visibly rises in it.
-    const float pt = (float)s_pitch * (6.2831853f / 4096.0f) * SC_CAM_PITCH_SHARE;
+    const float pt = (float)s_pitch * (6.2831853f / 4096.0f) * SC_CAM_PITCH_SHARE + s_orbitPitch;
     const float cp = cosf(pt), sp = sinf(pt);
     float eA = -back,     eU = 0.0f;                        // eye, from the pivot
     float tA =  SC_AHEAD, tU = -(SC_TARGET_Y - SC_EYE_Y);   // look-at point
@@ -211,20 +356,43 @@ void RaidShoulderCam_Update(void)
         eA = a1; eU = u1; tA = a2; tU = u2;
     }
 
-    const float ex = px + fx * eA + rx * SC_RIGHT;
-    const float ez = pz + fz * eA + rz * SC_RIGHT;
+    const float ex = px + fx * eA + rx * rightOff;
+    const float ez = pz + fz * eA + rz * rightOff;
     const float tx = px + fx * tA + rx * SC_TARGET_RIGHT;
     const float tz = pz + fz * tA + rz * SC_TARGET_RIGHT;
+
+    // Not through a wall: in a narrow room the eye's place behind and beside
+    // him is often inside one. Pull it in along the line from his head to
+    // where it wants to be, to just short of the first wall in the way.
+    float ey = py + eyeYOff - eU;
+    {
+        float exc = ex, eyc = ey, ezc = ez;
+        sc_clip_eye(px, py + SC_EYE_Y, pz, &exc, &eyc, &ezc);
+        // Follow with a little lag in the L1 view (not while aiming: the
+        // aim must sit exactly on her, and not on the first frame).
+        if (s_viewMode && zt < 0.01f && s_followOk) {
+            s_eyeX += (exc - s_eyeX) * SC_FOLLOW;
+            s_eyeY += (eyc - s_eyeY) * SC_FOLLOW;
+            s_eyeZ += (ezc - s_eyeZ) * SC_FOLLOW;
+            // never left inside a wall by the lag
+            float cx = s_eyeX, cy = s_eyeY, cz = s_eyeZ;
+            sc_clip_eye(px, py + SC_EYE_Y, pz, &cx, &cy, &cz);
+            s_eyeX = cx; s_eyeY = cy; s_eyeZ = cz;
+        } else {
+            s_eyeX = exc; s_eyeY = eyc; s_eyeZ = ezc;
+        }
+        s_followOk = 1;
+    }
 
     // Smoothstep, so the swing eases out of the room camera and into ours.
     float t = (float)s_blend / (float)SC_BLEND_FRAMES;
     t = t * t * (3.0f - 2.0f * t);
 
-    C->cam_from_x = sc_lerp(s_saved.cam_from_x, ex, t);
-    C->cam_from_y = sc_lerp(s_saved.cam_from_y, py + SC_EYE_Y - eU, t);
-    C->cam_from_z = sc_lerp(s_saved.cam_from_z, ez, t);
+    C->cam_from_x = sc_lerp(s_saved.cam_from_x, s_eyeX, t);
+    C->cam_from_y = sc_lerp(s_saved.cam_from_y, s_eyeY, t);
+    C->cam_from_z = sc_lerp(s_saved.cam_from_z, s_eyeZ, t);
     C->cam_to_x   = sc_lerp(s_saved.cam_to_x, tx, t);
-    C->cam_to_y   = sc_lerp(s_saved.cam_to_y, py + SC_EYE_Y - tU, t);
+    C->cam_to_y   = sc_lerp(s_saved.cam_to_y, py + eyeYOff - tU, t);
     C->cam_to_z   = sc_lerp(s_saved.cam_to_z, tz, t);
     C->roll       = sc_lerp(s_saved.roll, 0.0f, t);
     C->fov        = sc_lerp(s_saved.fov, fov, t);
@@ -329,12 +497,9 @@ int RaidShoulderCam_AimPoint(float* x, float* y, float* z, float* raised)
 #define SC_PITCH_UP_MAX    0x2AA    // 60 degrees, 4096 to the turn
 #define SC_PITCH_DOWN_MAX  0x1C7    // 40 degrees
 #define SC_PITCH_RETURN    0x38     // per frame, easing back when let go
-#define SC_STICK_DEADZONE  7849     // XInput's own right-stick deadzone
 #define SC_STICK_RATE      0x40     // per frame at full deflection: ~175 deg/s
 #define SC_YAW_RATE        0x70     // turning, per frame at full deflection: ~295 deg/s
 
-static int           s_stickY;          // player 1's right stick, up positive
-static int           s_stickX;          // ...and right positive
 static int           s_walkDir;         // left stick: +1 forward, -1 back, 0 neither
 static int           s_walkSide;        // left stick: +1 right, -1 left, 0 neither
 static int           s_hipYaw;          // the hips turned toward the step, 4096 to the turn
@@ -357,14 +522,58 @@ static int           s_pitchPosed;      // the arms carry a pitch from us
 static unsigned char s_savedReticle;
 static int           s_reticleSaved;
 
+// Free aim - the gun up, the stick strafing, the legs walked by us - only with
+// a gun in hand. Without one there is no aim stance to walk under: the walk
+// below would have nothing to pose but the hips, which is what "she twists her
+// hips instead of walking" was. Unarmed, the camera still comes over the
+// shoulder (further back), and she walks and turns on her own animations.
 int RaidShoulderCam_FreeAim(void)
 {
-    return g_pCurPlayer == &g_players[0] && g_raidMode && sc_wanted();
+    return g_pCurPlayer == &g_players[0] && g_raidMode && sc_wanted()
+        && g_players[0].equippedWeaponId != 0;
 }
 
 void RaidShoulderCam_BeforePlayer(int i)
 {
     if (i != 0) return;
+
+    // Raising the gun in the L1 view: she turns to face where the camera
+    // looks, and the camera stays where it was - its yaw and tilt become the
+    // aim's.
+    if (RaidShoulderCam_FreeAim() && s_viewMode) {
+        const int want = (int)(s_camYaw * (4096.0f / 6.2831853f)) & 0xFFF;
+        if (((g_playerEntity.directionAngle - want) & 0xFFF) != 0 || s_orbitPitch != 0.0f) {
+            g_playerEntity.directionAngle = (short)want;
+            s_pitch += (int)(s_orbitPitch * (4096.0f / 6.2831853f) / SC_CAM_PITCH_SHARE);
+            s_orbitPitch = 0.0f;
+        }
+    }
+
+    // The L1 view, not aiming: the left stick moves her relative to the
+    // camera. The four directions (and their diagonals) become one heading in
+    // the world; she turns toward it briskly and the game's own walk (or run,
+    // with the run button) carries her forward along it. Left, right and back
+    // are taken off the pad so the state machine sees only "forward" - no
+    // tank turning, no backing up.
+    if (s_viewMode && !RaidShoulderCam_FreeAim() && sc_allowed()) {
+        const unsigned short UP = 0x01 | 0x10, DOWN = 0x04 | 0x20, RIGHT = 0x02, LEFT = 0x08;
+        const unsigned short held = g_PlayerDpadHeld;
+        const int f = (held & UP) ? 1 : ((held & DOWN) ? -1 : 0);
+        const int r = (held & RIGHT) ? 1 : ((held & LEFT) ? -1 : 0);
+        if (f != 0 || r != 0) {
+            // In directionAngle's sense: 0 ahead, + to the right.
+            const float rel = atan2f((float)r, (float)f);
+            const int want = (int)((s_camYaw + rel) * (4096.0f / 6.2831853f)) & 0xFFF;
+            int diff = (want - g_playerEntity.directionAngle) & 0xFFF;
+            if (diff >= 0x800) diff -= 0x1000;
+            if (diff >  SC_TURN_TO_MOVE) diff =  SC_TURN_TO_MOVE;
+            if (diff < -SC_TURN_TO_MOVE) diff = -SC_TURN_TO_MOVE;
+            g_playerEntity.directionAngle = (short)(g_playerEntity.directionAngle + diff);
+            const unsigned short keep = (unsigned short)~(UP | DOWN | RIGHT | LEFT);
+            g_PlayerDpadHeld    = (unsigned short)((g_PlayerDpadHeld & keep) | 0x01);
+            g_PlayerDpadPressed = (unsigned short)(g_PlayerDpadPressed & keep);
+        }
+    }
 
     s_preX = g_playerEntity.scaMatrixData.localMatrix.t[0];
     s_preZ = g_playerEntity.scaMatrixData.localMatrix.t[2];

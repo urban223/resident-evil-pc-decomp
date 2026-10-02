@@ -152,13 +152,19 @@ static DWORD PadToPSX(DWORD pcMask, int table)
 	DWORD l2 = 0, fire = 0;
 	if (table == 0) {
 		l2 = (plat_key_state('Q') & 0x8000) != 0;
-		if (g_coopPadSource <= 0) RaidShoulderCam_NoteStick(0, 0);   // read first; a pad overrides
+		if (g_coopPadSource <= 0) {
+			RaidShoulderCam_NoteStick(0, 0);   // read first; a pad overrides
+			RaidShoulderCam_NoteL1((plat_key_state('E') & 0x8000) != 0, 0);   // E: the shoulder view
+		}
 	} else {
 		const int xi = MarniXInput::IsConnected();
 		const DWORD bit  = xi ? MARNI_XI_BTN_LTRIGGER : (1u << 14);   // L2
 		const DWORD bitR = xi ? MARNI_XI_BTN_RTRIGGER : (1u << 15);   // R2
+		const DWORD bitL1 = xi ? MARNI_XI_BTN_LB : (1u << 12);        // L1: the shoulder view
 		l2 = (pcMask & bit) != 0;
 		pcMask &= ~bit;
+		if (g_coopPadSource <= 0) RaidShoulderCam_NoteL1((pcMask & bitL1) != 0, 1);
+		pcMask &= ~bitL1;
 		if (l2 && (pcMask & bitR) != 0) {
 			fire = 1;
 			pcMask &= ~bitR;

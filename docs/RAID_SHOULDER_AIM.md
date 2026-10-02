@@ -14,12 +14,42 @@ Status: played and confirmed in game, solo and in co-op on loopback.
 
 | Input | While L2 is held |
 |---|---|
+| L1 / E | toggle the over-the-shoulder view (below) |
 | L2 / Q | raise the gun, shoulder camera |
 | R2 | fire |
 | left stick | walk with the gun up (step animation), strafe sideways - it does not turn her |
 | right stick | aim: yaw turns her, pitch raises and lowers the gun, the arms and torso lean with it, the camera follows |
 
-With no weapon equipped the camera still swings in, but stays farther back.
+With no weapon equipped the camera still swings in, but stays farther back,
+and there is no free aim: she walks and turns on her own animations (free aim
+without a gun had no stance to walk under and only twisted her hips).
+
+## The L1 view - exploring over the shoulder
+
+L1 (the left bumper, or E) toggles the camera between the room's fixed one
+(the original, the default) and an over-the-shoulder view that stays up
+whether or not she aims - the way Resident Evil 2 (2019) explores:
+
+| Input | In the L1 view, not aiming |
+|---|---|
+| right stick | swings the camera round her and tips it; it stays where it is put |
+| left stick | moves her relative to the CAMERA: up away from it, down toward it, left and right across it; she turns briskly to where she goes, on the game's own walk and run |
+| L2 | raises the gun where the camera looks (she turns to it); the aim is as above |
+
+The view sits further back and higher than the aim (3000 behind, the RE2
+framing: her whole figure left of centre) and follows her with a little lag;
+aiming pulls it in close with no lag, so the crosshair stays put. The left
+stick reaches the game as the eight D-pad directions, so the headings are
+eight, not analogue.
+
+## The camera and the walls
+
+In a narrow room the eye's place behind her is often inside a wall. A line is
+cast from her head to where the eye wants to be against every drawn box that
+stands up (not floor and ceiling plates, not a door's doorway), and the eye
+stops just short of the first one. It is pulled in at once - never a frame
+inside a wall - and eased back out, so walking past a wall's end it slides back
+instead of jumping.
 
 ## How it is put together
 

@@ -16,6 +16,9 @@ unsigned int RaidShoulderCam_PadToPSX(unsigned int pcMask, int table);
 // ReadPadBoth: player 1's right stick, -32768..32767, X right-positive and
 // Y up-positive.
 void RaidShoulderCam_NoteStick(int x, int y);
+// L1 (the left bumper, or E): held this frame - it toggles the shoulder
+// camera on and off. `pad` 1 from the joystick path, 0 from the keyboard.
+void RaidShoulderCam_NoteL1(int held, int pad);
 
 // ReadPadBoth, on its way out: remember whose L2 this was.
 void RaidShoulderCam_NoteRaw(unsigned int raw);
