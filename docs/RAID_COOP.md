@@ -316,7 +316,7 @@ the one the engine loads from a file - a 12-byte `AnimDataHeader` and its
 `slots[]` - so `InitAnimStructure` and `SetupJointStructures` are the stock path
 and nothing downstream knows any of this happened.
 
-### The detached shoulders: found, fixed, NOT yet tested in game
+### The detached shoulders: found and fixed (confirmed in game)
 
 The first version of the table above had rows 0 and 2 of the player wrong
 ("pelvis" / "chest"). Dumping the mesh bounds settles it: on `char11` the
@@ -342,7 +342,7 @@ His shoulders are 145 units wider, so her arm meshes on his bones hung beside
 her own shoulders. (`Char10`'s shoulders are at y -694 / z ±388; it differs
 again, which is why nothing below is hardcoded.)
 
-The fix, in `CoopPlayer.cpp`, uncommitted:
+The fix, in `CoopPlayer.cpp` (64e59e8):
 
 1. `kCoopZombieMeshMap` now starts `2, 0, 1`: hips on hips, torso on torso.
 2. `coop_fit_zombie_bones`, called right after `ResetJointTransforms` in
@@ -357,8 +357,8 @@ The fix, in `CoopPlayer.cpp`, uncommitted:
    85 units shorter; if the knees or ankles show a gap, that is where it comes
    from.
 
-To check in game: arms on the shoulders, including when he bends at the
-waist; head on the neck; hips and legs unchanged from before.
+Confirmed in game by the user (2026-10-02): after death the player rises
+and moves as a zombie wearing his own body, with the animations right.
 
 Three things about the two files are load-bearing and were checked rather than
 assumed: `char10`, `char11` and `em1000` all carry `jointCount` 15 at
@@ -438,9 +438,6 @@ compare across those two.
   the room loads; see the note in `CoopNet.cpp`.
 - A client does not run `update_player_anim`, so poses come off the wire as a
   frame id and nothing advances the skeleton locally.
-- **A risen player's arms read as slightly detached at the shoulder.** Cause
-  found and a fix built, but not yet tested in game or committed; see "The
-  detached shoulders" above.
 - The zombie's attack button has not been tried in game yet. The interesting
   case is the one that does nothing: with the other player out of reach the
   fire button must not start a grab, or it will drag him across the room.
