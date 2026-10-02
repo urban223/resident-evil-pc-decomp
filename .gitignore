@@ -26,3 +26,6 @@ re1.lock
 
 # Python bytecode from running the test scripts.
 tests/__pycache__/
+
+# Local third-party tools fetched by tools/build_bg_hd.py (Real-ESRGAN); not ours to track
+tools/.cache/

@@ -42,6 +42,24 @@ DERIVED = [
     ("USA/players/W1F.EMW",    "tools/build_inhand_pistol.py"),
     ("USA/players/W2F.EMW",    "tools/build_inhand_pistol.py"),
     ("USA/players/W3F.EMW",    "tools/build_inhand_pistol.py"),
+    # Optional: without them the RAID bathroom uses the stock 320x240 pictures.
+    ("USA/Data/bghd/rc4070.bin", "tools/build_bg_hd.py"),
+    ("USA/Data/bghd/rc4071.bin", "tools/build_bg_hd.py"),
+    # The RAID bathroom's materials (raid1.lvl `tbox` / `mesh` tex ids).
+    ("USA/Data/raidtex/t1.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t2.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t3.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t4.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t5.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t6.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t10.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t15.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t16.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t17.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t18.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t19.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t20.bin", "tools/build_raid_textures.py"),
+    ("USA/Data/raidtex/t21.bin", "tools/build_raid_textures.py"),
 ]
 
 # These two generators write OVER a path the game already ships - W12.EMW gains

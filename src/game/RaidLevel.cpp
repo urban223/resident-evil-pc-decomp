@@ -19,12 +19,43 @@
 //   enemy   <x> <z> <angle> <type>
 //   item    <x> <z> <angle> <type> <amount>     a pickup lying in the room
 //   give    <type> <amount>                     one slot of the starting inventory
+//   bgsrc   <stage> <room> <cam> <fx> <fy> <fz> <tx> <ty> <tz> <fov>
+//   mesh    <id> <x> <y> <z> <yaw> <scale> <flags> <tex> <tile>
+//   tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>
+//   mirror  <axis> <plane> <min> <max> <ytop> <ybot>
+//
+// `bgsrc` names one of the game's pre-rendered backgrounds (StageS\RCSRRC.pak,
+// stage 1-based, room and camera as in the file name) and the camera it was
+// rendered from, copied out of that room's RDT. Boxes with flag 8 are
+// textured by projecting those images back onto them from those cameras.
+//
+// `mesh` places Data\raidmesh\m<id>.obj (game units, Y negative up) at
+// (x, y, z), turned by yaw (4096 to the turn) and scaled by scale percent,
+// and covers it with material <tex> repeating every <tile> units (tex 0: the
+// model's own colour). flags as a box's: 1 draw, 8 projected - and 32: a lamp,
+// which shows its own light instead of taking the room's. It never
+// collides - boxes do that.
+//
+// `tbox` is a box covered with a material instead of a flat tint:
+// Data\raidtex\t<tex>.bin, repeating every <tile> world units across each
+// face, laid from the box's own corner (so a one-off picture - a door - sits
+// in its box exactly), or from the world origin with flag 64 (so the pieces
+// of a wall cut round a hole still line up).
+//
+// `mirror` arms the game's own planar reflection (SCD opcode 0x0F's): the
+// plane <axis> 1 is X = <plane> (0: Z = <plane>), the glass spanning <min>..
+// <max> along the other floor axis and <ytop>..<ybot> up the wall. The
+// characters are reflected by the original code; the arena draws the room's
+// reflection itself, which shows through a hole the level must leave in the
+// wall there. One per level.
 //
 // `type` in both is an ITEM_* id from Types.h. `give` lines are taken in order
 // and fill the eight slots; a level with no `give` line at all keeps the mode's
 // built-in loadout rather than starting the player empty-handed.
 //
-// flags is the bitmask from RaidLevel.h: 1 draw, 2 collide, 4 checkerboard.
+// flags is the bitmask from RaidLevel.h: 1 draw, 2 collide, 4 checkerboard,
+// 8 projected (textured from the bgsrc backdrops), 64 a tbox's material laid
+// from the world origin.
 // shade is brightness in hundredths (72 = 0.72), so the whole file stays
 // integers and an editor never has to think about locales and decimal points.
 //
@@ -36,6 +67,7 @@
 #include "Entities.h"
 #include "RaidLevel.h"
 #include "RaidItemModels.h"
+#include "CoopPlayer.h"
 #include "FileLoader.h"
 #include "../system/AssetPath.h"
 #include <cstring>
@@ -184,6 +216,55 @@ static void raid_give(RaidLevel* lv, const int* v)
     G->type = raid_u8(v[0]); G->amount = raid_u8(v[1]);
 }
 
+static void raid_mesh(RaidLevel* lv, const int* v)
+{
+    if (lv->nmesh >= RAID_MAX_MESH) return;
+    RaidMesh* M = &lv->mesh[lv->nmesh++];
+    M->id = raid_u8(v[0]);
+    M->x = v[1]; M->y = v[2]; M->z = v[3];
+    M->yaw = (short)v[4];
+    M->scale = (short)(v[5] > 0 ? v[5] : 100);
+    M->flags = (unsigned short)v[6];
+    M->tex = raid_u8(v[7]);
+    M->tile = (short)(v[8] > 0 ? v[8] : 1000);
+}
+
+static void raid_tbox(RaidLevel* lv, const int* v)
+{
+    // A box line with a material for a tint: the same box, so collision,
+    // bounds and the editor all treat it as one.
+    int b[11] = { v[0], v[1], v[2], v[3], v[4], v[5], v[6] | RAID_BOX_TEX, v[9], 255, 255, 255 };
+    const int before = lv->nbox;
+    raid_box(lv, b);
+    if (lv->nbox > before) {
+        RaidBox* B = &lv->box[lv->nbox - 1];
+        B->tex  = raid_u8(v[7]);
+        B->tile = (short)(v[8] > 0 ? v[8] : 1000);
+    }
+}
+
+static void raid_bgsrc(RaidLevel* lv, const int* v)
+{
+    if (lv->nbgsrc >= RAID_MAX_BGSRC) return;
+    RaidBgSrc* S = &lv->bgsrc[lv->nbgsrc++];
+    S->stage = raid_u8(v[0]); S->room = raid_u8(v[1]); S->cam = raid_u8(v[2]);
+    S->view.fx = v[3]; S->view.fy = v[4]; S->view.fz = v[5];
+    S->view.tx = v[6]; S->view.ty = v[7]; S->view.tz = v[8];
+    S->view.fov = v[9];
+}
+
+static void raid_mirror(RaidLevel* lv, const int* v)
+{
+    RaidMirror* M = &lv->mirror;
+    M->on    = 1;
+    M->axis  = (unsigned char)(v[0] != 0);
+    M->plane = v[1];
+    M->min   = v[2] < v[3] ? v[2] : v[3];
+    M->max   = v[2] < v[3] ? v[3] : v[2];
+    M->ytop  = v[4] < v[5] ? v[4] : v[5];
+    M->ybot  = v[4] < v[5] ? v[5] : v[4];
+}
+
 // "ver" is not in here, and neither is anything unknown: both are ignored on
 // purpose, so an older build reads a newer file instead of refusing it.
 static const RaidDirective kRaidDirectives[] = {
@@ -196,6 +277,10 @@ static const RaidDirective kRaidDirectives[] = {
     { "enemy",    4, raid_enemy },
     { "item",     5, raid_item },
     { "give",     2, raid_give },
+    { "bgsrc",   10, raid_bgsrc },
+    { "mesh",     9, raid_mesh },
+    { "tbox",    10, raid_tbox },
+    { "mirror",   6, raid_mirror },
 };
 
 static const RaidDirective* raid_directive(const char* key)
@@ -416,4 +501,100 @@ void RaidLevel_Apply(void)
 
     raid_build_collision();
     raid_build_zones();
+
+    // CUSTOM: the mirror's numbers, which a reload may have moved. Only the
+    // numbers: the pass itself is armed by RaidMirror_Arm, once per room entry,
+    // because arming carves the reflected joint copies out of the load arena
+    // and a reload must not carve them again. A level that has lost its mirror
+    // switches the pass off.
+    if (g_raidLevel.mirror.on) {
+        g_mirrorPlaneCoord = (unsigned short)g_raidLevel.mirror.plane;
+        g_mirrorExtentMin  = (unsigned short)g_raidLevel.mirror.min;
+        g_mirrorExtentMax  = (unsigned short)g_raidLevel.mirror.max;
+        g_main_state_flags = (g_main_state_flags & ~MSF_MIRROR_PLANE_X)
+                           | (g_raidLevel.mirror.axis ? MSF_MIRROR_PLANE_X : 0);
+    } else {
+        g_main_state_flags &= ~(MSF_MIRROR_ENABLE | MSF_MIRROR_PLANE_X);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RaidMirror_Arm - what cmd_mirror_set (SCD opcode 0x0F) does, for the arena.
+//
+// The opcode raises the pass and then gives the player the second joint array
+// the reflection is drawn from (SetupEntityJointAnimation, entity +0xAC) and
+// the weapon joint's copy (FUN_0048bfe0 / FUN_0048c020); a story room's
+// enemies get their copy at room init, because the flag is already up when
+// they are built (RoomInit.cpp). The arena's bodies are all built before this
+// runs, so every one of them gets its copy here: both players, the arena's
+// enemies, and the zombies held in reserve - every body whose model the copy
+// can be made from. The rest (see raid_mirror_cost) go without, and the reads
+// through +0xAC that JointApplyColorTint and the hit-effect setup make on any
+// entity they touch are guarded for a body with no copy.
+//
+// The copies come out of the load arena, so the bill is added up first and a
+// room that would overrun g_DataBuffer gets no mirror rather than a corrupted
+// heap.
+// ---------------------------------------------------------------------------
+extern void SetupEntityJointAnimation(void);       // 0x0048bef0
+extern void FUN_0048bfe0(void);                    // 0x0048bfe0
+extern void FUN_0048c020(int param);               // 0x0048c020
+
+// What one body's copy costs, or 0 when it cannot have one. The slot table's
+// first dword is its own end pointer in every model the game loads; a body
+// assembled by the port (the co-op player-zombie, coop_build_zombie_body) does
+// not keep that promise, and copying "end - start" bytes of it would run off
+// into the arena - so a table that does not look like one is refused.
+#define RAID_MIRROR_SLOTS_MAX  0x20000
+
+static size_t raid_mirror_cost(const Entity* e, int player)
+{
+    if (e->jointCount == 0 || e->jointsStructs == NULL) return 0;
+    const int* slots = (const int*)e->jointsStructs->anim_slot_ptr;
+    if (slots == NULL) return 0;
+    const int table = *slots - (int)slots;
+    if (table <= 0 || table > RAID_MIRROR_SLOTS_MAX) return 0;
+    size_t n = (size_t)e->jointCount * (0x7c + 0x2d * 4);   // joints + one anim object each
+    n += (size_t)(table & ~3);                              // the copied slot table
+    if (player) n += 0x7A00 + 0x1A00;                       // FUN_0048bfe0's two buffers
+    return n + 64;
+}
+
+void RaidMirror_Arm(void)
+{
+    g_main_state_flags &= ~(MSF_MIRROR_ENABLE | MSF_MIRROR_PLANE_X);
+    if (!g_raidLevel.loaded || !g_raidLevel.mirror.on) return;
+
+    const int players = Coop_PlayerCount();
+    size_t need = 0;
+    for (int p = 0; p < players; p++) need += raid_mirror_cost((const Entity*)&g_players[p], 1);
+    for (int s = 0; s < 30; s++) need += raid_mirror_cost(&g_EnemiesList[s], 0);
+    if ((unsigned char*)g_loadDataDestPointer + need > g_DataBuffer + sizeof(g_DataBuffer)) {
+        return;     // no room: the mirror stays a dark glass
+    }
+
+    Entity* const save = ENTITY;
+    for (int p = 0; p < players; p++) {
+        Coop_BeginPlayer(p);
+        ENTITY = (Entity*)&g_playerEntity;
+        if (raid_mirror_cost(ENTITY, 1) != 0) {
+            SetupEntityJointAnimation();
+            FUN_0048bfe0();
+            FUN_0048c020(0xe);
+        }
+        Coop_EndPlayer();
+    }
+    for (int s = 0; s < 30; s++) {
+        Entity* e = &g_EnemiesList[s];
+        if (raid_mirror_cost(e, 0) == 0) continue;     // no copy: not drawn in the glass
+        ENTITY = e;
+        SetupEntityJointAnimation();
+    }
+    ENTITY = save;
+
+    g_mirrorPlaneCoord = (unsigned short)g_raidLevel.mirror.plane;
+    g_mirrorExtentMin  = (unsigned short)g_raidLevel.mirror.min;
+    g_mirrorExtentMax  = (unsigned short)g_raidLevel.mirror.max;
+    g_main_state_flags |= MSF_MIRROR_ENABLE
+                        | (g_raidLevel.mirror.axis ? MSF_MIRROR_PLANE_X : 0);
 }

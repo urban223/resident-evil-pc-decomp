@@ -31,6 +31,7 @@ typedef DWORD32 MarniHandle;
 typedef enum MarniSampler : DWORD32 {
     MARNI_SAMPLER_LINEAR = 0,   // smooth bilinear (legacy default for fonts/UI)
     MARNI_SAMPLER_POINT  = 1,   // nearest-neighbour, matches original PSX pixel art
+    MARNI_SAMPLER_LINEAR_WRAP = 2,  // CUSTOM: bilinear, REPEATING - tiled surfaces (RAID rooms)
 } MarniSampler;
 
 // Per-sprite blend mode requested by callers (AddTintSprite/AddFadePoly/etc.).

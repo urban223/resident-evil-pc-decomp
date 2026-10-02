@@ -44,8 +44,15 @@
 #include "../marni/MarniDX.h"
 #include "CoopPlayer.h"      // CUSTOM: co-op nameplates
 #include "UiAtlas.h"         // CUSTOM: the baked font the nameplates draw with
+#include "RaidShoulderCam.h"  // CUSTOM: the L2 aim crosshair
 #include "../marni/MarniSystem.h"
 #include <cmath>
+#include <cstdio>             // CUSTOM: backdrop paths
+#include <cstdlib>            // CUSTOM: backdrop pixel conversion
+#include "FileLoader.h"       // CUSTOM: backdrop .pak loading
+#include "../system/AssetPath.h"   // CUSTOM: GAME_DATA_ROOT for the backdrop paths
+#include "../platform/platform.h"  // CUSTOM: plat_file_read_all for the HD backdrops
+#include <cstring>
 
 // ---------------------------------------------------------------------------
 // The room is DATA now (RaidLevel.h, read from Data\raid1.lvl). What is left
@@ -168,6 +175,40 @@ static void RaVtx(float sx, float sy, float vz, float r, float g, float b)
 }
 
 // ---------------------------------------------------------------------------
+// CUSTOM: the mirror pass's clip. While the room is drawn a second time through
+// the reflected eye (RaDrawMirror), only what lies on the ROOM side of the
+// glass may take part - anything behind it (the wall the mirror hangs on)
+// would reflect out into the room in front of the glass. -1 is off.
+// ---------------------------------------------------------------------------
+static int   s_clipAxis = -1;       // 0 = X, 2 = Z
+static float s_clipK    = 0.0f;
+static float s_clipSide = 1.0f;     // keep (p[axis] - k) * side >= 0
+
+static int RaClipMirror(const RaVert* in, int n, RaVert* out)
+{
+    int m = 0;
+    for (int i = 0; i < n && m < 9; i++) {
+        const RaVert& a = in[i];
+        const RaVert& b = in[(i + 1) % n];
+        const float da = ((&a.x)[s_clipAxis] - s_clipK) * s_clipSide;
+        const float db = ((&b.x)[s_clipAxis] - s_clipK) * s_clipSide;
+        if (da >= 0.0f) out[m++] = a;
+        if ((da >= 0.0f) != (db >= 0.0f) && m < 9) {
+            const float t = da / (da - db);
+            RaVert c;
+            c.x  = a.x  + (b.x  - a.x)  * t;
+            c.y  = a.y  + (b.y  - a.y)  * t;
+            c.z  = a.z  + (b.z  - a.z)  * t;
+            c.cr = a.cr + (b.cr - a.cr) * t;
+            c.cg = a.cg + (b.cg - a.cg) * t;
+            c.cb = a.cb + (b.cb - a.cb) * t;
+            out[m++] = c;
+        }
+    }
+    return m;
+}
+
+// ---------------------------------------------------------------------------
 // One convex polygon, clipped to the near plane and fanned.
 //
 // Clipping in WORLD space rather than dropping whole faces matters here for the
@@ -180,6 +221,13 @@ static void RaPoly(const RaView& V, const RaVert* in, int n)
     RaVert out[8];
     float  vz[8];
     int    m = 0;
+
+    RaVert cut[10];                                   // CUSTOM: the mirror pass
+    if (s_clipAxis >= 0) {
+        n = RaClipMirror(in, n, cut);
+        if (n < 3) return;
+        in = cut;
+    }
 
     for (int i = 0; i < n && m < 8; i++) {
         const RaVert& a = in[i];
@@ -275,6 +323,44 @@ static void RaShade(const RaView& V, RaVert& p, float br, float tr, float tg, fl
     p.cb = tb * k;
 }
 
+// The modelled surfaces (materials, textured models) are lit for real: the
+// level's own `ambient` and `light` lines, per vertex, with a normal - a lamp
+// lights what faces it and leaves the underside of a bath in shade. Fog as
+// above. `n` is the outward unit normal.
+static void RaShadeLit(const RaView& V, RaVert& p, const float* n, float br)
+{
+    float dx = p.x - V.fromX, dy = p.y - V.fromY, dz = p.z - V.fromZ;
+    float d  = sqrtf(dx*dx + dy*dy + dz*dz);
+    float fog = (d - RA_FOG_NEAR) / (RA_FOG_FAR - RA_FOG_NEAR);
+    if (fog < 0.0f) fog = 0.0f;
+    if (fog > 1.0f) fog = 1.0f;
+    fog *= RA_FOG_MAX * 0.6f;
+
+    const RaidLevel* L = &g_raidLevel;
+    float r = (float)L->ambR * (1.45f / 4095.0f);
+    float g = (float)L->ambG * (1.45f / 4095.0f);
+    float b = (float)L->ambB * (1.45f / 4095.0f);
+    for (int i = 0; i < L->nlight && i < RAID_MAX_LIGHT; i++) {
+        const RaidLight* l = &L->light[i];
+        if (l->radius <= 0) continue;
+        const float lx = (float)l->x - p.x, ly = (float)l->y - p.y, lz = (float)l->z - p.z;
+        const float ld = sqrtf(lx*lx + ly*ly + lz*lz);
+        float att = 1.0f - ld / (float)l->radius;
+        if (att <= 0.0f) continue;
+        att *= att;
+        float lam = ld > 1.0f ? (n[0]*lx + n[1]*ly + n[2]*lz) / ld : 1.0f;
+        if (lam < 0.0f) lam = 0.0f;
+        // A little wrap, so a face turned from the lamp is dim, not black:
+        // the room's own walls bounce it.
+        const float k = att * (0.22f + 0.78f * lam) * (1.0f / 255.0f) * 1.6f;
+        r += (float)l->r * k; g += (float)l->g * k; b += (float)l->b * k;
+    }
+    const float m = br * (1.0f - fog);
+    p.cr = r * m > 1.0f ? 1.0f : r * m;
+    p.cg = g * m > 1.0f ? 1.0f : g * m;
+    p.cb = b * m > 1.0f ? 1.0f : b * m;
+}
+
 static void RaQuad(const RaView& V,
                    float ax, float ay, float az, float bx, float by, float bz,
                    float cx, float cy, float cz, float dx, float dy, float dz,
@@ -325,6 +411,1232 @@ static void RaGrid(const RaView& V,
                    ax + ux*a1 + vx*b1, ay + uy*a1 + vy*b1, az + uz*a1 + vz*b1,
                    ax + ux*a0 + vx*b1, ay + uy*a0 + vy*b1, az + uz*a0 + vz*b1,
                    s, tr, tg, tb);
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// BACKDROPS: the game's own pre-rendered rooms, projected back into 3D.
+//
+// A background is a picture taken from one camera. Put the room's real
+// geometry where the picture says it is (floor, walls and furniture as boxes
+// - their footprints come from the room's own collision records) and give
+// every point of it the colour the picture has at the spot that point lands
+// on from that camera, and the room stands up in 3D: seen from the original
+// camera it IS the background, and from anywhere else it is the background
+// laid onto the surfaces it was painted of.
+//
+// What one picture cannot give is what its camera did not see - the back of
+// the bath, the wall behind the camera, the floor under the toilet. A room
+// usually has more than one camera, so a level may name several backdrops
+// (bgsrc), and every small cell of every surface takes the one that sees it
+// best: facing it most squarely, entirely inside its frame, and not hidden
+// behind another box. A cell no backdrop sees takes the box's plain tint.
+//
+// The pixels come from the stock .pak through the game's own decoder
+// (unpack_pakfile_) and the same 555 -> RGBA conversion display_image uses, so
+// they are exactly the colours the room has in the game - and nothing derived
+// from Capcom's art is written to disk or tracked.
+//
+// One honest limit: the UVs are exact at the cells' corners and interpolated
+// between them by the renderer for the CURRENT view, not the source one, so a
+// big cell would warp. The cells are small for that reason (RA_PCELL).
+// ---------------------------------------------------------------------------
+#define RA_PCELL      250.0f     // projected-surface cell, world units
+#define RA_PCELL_MAX  64         // per edge
+#define RA_BG_W       320
+#define RA_BG_H       240
+
+struct RaSrc {
+    float fx, fy, fz;
+    float n[3], r[3], u[3];
+    float f;
+    int   ok;
+};
+
+static RaSrc       s_src[RAID_MAX_BGSRC];
+static MarniHandle s_bgTex[RAID_MAX_BGSRC];
+static unsigned char s_bgKey[RAID_MAX_BGSRC][3];   // which image s_bgTex holds
+static int         s_bgHave[RAID_MAX_BGSRC];       // 1 loaded, -1 tried and failed
+static unsigned int* s_bgPix[RAID_MAX_BGSRC];      // the same pixels, kept for colour sampling
+static float       s_ttris[RAID_MAX_BGSRC][RA_MAX_TRIS * 3 * RA_FLOATS];
+static int         s_tcount[RAID_MAX_BGSRC];
+static float       s_otris[RAID_MAX_BGSRC][RA_MAX_TRIS * 3 * RA_FLOATS];   // blended second pictures
+static int         s_ocount[RAID_MAX_BGSRC];
+
+static void RaSrcView(RaSrc* S, const RaidCam* c)
+{
+    const float dx = (float)(c->tx - c->fx), dy = (float)(c->ty - c->fy), dz = (float)(c->tz - c->fz);
+    const float L = sqrtf(dx*dx + dy*dy + dz*dz), h = sqrtf(dx*dx + dz*dz);
+    S->ok = (L >= 1.0f && h >= 1.0f && c->fov > 0);
+    if (!S->ok) return;
+    S->fx = (float)c->fx; S->fy = (float)c->fy; S->fz = (float)c->fz;
+    S->n[0] = dx / L; S->n[1] = dy / L; S->n[2] = dz / L;
+    S->r[0] = dz / h; S->r[1] = 0.0f;   S->r[2] = -dx / h;
+    S->u[0] = S->n[1]*S->r[2] - S->n[2]*S->r[1];
+    S->u[1] = S->n[2]*S->r[0] - S->n[0]*S->r[2];
+    S->u[2] = S->n[0]*S->r[1] - S->n[1]*S->r[0];
+    S->f = (float)c->fov;
+}
+
+// Where a world point lands in the 320x240 background - the game's own
+// projection (MatrixToCamera, centre 160,120). 0 if behind the camera.
+static int RaSrcProject(const RaSrc* S, float x, float y, float z, float* sx, float* sy)
+{
+    const float px = x - S->fx, py = y - S->fy, pz = z - S->fz;
+    const float vz = S->n[0]*px + S->n[1]*py + S->n[2]*pz;
+    if (vz < 64.0f) return 0;
+    *sx = 160.0f + (S->r[0]*px + S->r[1]*py + S->r[2]*pz) * S->f / vz;
+    *sy = 120.0f + (S->u[0]*px + S->u[1]*py + S->u[2]*pz) * S->f / vz;
+    return 1;
+}
+
+
+// ---------------------------------------------------------------------------
+// Making a 320x240 background bear being walked up to.
+//
+// The picture was made to be seen at 320x240 from one place. Projected onto
+// walls a metre away it fills the screen many times over, and two things that
+// were invisible at its own size show: the 5-bit colour (32 levels a channel,
+// so every soft gradient is a staircase of bands), and the pixels themselves.
+// So, once per image at load:
+//
+//   1. deband - each pixel takes the average of its 5x5 neighbours that differ
+//      from it by no more than about one 5-bit step, so a band edge (a 1-step
+//      jump) is smoothed and a real edge (many steps) is left alone;
+//   2. upscale x4 with Catmull-Rom bicubic, which keeps edges where bilinear
+//      sampling of the small image would smear them;
+//   3. sharpen lightly (unsharp mask), because any upscale softens.
+//
+// The texture is then 1280x960. The UVs do not change - they are 0..1 over the
+// picture whatever its size.
+// ---------------------------------------------------------------------------
+#define RA_BG_SCALE   4
+#define RA_BG_TW      (RA_BG_W * RA_BG_SCALE)
+#define RA_BG_TH      (RA_BG_H * RA_BG_SCALE)
+
+static inline float RaClamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+static void RaDeband(const float* in, float* out, int w, int h)
+{
+    const float tol = 1.25f / 31.0f;                 // about one 5-bit step
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const float* c = &in[(y * w + x) * 3];
+            float sum[3] = { 0, 0, 0 };
+            int n = 0;
+            for (int dy = -2; dy <= 2; dy++) {
+                const int yy = y + dy;
+                if (yy < 0 || yy >= h) continue;
+                for (int dx = -2; dx <= 2; dx++) {
+                    const int xx = x + dx;
+                    if (xx < 0 || xx >= w) continue;
+                    const float* q = &in[(yy * w + xx) * 3];
+                    if (fabsf(q[0] - c[0]) <= tol && fabsf(q[1] - c[1]) <= tol && fabsf(q[2] - c[2]) <= tol) {
+                        sum[0] += q[0]; sum[1] += q[1]; sum[2] += q[2]; n++;
+                    }
+                }
+            }
+            float* o = &out[(y * w + x) * 3];
+            o[0] = sum[0] / n; o[1] = sum[1] / n; o[2] = sum[2] / n;   // n >= 1: the pixel itself
+        }
+    }
+}
+
+static inline float RaCubic(float a, float b, float c, float d, float t)
+{
+    // Catmull-Rom through b and c.
+    return b + 0.5f * t * (c - a + t * (2.0f*a - 5.0f*b + 4.0f*c - d + t * (3.0f*(b - c) + d - a)));
+}
+
+static void RaUpscale(const float* in, float* out, int w, int h, int k)
+{
+    const int W = w * k, H = h * k;
+    for (int Y = 0; Y < H; Y++) {
+        const float sy = (Y + 0.5f) / k - 0.5f;
+        const int y1 = (int)floorf(sy);
+        const float ty = sy - y1;
+        int ys[4];
+        for (int i = 0; i < 4; i++) { int v = y1 - 1 + i; ys[i] = v < 0 ? 0 : (v >= h ? h - 1 : v); }
+        for (int X = 0; X < W; X++) {
+            const float sx = (X + 0.5f) / k - 0.5f;
+            const int x1 = (int)floorf(sx);
+            const float tx = sx - x1;
+            int xs[4];
+            for (int i = 0; i < 4; i++) { int v = x1 - 1 + i; xs[i] = v < 0 ? 0 : (v >= w ? w - 1 : v); }
+            for (int ch = 0; ch < 3; ch++) {
+                float col[4];
+                for (int j = 0; j < 4; j++) {
+                    const float* r = &in[(ys[j] * w) * 3 + ch];
+                    col[j] = RaCubic(r[xs[0] * 3], r[xs[1] * 3], r[xs[2] * 3], r[xs[3] * 3], tx);
+                }
+                out[(Y * W + X) * 3 + ch] = RaCubic(col[0], col[1], col[2], col[3], ty);
+            }
+        }
+    }
+}
+
+// Unsharp mask with a 3x3 box blur, written straight into the RGBA texture.
+static void RaSharpenToRGBA(const float* in, unsigned int* out, int w, int h, float amount)
+{
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            float blur[3] = { 0, 0, 0 };
+            int n = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                const int yy = y + dy < 0 ? 0 : (y + dy >= h ? h - 1 : y + dy);
+                for (int dx = -1; dx <= 1; dx++) {
+                    const int xx = x + dx < 0 ? 0 : (x + dx >= w ? w - 1 : x + dx);
+                    const float* q = &in[(yy * w + xx) * 3];
+                    blur[0] += q[0]; blur[1] += q[1]; blur[2] += q[2]; n++;
+                }
+            }
+            const float* c = &in[(y * w + x) * 3];
+            unsigned int rgb[3];
+            for (int ch = 0; ch < 3; ch++) {
+                const float v = RaClamp01(c[ch] + amount * (c[ch] - blur[ch] / n));
+                rgb[ch] = (unsigned int)(v * 255.0f + 0.5f);
+            }
+            out[y * w + x] = (0xFFu << 24) | (rgb[2] << 16) | (rgb[1] << 8) | rgb[0];
+        }
+    }
+}
+
+// The enhanced texture from the plain RGBA picture; NULL if out of memory.
+static unsigned int* RaEnhance(const unsigned int* rgba)
+{
+    const int n = RA_BG_W * RA_BG_H, N = RA_BG_TW * RA_BG_TH;
+    float* a = (float*)malloc(n * 3 * sizeof(float));
+    float* b = (float*)malloc(n * 3 * sizeof(float));
+    float* big = (float*)malloc(N * 3 * sizeof(float));
+    unsigned int* out = (unsigned int*)malloc(N * 4);
+    if (a == NULL || b == NULL || big == NULL || out == NULL) {
+        free(a); free(b); free(big); free(out);
+        return NULL;
+    }
+    for (int p = 0; p < n; p++) {
+        a[p*3 + 0] = (float)( rgba[p]        & 0xFF) / 255.0f;
+        a[p*3 + 1] = (float)((rgba[p] >> 8)  & 0xFF) / 255.0f;
+        a[p*3 + 2] = (float)((rgba[p] >> 16) & 0xFF) / 255.0f;
+    }
+    RaDeband(a, b, RA_BG_W, RA_BG_H);
+    RaUpscale(b, big, RA_BG_W, RA_BG_H, RA_BG_SCALE);
+    RaSharpenToRGBA(big, out, RA_BG_TW, RA_BG_TH, 0.45f);
+    free(a); free(b); free(big);
+    return out;
+}
+
+// Load (or keep) backdrop i's texture. Through the game's own path and
+// decoder; the buffers are the room-background ones, which RAID never uses
+// (load_room_bg returns early in it).
+static void RaBgLoad(int i)
+{
+    const RaidBgSrc* B = &g_raidLevel.bgsrc[i];
+    if (s_bgHave[i] != 0 && s_bgKey[i][0] == B->stage && s_bgKey[i][1] == B->room
+        && s_bgKey[i][2] == B->cam) {
+        return;                                  // this image, already loaded (or failed)
+    }
+    if (s_bgTex[i] != MARNI_NULL_HANDLE && s_dx != NULL) {
+        s_dx->DestroyTexture(s_bgTex[i]);
+    }
+    s_bgTex[i] = MARNI_NULL_HANDLE;
+    free(s_bgPix[i]);
+    s_bgPix[i] = NULL;
+    s_bgHave[i] = -1;
+    s_bgKey[i][0] = B->stage; s_bgKey[i][1] = B->room; s_bgKey[i][2] = B->cam;
+
+    char path[64];
+    sprintf(path, GAME_DATA_ROOT "stage%d\\rc%d%02x%x.pak",
+            B->stage, B->stage, B->room, B->cam & 0x0F);
+    const size_t got = LoadFile(path, g_bgPakLoadBuffer, 2);
+    if (got == (size_t)-1 || got == 0 || got > sizeof(g_bgPakLoadBuffer)) return;
+    unpack_pakfile_(g_bgPakLoadBuffer, g_TimImageBuffer);
+
+    const unsigned short* src = (const unsigned short*)g_TimImageBuffer__bitmap;
+    unsigned int* rgba = (unsigned int*)malloc(RA_BG_W * RA_BG_H * 4);
+    if (rgba == NULL) return;
+    for (int p = 0; p < RA_BG_W * RA_BG_H; p++) {          // display_image's conversion
+        const unsigned short px = src[p];
+        const unsigned int r = ((px >> 0)  & 0x1F) * 255 / 31;
+        const unsigned int g = ((px >> 5)  & 0x1F) * 255 / 31;
+        const unsigned int b = ((px >> 10) & 0x1F) * 255 / 31;
+        rgba[p] = (0xFFu << 24) | (b << 16) | (g << 8) | r;
+    }
+    // The texture. First choice is a high-resolution version of this very
+    // picture, if tools/build_bg_hd.py has made one (a neural-network x4 -
+    // the only thing that adds detail the 320x240 never had):
+    //     Data/bghd/rc<S><RR><C>.bin  =  'BGHD' + u32 w + u32 h + RGBA
+    // read whole into a buffer of its own size, so a bad file cannot overrun
+    // anything. Otherwise the stock picture, debanded and upscaled here
+    // (RaEnhance). Either way the plain picture is kept for RaBoxColours,
+    // which wants the original colours. The UVs are 0..1 over the picture,
+    // so its size does not matter to anything else.
+    BOOL made = FALSE;
+    {
+        char hd[96], rooted[260];
+        sprintf(hd, GAME_DATA_ROOT "Data/bghd/rc%d%02x%x.bin", B->stage, B->room, B->cam & 0x0F);
+        size_t size = 0;
+        unsigned char* blob = (unsigned char*)plat_file_read_all(
+            ResolveAssetRoot(hd, rooted, sizeof(rooted)), &size);
+        if (blob != NULL && size >= 12 && memcmp(blob, "BGHD", 4) == 0) {
+            const unsigned int w = *(const unsigned int*)(blob + 4);
+            const unsigned int h = *(const unsigned int*)(blob + 8);
+            if (w > 0 && h > 0 && w <= 8192 && h <= 8192 && size >= 12 + (size_t)w * h * 4) {
+                made = MarniCreateTexture((int)w, (int)h, 32, blob + 12, &s_bgTex[i]);
+            }
+        }
+        free(blob);
+    }
+    if (!made) {
+        unsigned int* tex = RaEnhance(rgba);
+        made = (tex != NULL)
+            ? MarniCreateTexture(RA_BG_TW, RA_BG_TH, 32, tex, &s_bgTex[i])
+            : MarniCreateTexture(RA_BG_W, RA_BG_H, 32, rgba, &s_bgTex[i]);
+        free(tex);
+    }
+    if (made && s_bgTex[i] != MARNI_NULL_HANDLE) {
+        s_bgHave[i] = 1;
+        s_bgPix[i] = rgba;        // kept: RaBoxColours samples it
+        return;
+    }
+    free(rgba);
+}
+
+static void RaBoxColours(void);
+static void RaMeshPrepare(void);
+
+static void RaBgPrepare(void)
+{
+    for (int i = 0; i < RAID_MAX_BGSRC; i++) {
+        s_tcount[i] = 0;
+        s_ocount[i] = 0;
+        if (i >= g_raidLevel.nbgsrc) { s_src[i].ok = 0; continue; }
+        RaSrcView(&s_src[i], &g_raidLevel.bgsrc[i].view);
+        RaBgLoad(i);
+        if (s_bgHave[i] != 1) s_src[i].ok = 0;
+    }
+    RaMeshPrepare();      // the models' bounds, which hide things too
+    RaBoxColours();
+}
+
+static void RaTexFlush(int k)
+{
+    if (s_tcount[k] > 0 && s_dx != NULL) {
+        s_dx->DrawTriangles3D(s_ttris[k], s_tcount[k], s_bgTex[k],
+                              MARNI_SAMPLER_LINEAR, MARNI_BLEND_DISABLE, true);
+    }
+    s_tcount[k] = 0;
+}
+
+// The second picture of a blended cell: over the first, at the same depth
+// (the same vertices, so LESS_EQUAL passes), alpha from the vertex, no depth
+// write. Flushed after every opaque batch.
+static void RaOverFlush(int k)
+{
+    if (s_ocount[k] > 0 && s_dx != NULL) {
+        s_dx->DrawTriangles3D(s_otris[k], s_ocount[k], s_bgTex[k],
+                              MARNI_SAMPLER_LINEAR, MARNI_BLEND_ALPHA, false);
+    }
+    s_ocount[k] = 0;
+}
+
+// Does the segment from a to b pass through any projected box other than
+// `self`? The boxes are shrunk a little so a surface is not hidden by the box
+// it touches (walls overlap at the corners; furniture stands on the floor).
+// The placed models' world bounds this frame, for the occlusion test below
+// (RaMeshPrepare fills them). A bound is coarser than the shape, which errs
+// toward calling a surface hidden - the safe side: hidden means the surface's
+// own colour, not some other object's picture.
+static float s_meshLo[RAID_MAX_MESH][3], s_meshHi[RAID_MAX_MESH][3];
+static int   s_meshLive[RAID_MAX_MESH];
+static float s_meshCol[RAID_MAX_MESH][3];        // a model's own colour (RaMeshColour)
+static int   s_meshColValid[RAID_MAX_MESH];
+
+static int RaSegHitsBox(const float a[3], const float b[3], const float lo[3], const float hi[3])
+{
+    float t0 = 0.0f, t1 = 1.0f;
+    for (int ax = 0; ax < 3; ax++) {
+        const float d = b[ax] - a[ax];
+        if (fabsf(d) < 1e-4f) {
+            if (a[ax] < lo[ax] || a[ax] > hi[ax]) return 0;
+        } else {
+            float ta = (lo[ax] - a[ax]) / d, tb = (hi[ax] - a[ax]) / d;
+            if (ta > tb) { const float s = ta; ta = tb; tb = s; }
+            if (ta > t0) t0 = ta;
+            if (tb < t1) t1 = tb;
+            if (t0 > t1) return 0;
+        }
+    }
+    return 1;
+}
+
+// `self` is what the surface belongs to, so it is not hidden by itself: a box
+// index (>= 0), or a placed model as -2 - its index.
+static int RaBgOccluded(const float a[3], const float b[3], int self)
+{
+    for (int m = 0; m < g_raidLevel.nmesh && m < RAID_MAX_MESH; m++) {
+        if (!s_meshLive[m] || self == -2 - m) continue;
+        const float lo[3] = { s_meshLo[m][0] + 30.0f, s_meshLo[m][1] + 30.0f, s_meshLo[m][2] + 30.0f };
+        const float hi[3] = { s_meshHi[m][0] - 30.0f, s_meshHi[m][1] - 30.0f, s_meshHi[m][2] - 30.0f };
+        if (lo[0] < hi[0] && lo[1] < hi[1] && lo[2] < hi[2] && RaSegHitsBox(a, b, lo, hi)) return 1;
+    }
+    for (int i = 0; i < g_raidLevel.nbox; i++) {
+        if (i == self) continue;
+        const RaidBox* B = &g_raidLevel.box[i];
+        if ((B->flags & RAID_BOX_PROJ) == 0) continue;
+        if (B->y0 == B->y1) continue;                     // a plate hides nothing
+        const float lo[3] = { (float)B->x0 + 40.0f, (float)B->y0 + 40.0f, (float)B->z0 + 40.0f };
+        const float hi[3] = { (float)B->x1 - 40.0f, (float)B->y1 - 40.0f, (float)B->z1 - 40.0f };
+        float t0 = 0.0f, t1 = 1.0f;
+        int miss = 0;
+        for (int ax = 0; ax < 3 && !miss; ax++) {
+            const float d = b[ax] - a[ax];
+            if (fabsf(d) < 1e-4f) {
+                if (a[ax] < lo[ax] || a[ax] > hi[ax]) miss = 1;
+            } else {
+                float ta = (lo[ax] - a[ax]) / d, tb = (hi[ax] - a[ax]) / d;
+                if (ta > tb) { const float s = ta; ta = tb; tb = s; }
+                if (ta > t0) t0 = ta;
+                if (tb < t1) t1 = tb;
+                if (t0 > t1) miss = 1;
+            }
+        }
+        if (!miss) return 1;
+    }
+    return 0;
+}
+
+// The backdrop that sees this cell best, or -1.
+//
+// "Best" is two things. Mostly how squarely the source camera faces the cell -
+// a picture taken edge-on is a smear. But also how close the source's view of
+// the cell is to the CURRENT one: a picture is only exactly right when seen
+// from where it was taken, so between two cameras that both see a cell well,
+// the one looking from the viewer's side wins. Seen from a room camera that is
+// the room's own background; walking about, each surface takes the picture
+// that was painted from nearest where you stand.
+#define RA_VIEW_BIAS  4.0f      // weight of the agreement term below
+#define RA_VIEW_SHARP 8         // ...and how sharply it peaks at "same direction"
+#define RA_VIEW_NEAR  600.0f    // ...and only this close to that source's own eye
+
+// How much each backdrop should count for this cell, before framing (which is
+// per VERTEX, RaFrameSoft): facing x the viewer-agreement peak, 0 for a
+// backdrop that does not face it, has a corner behind its camera, or sees it
+// only through another box. A cell every backdrop scores 0 is one nobody saw.
+static void RaBgWeights(const RaView& V, const RaVert* q, const float nrm[3], int self,
+                        float cw[RAID_MAX_BGSRC])
+{
+    float c[3] = { 0, 0, 0 };
+    for (int i = 0; i < 4; i++) { c[0] += q[i].x * 0.25f; c[1] += q[i].y * 0.25f; c[2] += q[i].z * 0.25f; }
+
+    for (int k = 0; k < RAID_MAX_BGSRC; k++) {
+        cw[k] = 0.0f;
+        if (k >= g_raidLevel.nbgsrc) continue;
+        const RaSrc* S = &s_src[k];
+        if (!S->ok) continue;
+        float d[3] = { S->fx - c[0], S->fy - c[1], S->fz - c[2] };
+        const float L = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+        if (L < 1.0f) continue;
+        const float facing = (nrm[0]*d[0] + nrm[1]*d[1] + nrm[2]*d[2]) / L;
+        if (facing < 0.08f) continue;                    // edge-on or from behind
+
+        int inFront = 1;
+        for (int i = 0; i < 4 && inFront; i++) {
+            float sx, sy;
+            if (!RaSrcProject(S, q[i].x, q[i].y, q[i].z, &sx, &sy)) inFront = 0;
+        }
+        if (!inFront) continue;
+
+        const float from[3] = { c[0] + nrm[0] * 30.0f, c[1] + nrm[1] * 30.0f, c[2] + nrm[2] * 30.0f };
+        const float eye[3]  = { S->fx, S->fy, S->fz };
+        if (RaBgOccluded(from, eye, self)) continue;     // its picture there is something else
+
+        float w[3] = { V.fromX - c[0], V.fromY - c[1], V.fromZ - c[2] };
+        const float wl = sqrtf(w[0]*w[0] + w[1]*w[1] + w[2]*w[2]);
+        float agree = 0.0f;
+        if (wl > 1.0f) {
+            agree = (w[0]*d[0] + w[1]*d[1] + w[2]*d[2]) / (wl * L);   // -1..1
+            if (agree < 0.0f) agree = 0.0f;
+        }
+        // Peaked, and only near the source's own eye: seen from a room camera
+        // the room is EXACTLY its background; anywhere else the weights are a
+        // function of the cell alone and hold still while the viewer moves
+        // (a view-dependent choice made the floor flicker).
+        float peak = agree;
+        for (int e = 1; e < RA_VIEW_SHARP; e++) peak *= agree;
+        {
+            const float ex = V.fromX - S->fx, ey = V.fromY - S->fy, ez = V.fromZ - S->fz;
+            if (ex*ex + ey*ey + ez*ez > RA_VIEW_NEAR * RA_VIEW_NEAR) peak = 0.0f;
+        }
+        cw[k] = facing * (1.0f + RA_VIEW_BIAS * peak);
+    }
+}
+
+// Framing, per vertex: 1 inside the picture, fading over RA_FRAME_FADE pixels
+// outside it to a small floor. Soft, so the hand-over at a picture's edge is a
+// gradient rather than a step at a cell boundary - the "staircase".
+#define RA_FRAME_FADE  20.0f
+#define RA_BLEND_SOURCES 0     // see RaGridProj
+static float RaFrameSoft(const RaSrc* S, float x, float y, float z)
+{
+    float sx, sy;
+    if (!RaSrcProject(S, x, y, z, &sx, &sy)) return 0.03f;
+    float out = 0.0f;
+    if (-sx > out) out = -sx;
+    if (sx - RA_BG_W > out) out = sx - RA_BG_W;
+    if (-sy > out) out = -sy;
+    if (sy - RA_BG_H > out) out = sy - RA_BG_H;
+    const float f = 1.0f - out / RA_FRAME_FADE;
+    return f < 0.03f ? 0.03f : f;
+}
+
+
+// ---------------------------------------------------------------------------
+// Each projected box's own colour, sampled out of the backdrops: the average
+// of the pixels its faces land on, from every camera that sees them unhidden.
+//
+// It paints what no camera saw. Before, that was the projection of whatever DID
+// stand in the way - the wall behind the sink got the sink, a "ghost" of it in
+// the wrong place and at the wrong size - or the level's hand-picked tint, a
+// flat brown that matched nothing. The wall's own average is the colour the
+// wall would most likely have been there.
+// ---------------------------------------------------------------------------
+static float        s_boxCol[RAID_MAX_BOX][3];
+static unsigned int s_boxColKey = 0;
+
+static void RaBoxColourOf(int self, const RaidBox* B)
+{
+    const float x0 = B->x0, x1 = B->x1, y0 = B->y0, y1 = B->y1, z0 = B->z0, z1 = B->z1;
+    struct Face { float a[3], u[3], v[3], n[3]; };
+    const Face faces[6] = {
+        { { x0, y0, z0 }, { x1 - x0, 0, 0 }, { 0, 0, z1 - z0 }, { 0, -1, 0 } },
+        { { x0, y1, z0 }, { x1 - x0, 0, 0 }, { 0, 0, z1 - z0 }, { 0,  1, 0 } },
+        { { x0, y0, z0 }, { 0, y1 - y0, 0 }, { 0, 0, z1 - z0 }, { -1, 0, 0 } },
+        { { x1, y0, z0 }, { 0, y1 - y0, 0 }, { 0, 0, z1 - z0 }, {  1, 0, 0 } },
+        { { x0, y0, z0 }, { x1 - x0, 0, 0 }, { 0, y1 - y0, 0 }, { 0, 0, -1 } },
+        { { x0, y0, z1 }, { x1 - x0, 0, 0 }, { 0, y1 - y0, 0 }, { 0, 0,  1 } },
+    };
+    const int nf = (y0 == y1) ? 1 : 6;
+    double sum[3] = { 0, 0, 0 };
+    int count = 0;
+    for (int f = 0; f < nf; f++) {
+        const Face& F = faces[f];
+        for (int i = 0; i < 8; i++) {
+            for (int j = 0; j < 8; j++) {
+                const float a = (i + 0.5f) / 8.0f, b = (j + 0.5f) / 8.0f;
+                const float p[3] = { F.a[0] + F.u[0]*a + F.v[0]*b,
+                                     F.a[1] + F.u[1]*a + F.v[1]*b,
+                                     F.a[2] + F.u[2]*a + F.v[2]*b };
+                for (int k = 0; k < g_raidLevel.nbgsrc && k < RAID_MAX_BGSRC; k++) {
+                    const RaSrc* S = &s_src[k];
+                    if (!S->ok || s_bgPix[k] == NULL) continue;
+                    const float d[3] = { S->fx - p[0], S->fy - p[1], S->fz - p[2] };
+                    if (F.n[0]*d[0] + F.n[1]*d[1] + F.n[2]*d[2] <= 0.0f) continue;
+                    float sx, sy;
+                    if (!RaSrcProject(S, p[0], p[1], p[2], &sx, &sy)) continue;
+                    if (sx < 0.0f || sx >= RA_BG_W || sy < 0.0f || sy >= RA_BG_H) continue;
+                    const float from[3] = { p[0] + F.n[0] * 30.0f, p[1] + F.n[1] * 30.0f, p[2] + F.n[2] * 30.0f };
+                    const float eye[3]  = { S->fx, S->fy, S->fz };
+                    if (RaBgOccluded(from, eye, self)) continue;
+                    const unsigned int px = s_bgPix[k][(int)sy * RA_BG_W + (int)sx];
+                    sum[0] += (px & 0xFF); sum[1] += ((px >> 8) & 0xFF); sum[2] += ((px >> 16) & 0xFF);
+                    count++;
+                }
+            }
+        }
+    }
+    if (count > 0) {
+        s_boxCol[self][0] = (float)(sum[0] / count / 255.0);
+        s_boxCol[self][1] = (float)(sum[1] / count / 255.0);
+        s_boxCol[self][2] = (float)(sum[2] / count / 255.0);
+    } else {
+        s_boxCol[self][0] = B->shade * B->tr / 255.0f;
+        s_boxCol[self][1] = B->shade * B->tg / 255.0f;
+        s_boxCol[self][2] = B->shade * B->tb / 255.0f;
+    }
+}
+
+// Recomputed only when the level's boxes or the loaded images change.
+static void RaBoxColours(void)
+{
+    unsigned int key = 2166136261u;
+    for (int i = 0; i < g_raidLevel.nbox; i++) {
+        const RaidBox* B = &g_raidLevel.box[i];
+        const short v[7] = { B->x0, B->y0, B->z0, B->x1, B->y1, B->z1, (short)B->flags };
+        for (int k = 0; k < 7; k++) key = (key ^ (unsigned short)v[k]) * 16777619u;
+    }
+    for (int k = 0; k < RAID_MAX_BGSRC; k++) key = (key ^ (unsigned int)s_bgTex[k]) * 16777619u;
+    for (int m = 0; m < g_raidLevel.nmesh; m++) {
+        const RaidMesh* M = &g_raidLevel.mesh[m];
+        const int v[6] = { M->id, M->x, M->y, M->z, M->yaw, M->scale };
+        for (int k = 0; k < 6; k++) key = (key ^ (unsigned int)v[k]) * 16777619u;
+    }
+    if (key == s_boxColKey) return;
+    for (int m = 0; m < RAID_MAX_MESH; m++) s_meshColValid[m] = 0;
+    s_boxColKey = key;
+    for (int i = 0; i < g_raidLevel.nbox && i < RAID_MAX_BOX; i++) {
+        if (g_raidLevel.box[i].flags & RAID_BOX_PROJ) RaBoxColourOf(i, &g_raidLevel.box[i]);
+    }
+}
+
+// One cell, clipped to the near plane and textured from backdrop k. The UVs
+// are computed from each OUTPUT vertex's world position after clipping - a
+// UV is a function of where the point is, so it is never interpolated by
+// the clip.
+static void RaPolyTex(const RaView& V, const RaVert* in, int n, int k, int kb,
+                      float cwa, float cwb)
+{
+    RaVert out[8];
+    float  vz[8];
+    int    m = 0;
+    for (int i = 0; i < n && m < 8; i++) {
+        const RaVert& a = in[i];
+        const RaVert& b = in[(i + 1) % n];
+        const float da = RaDepth(V, a), db = RaDepth(V, b);
+        if (da >= RA_NEAR) { out[m] = a; vz[m] = da; m++; }
+        if ((da >= RA_NEAR) != (db >= RA_NEAR) && m < 8) {
+            const float t = (RA_NEAR - da) / (db - da);
+            RaVert c;
+            c.x = a.x + (b.x - a.x) * t;
+            c.y = a.y + (b.y - a.y) * t;
+            c.z = a.z + (b.z - a.z) * t;
+            c.cr = c.cg = c.cb = 1.0f;
+            out[m] = c; vz[m] = RA_NEAR; m++;
+        }
+    }
+    if (m < 3) return;
+    if (s_tcount[k] + (m - 2) > RA_MAX_TRIS) RaTexFlush(k);
+
+    float sx[8], sy[8], tu[8], tv[8], ou[8], ov[8], oa[8];
+    int over = 0;
+    for (int i = 0; i < m; i++) {
+        RaProject(V, out[i], vz[i], &sx[i], &sy[i]);
+        float bx = 0.0f, by = 0.0f;
+        RaSrcProject(&s_src[k], out[i].x, out[i].y, out[i].z, &bx, &by);
+        tu[i] = bx / (float)RA_BG_W;
+        tv[i] = by / (float)RA_BG_H;
+        oa[i] = 0.0f;
+        if (kb >= 0) {
+            // The second picture's share at this vertex. Over the first at
+            // alpha wb/(wa+wb) the result is (wa*A + wb*B)/(wa+wb) - the same
+            // whichever of the two a neighbouring cell drew first, so two
+            // cells sharing an edge agree along it.
+            const float wa = cwa * RaFrameSoft(&s_src[k],  out[i].x, out[i].y, out[i].z);
+            const float wb = cwb * RaFrameSoft(&s_src[kb], out[i].x, out[i].y, out[i].z);
+            oa[i] = (wa + wb > 1e-6f) ? wb / (wa + wb) : 0.0f;
+            if (oa[i] > 0.01f) over = 1;
+            float cx = 0.0f, cy = 0.0f;
+            RaSrcProject(&s_src[kb], out[i].x, out[i].y, out[i].z, &cx, &cy);
+            ou[i] = cx / (float)RA_BG_W;
+            ov[i] = cy / (float)RA_BG_H;
+        }
+    }
+    if (over && s_ocount[kb] + (m - 2) > RA_MAX_TRIS) {
+        // An overlay must never reach the screen before the opaque pictures
+        // it blends over: flush those first.
+        for (int t = 0; t < RAID_MAX_BGSRC; t++) RaTexFlush(t);
+        RaOverFlush(kb);
+    }
+    for (int i = 1; i + 1 < m; i++) {
+        const int idx[3] = { 0, i, i + 1 };
+        for (int e = 0; e < 3; e++) {
+            const int j = idx[e];
+            float* p = &s_ttris[k][s_tcount[k] * 3 * RA_FLOATS + e * RA_FLOATS];
+            p[0] = sx[j]; p[1] = sy[j];
+            p[2] = TmdViewZToNdc(vz[j]); p[3] = vz[j];
+            p[4] = tu[j]; p[5] = tv[j];
+            p[6] = 1.0f; p[7] = 1.0f; p[8] = 1.0f; p[9] = 1.0f;
+            if (over) {
+                float* o = &s_otris[kb][s_ocount[kb] * 3 * RA_FLOATS + e * RA_FLOATS];
+                o[0] = p[0]; o[1] = p[1]; o[2] = p[2]; o[3] = p[3];
+                o[4] = ou[j]; o[5] = ov[j];
+                o[6] = 1.0f; o[7] = 1.0f; o[8] = 1.0f; o[9] = oa[j];
+            }
+        }
+        s_tcount[k]++;
+        if (over) s_ocount[kb]++;
+    }
+}
+
+// A projected box face, cut into small cells, each textured from the
+// backdrop that sees it best. `nrm` is the face's outward normal.
+static void RaGridProj(const RaView& V, int self,
+                       float ax, float ay, float az,
+                       float ux, float uy, float uz,
+                       float vx, float vy, float vz,
+                       const float nrm[3], float fr, float fg, float fb)
+{
+    const float ul = sqrtf(ux*ux + uy*uy + uz*uz);
+    const float vl = sqrtf(vx*vx + vy*vy + vz*vz);
+    int nu = (int)(ul / RA_PCELL) + 1;
+    int nv = (int)(vl / RA_PCELL) + 1;
+    if (nu > RA_PCELL_MAX) nu = RA_PCELL_MAX;
+    if (nv > RA_PCELL_MAX) nv = RA_PCELL_MAX;
+
+    for (int i = 0; i < nu; i++) {
+        const float a0 = (float)i / nu, a1 = (float)(i + 1) / nu;
+        for (int j = 0; j < nv; j++) {
+            const float b0 = (float)j / nv, b1 = (float)(j + 1) / nv;
+            RaVert q[4];
+            q[0].x = ax + ux*a0 + vx*b0; q[0].y = ay + uy*a0 + vy*b0; q[0].z = az + uz*a0 + vz*b0;
+            q[1].x = ax + ux*a1 + vx*b0; q[1].y = ay + uy*a1 + vy*b0; q[1].z = az + uz*a1 + vz*b0;
+            q[2].x = ax + ux*a1 + vx*b1; q[2].y = ay + uy*a1 + vy*b1; q[2].z = az + uz*a1 + vz*b1;
+            q[3].x = ax + ux*a0 + vx*b1; q[3].y = ay + uy*a0 + vy*b1; q[3].z = az + uz*a0 + vz*b1;
+            for (int c = 0; c < 4; c++) { q[c].cr = 1.0f; q[c].cg = 1.0f; q[c].cb = 1.0f; }
+
+            float cw[RAID_MAX_BGSRC];
+            RaBgWeights(V, q, nrm, self, cw);
+            int ka = -1, kb = -1;
+            float sa = 0.0f, sb = 0.0f;
+            for (int k = 0; k < RAID_MAX_BGSRC; k++) {
+                if (cw[k] <= 0.0f) continue;
+                float f = 0.0f;
+                for (int c = 0; c < 4; c++) f += RaFrameSoft(&s_src[k], q[c].x, q[c].y, q[c].z);
+                const float sc = cw[k] * f;
+                if (sc > sa)      { kb = ka; sb = sa; ka = k; sa = sc; }
+                else if (sc > sb) { kb = k; sb = sc; }
+            }
+            // ONE picture per cell. Blending the second one in by weight was
+            // tried and looked worse: the two pictures are not the same image
+            // (one may come from an HD pack that redrew the room, the other
+            // from a network upscale of the original) and are registered only
+            // to within ~10 px, so wherever both counted the room showed twice.
+            // RaPolyTex keeps the overlay path; RA_BLEND_SOURCES turns it on.
+            if (!RA_BLEND_SOURCES) kb = -1;
+            if (ka >= 0) {
+                RaPolyTex(V, q, 4, ka, kb, cw[ka], kb >= 0 ? cw[kb] : 0.0f);
+            } else {
+                // Nothing saw it, or only through something else: the box's
+                // own colour (RaBoxColours), shaded by which way it faces -
+                // never the projection of whatever stood in front of it.
+                const float shade = (nrm[1] < -0.5f) ? 1.0f : (nrm[1] > 0.5f ? 0.6f : 0.85f);
+                const float r = (self < RAID_MAX_BOX ? s_boxCol[self][0] : fr) * shade;
+                const float g = (self < RAID_MAX_BOX ? s_boxCol[self][1] : fg) * shade;
+                const float b = (self < RAID_MAX_BOX ? s_boxCol[self][2] : fb) * shade;
+                for (int c = 0; c < 4; c++) { q[c].cr = r; q[c].cg = g; q[c].cb = b; }
+                RaPoly(V, q, 4);
+            }
+        }
+    }
+}
+
+// CUSTOM: a plate ABOVE the floor is a ceiling, and a ceiling is seen from
+// below only. Seen from above it is the lid on the room - and a room camera
+// from the game sits above its walls (a background is a cut-away: the bathroom's
+// camera 0 hangs at y -7812 over walls 4000 high), so drawing it from there
+// put a black lid over the whole view.
+static int RaCeilingHidden(const RaView& V, float y)
+{
+    return y < -100.0f && V.fromY < y;     // Y is negative upwards: the eye is above it
+}
+
+static void RaProjBox(const RaView& V, int self, const RaidBox* B)
+{
+    const float x0 = (float)B->x0, x1 = (float)B->x1;
+    const float y0 = (float)B->y0, y1 = (float)B->y1;
+    const float z0 = (float)B->z0, z1 = (float)B->z1;
+    const float dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    const float fr = B->shade * (float)B->tr * (1.0f / 255.0f);
+    const float fg = B->shade * (float)B->tg * (1.0f / 255.0f);
+    const float fb = B->shade * (float)B->tb * (1.0f / 255.0f);
+    static const float kUp[3]   = { 0, -1, 0 }, kDown[3] = { 0, 1, 0 };
+    static const float kXneg[3] = { -1, 0, 0 }, kXpos[3] = { 1, 0, 0 };
+    static const float kZneg[3] = { 0, 0, -1 }, kZpos[3] = { 0, 0, 1 };
+
+    if (dy == 0.0f) {                       // a plate: one face
+        if (RaCeilingHidden(V, y0)) return;
+        RaGridProj(V, self, x0, y0, z0,  dx, 0, 0,  0, 0, dz, kUp, fr, fg, fb);
+        return;
+    }
+    if (RaFacing(V, -1.0f, 1, (x0+x1)*0.5f, y0, (z0+z1)*0.5f))
+        RaGridProj(V, self, x0, y0, z0,  dx, 0, 0,  0, 0, dz, kUp, fr, fg, fb);
+    if (RaFacing(V,  1.0f, 1, (x0+x1)*0.5f, y1, (z0+z1)*0.5f))
+        RaGridProj(V, self, x0, y1, z0,  dx, 0, 0,  0, 0, dz, kDown, fr, fg, fb);
+    if (RaFacing(V, -1.0f, 0, x0, (y0+y1)*0.5f, (z0+z1)*0.5f))
+        RaGridProj(V, self, x0, y0, z0,  0, dy, 0,  0, 0, dz, kXneg, fr, fg, fb);
+    if (RaFacing(V,  1.0f, 0, x1, (y0+y1)*0.5f, (z0+z1)*0.5f))
+        RaGridProj(V, self, x1, y0, z0,  0, dy, 0,  0, 0, dz, kXpos, fr, fg, fb);
+    if (RaFacing(V, -1.0f, 2, (x0+x1)*0.5f, (y0+y1)*0.5f, z0))
+        RaGridProj(V, self, x0, y0, z0,  dx, 0, 0,  0, dy, 0, kZneg, fr, fg, fb);
+    if (RaFacing(V,  1.0f, 2, (x0+x1)*0.5f, (y0+y1)*0.5f, z1))
+        RaGridProj(V, self, x0, y0, z1,  dx, 0, 0,  0, dy, 0, kZpos, fr, fg, fb);
+}
+
+
+
+// ---------------------------------------------------------------------------
+// MATERIALS - surfaces covered with a tiled texture of their own.
+//
+// The room is modelled, not projected: a backdrop is a reference for what it
+// looks like, and its surfaces are made of materials - wood boards, floor
+// tiles, enamel - each a texture tools/build_raid_textures.py cut out of the
+// game's own pictures, straightened and made seamless:
+//     Data/raidtex/t<n>.bin  =  'RTEX' + u32 w + u32 h + RGBA
+// A material repeats every `tile` world units, laid out by WORLD position
+// (so the boards run on across two boxes that meet), on the two axes the face
+// spans; it is sampled with repeat (MARNI_SAMPLER_LINEAR_WRAP) and lit by the
+// arena's own per-vertex light (RaShade), the same as an untextured box.
+// ---------------------------------------------------------------------------
+#define RA_MAT_FILES  64
+
+static MarniHandle s_matTex[RA_MAT_FILES];
+static int         s_matState[RA_MAT_FILES];          // 0 not tried, 1 loaded, -1 failed
+static float       s_matAspect[RA_MAT_FILES];         // h / w: a texture need not be square
+static float       s_mtris[RA_MAX_TRIS * 3 * RA_FLOATS];
+static int         s_mcount = 0;
+static int         s_mcur   = -1;                      // the material s_mtris holds
+
+static void RaMatForget(void)
+{
+    for (int i = 0; i < RA_MAT_FILES; i++) {
+        if (s_matTex[i] != MARNI_NULL_HANDLE && s_dx != NULL) s_dx->DestroyTexture(s_matTex[i]);
+        s_matTex[i] = MARNI_NULL_HANDLE;
+        s_matState[i] = 0;
+    }
+}
+
+static MarniHandle RaMatGet(int id)
+{
+    if (id <= 0 || id >= RA_MAT_FILES) return MARNI_NULL_HANDLE;
+    if (s_matState[id] != 0) return s_matTex[id];
+    s_matState[id] = -1;
+    char path[96], rooted[260];
+    sprintf(path, GAME_DATA_ROOT "Data/raidtex/t%d.bin", id);
+    size_t size = 0;
+    unsigned char* blob = (unsigned char*)plat_file_read_all(ResolveAssetRoot(path, rooted, sizeof(rooted)), &size);
+    if (blob != NULL && size >= 12 && memcmp(blob, "RTEX", 4) == 0) {
+        const unsigned int w = *(const unsigned int*)(blob + 4);
+        const unsigned int h = *(const unsigned int*)(blob + 8);
+        if (w > 0 && h > 0 && w <= 4096 && h <= 4096 && size >= 12 + (size_t)w * h * 4
+            && MarniCreateTexture((int)w, (int)h, 32, blob + 12, &s_matTex[id])) {
+            s_matState[id] = 1;
+            s_matAspect[id] = (float)h / (float)w;
+        }
+    }
+    free(blob);
+    return s_matTex[id];
+}
+
+static void RaMatFlush(void)
+{
+    if (s_mcount > 0 && s_dx != NULL && s_mcur > 0) {
+        s_dx->DrawTriangles3D(s_mtris, s_mcount, s_matTex[s_mcur],
+                              MARNI_SAMPLER_LINEAR_WRAP, MARNI_BLEND_DISABLE, true);
+    }
+    s_mcount = 0;
+}
+
+// One polygon in material `tex`: clipped to the near plane, colours carried
+// through the clip (they are the lighting), UVs taken from each output
+// vertex's world position on the axes `au`, `av`.
+static void RaPolyMat(const RaView& V, const RaVert* in, int n, int tex,
+                      int au, int av, float tile, const float* origin)
+{
+    if (RaMatGet(tex) == MARNI_NULL_HANDLE) { RaPoly(V, in, n); return; }
+    if (tex != s_mcur) { RaMatFlush(); s_mcur = tex; }
+
+    RaVert cut[10];                                   // the mirror pass
+    if (s_clipAxis >= 0) {
+        n = RaClipMirror(in, n, cut);
+        if (n < 3) return;
+        in = cut;
+    }
+
+    RaVert out[8];
+    float  vz[8];
+    int    m = 0;
+    for (int i = 0; i < n && m < 8; i++) {
+        const RaVert& a = in[i];
+        const RaVert& b = in[(i + 1) % n];
+        const float da = RaDepth(V, a), db = RaDepth(V, b);
+        if (da >= RA_NEAR) { out[m] = a; vz[m] = da; m++; }
+        if ((da >= RA_NEAR) != (db >= RA_NEAR) && m < 8) {
+            const float t = (RA_NEAR - da) / (db - da);
+            RaVert c;
+            c.x  = a.x  + (b.x  - a.x)  * t;
+            c.y  = a.y  + (b.y  - a.y)  * t;
+            c.z  = a.z  + (b.z  - a.z)  * t;
+            c.cr = a.cr + (b.cr - a.cr) * t;
+            c.cg = a.cg + (b.cg - a.cg) * t;
+            c.cb = a.cb + (b.cb - a.cb) * t;
+            out[m] = c; vz[m] = RA_NEAR; m++;
+        }
+    }
+    if (m < 3) return;
+    if (s_mcount + (m - 2) > RA_MAX_TRIS) RaMatFlush();
+
+    // `tile` is the world width of one repeat; its height follows the
+    // texture's own proportions, so a door 1:2 is a door 1:2 on the wall.
+    const float inv  = 1.0f / (tile > 1.0f ? tile : 1.0f);
+    const float invV = inv / (s_matAspect[tex] > 0.01f ? s_matAspect[tex] : 1.0f);
+    float sx[8], sy[8];
+    for (int i = 0; i < m; i++) RaProject(V, out[i], vz[i], &sx[i], &sy[i]);
+    for (int i = 1; i + 1 < m; i++) {
+        const int idx[3] = { 0, i, i + 1 };
+        for (int e = 0; e < 3; e++) {
+            const int j = idx[e];
+            const float w[3] = { out[j].x, out[j].y, out[j].z };
+            float* p = &s_mtris[s_mcount * 3 * RA_FLOATS + e * RA_FLOATS];
+            p[0] = sx[j]; p[1] = sy[j];
+            p[2] = TmdViewZToNdc(vz[j]); p[3] = vz[j];
+            p[4] = (w[au] - (origin ? origin[au] : 0.0f)) * inv;
+            p[5] = (w[av] - (origin ? origin[av] : 0.0f)) * invV;
+            p[6] = out[j].cr; p[7] = out[j].cg; p[8] = out[j].cb; p[9] = 1.0f;
+        }
+        s_mcount++;
+    }
+}
+
+// A material face, cut into the usual light cells (RA_CELL: the lighting is
+// per vertex) and lit like any box face. `au`/`av` are the world axes the
+// face spans: the texture's across and down.
+static void RaGridMat(const RaView& V, int tex, float tile, int au, int av,
+                      const float* origin, const float* nrm,
+                      float ax, float ay, float az,
+                      float ux, float uy, float uz,
+                      float vx, float vy, float vz, float br)
+{
+    const float ul = sqrtf(ux*ux + uy*uy + uz*uz);
+    const float vl = sqrtf(vx*vx + vy*vy + vz*vz);
+    int nu = (int)(ul / RA_CELL) + 1;
+    int nv = (int)(vl / RA_CELL) + 1;
+    if (nu > 16) nu = 16;
+    if (nv > 16) nv = 16;
+    for (int i = 0; i < nu; i++) {
+        const float a0 = (float)i / nu, a1 = (float)(i + 1) / nu;
+        for (int j = 0; j < nv; j++) {
+            const float b0 = (float)j / nv, b1 = (float)(j + 1) / nv;
+            RaVert q[4];
+            q[0].x = ax + ux*a0 + vx*b0; q[0].y = ay + uy*a0 + vy*b0; q[0].z = az + uz*a0 + vz*b0;
+            q[1].x = ax + ux*a1 + vx*b0; q[1].y = ay + uy*a1 + vy*b0; q[1].z = az + uz*a1 + vz*b0;
+            q[2].x = ax + ux*a1 + vx*b1; q[2].y = ay + uy*a1 + vy*b1; q[2].z = az + uz*a1 + vz*b1;
+            q[3].x = ax + ux*a0 + vx*b1; q[3].y = ay + uy*a0 + vy*b1; q[3].z = az + uz*a0 + vz*b1;
+            for (int c = 0; c < 4; c++) RaShadeLit(V, q[c], nrm, br);
+            RaPolyMat(V, q, 4, tex, au, av, tile, origin);
+        }
+    }
+}
+
+static int RaCeilingHidden(const RaView& V, float y);
+
+// A tbox: each face in its material, on the axes it spans (X and Z for the
+// top and bottom, Z or X with Y down for the sides), with the same per-face
+// light falloff as a plain box so a room keeps its shape.
+static void RaMatBox(const RaView& V, const RaidBox* B)
+{
+    const float x0 = (float)B->x0, x1 = (float)B->x1;
+    const float y0 = (float)B->y0, y1 = (float)B->y1;
+    const float z0 = (float)B->z0, z1 = (float)B->z1;
+    const float dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    const int tex = B->tex;
+    const float tile = (float)B->tile;
+    const float br = B->shade;
+    // The material starts at the box's own corner (top, low X, low Z), so a
+    // one-off picture - the door - sits in its box exactly, wherever the box is.
+    const float corner[3] = { x0, y0, z0 };
+    const float* o = (B->flags & RAID_BOX_WORLDUV) ? NULL : corner;
+    static const float nUp[3] = { 0, -1, 0 }, nDown[3] = { 0, 1, 0 };
+    static const float nXn[3] = { -1, 0, 0 }, nXp[3] = { 1, 0, 0 };
+    static const float nZn[3] = { 0, 0, -1 }, nZp[3] = { 0, 0, 1 };
+    if (dy == 0.0f) {
+        if (RaCeilingHidden(V, y0)) return;
+        RaGridMat(V, tex, tile, 0, 2, o, V.fromY < y0 ? nUp : nDown,
+                  x0, y0, z0,  dx, 0, 0,  0, 0, dz, br);
+        return;
+    }
+    if (RaFacing(V, -1.0f, 1, (x0+x1)*0.5f, y0, (z0+z1)*0.5f))
+        RaGridMat(V, tex, tile, 0, 2, o, nUp,   x0, y0, z0,  dx, 0, 0,  0, 0, dz, br);
+    if (RaFacing(V,  1.0f, 1, (x0+x1)*0.5f, y1, (z0+z1)*0.5f))
+        RaGridMat(V, tex, tile, 0, 2, o, nDown, x0, y1, z0,  dx, 0, 0,  0, 0, dz, br);
+    if (RaFacing(V, -1.0f, 0, x0, (y0+y1)*0.5f, (z0+z1)*0.5f))
+        RaGridMat(V, tex, tile, 2, 1, o, nXn,   x0, y0, z0,  0, dy, 0,  0, 0, dz, br);
+    if (RaFacing(V,  1.0f, 0, x1, (y0+y1)*0.5f, (z0+z1)*0.5f))
+        RaGridMat(V, tex, tile, 2, 1, o, nXp,   x1, y0, z0,  0, dy, 0,  0, 0, dz, br);
+    if (RaFacing(V, -1.0f, 2, (x0+x1)*0.5f, (y0+y1)*0.5f, z0))
+        RaGridMat(V, tex, tile, 0, 1, o, nZn,   x0, y0, z0,  dx, 0, 0,  0, dy, 0, br);
+    if (RaFacing(V,  1.0f, 2, (x0+x1)*0.5f, (y0+y1)*0.5f, z1))
+        RaGridMat(V, tex, tile, 0, 1, o, nZp,   x0, y0, z1,  dx, 0, 0,  0, dy, 0, br);
+}
+
+// ---------------------------------------------------------------------------
+// PLACED MODELS - the furniture, as real low-poly shapes.
+//
+// Boxes cannot stand in for a bath: seen from beside it, a box is a crate with
+// a picture of a bath on it, and the picture of the bath spills onto the wall
+// wherever the box is not where the bath is. So the furniture is modelled
+// (tools/build_raid_meshes.py writes the .obj files, in game units, Y negative
+// up) and placed by the level's `mesh` lines, and every triangle is textured
+// the way a projected box is: from the backdrop that sees it most squarely,
+// unhidden; a triangle no backdrop saw takes the model's own average colour.
+//
+// The .obj subset read: `v x y z` and `f a b c [d ...]` (1-based indices, any
+// `/vt/vn` suffix ignored, polygons fanned). Files are read whole into a
+// buffer of their own size and parsed defensively; a bad file is a missing
+// model, never a crash.
+// ---------------------------------------------------------------------------
+#define RA_MESH_FILES   64
+#define RA_MESH_VMAX    8192
+#define RA_MESH_TMAX    8192
+
+struct RaMeshFile {
+    int             state;          // 0 not tried, 1 loaded, -1 failed
+    int             nv, nt;
+    float*          v;              // nv * 3
+    unsigned short* t;              // nt * 3
+    float*          n;              // nv * 3: smooth normals, for the light
+};
+static RaMeshFile s_meshFile[RA_MESH_FILES];
+
+static void RaMeshForget(void)
+{
+    for (int i = 0; i < RA_MESH_FILES; i++) {
+        free(s_meshFile[i].v);
+        free(s_meshFile[i].t);
+        free(s_meshFile[i].n);
+        memset(&s_meshFile[i], 0, sizeof(s_meshFile[i]));
+    }
+    for (int m = 0; m < RAID_MAX_MESH; m++) s_meshColValid[m] = 0;
+}
+
+static RaMeshFile* RaMeshGet(int id)
+{
+    if (id < 0 || id >= RA_MESH_FILES) return NULL;
+    RaMeshFile* F = &s_meshFile[id];
+    if (F->state != 0) return F->state > 0 ? F : NULL;
+    F->state = -1;
+
+    char path[96], rooted[260];
+    sprintf(path, GAME_DATA_ROOT "Data/raidmesh/m%d.obj", id);
+    size_t size = 0;
+    char* text = (char*)plat_file_read_all(ResolveAssetRoot(path, rooted, sizeof(rooted)), &size);
+    if (text == NULL) return NULL;
+
+    F->v = (float*)malloc(RA_MESH_VMAX * 3 * sizeof(float));
+    F->t = (unsigned short*)malloc(RA_MESH_TMAX * 3 * sizeof(unsigned short));
+    if (F->v == NULL || F->t == NULL) { free(text); return NULL; }
+
+    size_t i = 0;
+    while (i < size) {
+        size_t e = i;
+        while (e < size && text[e] != '\n' && text[e] != '\r') e++;
+        char line[512];
+        size_t n = e - i < sizeof(line) - 1 ? e - i : sizeof(line) - 1;
+        memcpy(line, text + i, n);
+        line[n] = '\0';
+        if (line[0] == 'v' && line[1] == ' ' && F->nv < RA_MESH_VMAX) {
+            float x, y, z;
+            if (sscanf(line + 2, "%f %f %f", &x, &y, &z) == 3) {
+                F->v[F->nv * 3 + 0] = x; F->v[F->nv * 3 + 1] = y; F->v[F->nv * 3 + 2] = z;
+                F->nv++;
+            }
+        } else if (line[0] == 'f' && line[1] == ' ') {
+            int idx[16], k = 0;
+            char* p = line + 2;
+            while (*p && k < 16) {
+                while (*p == ' ' || *p == '\t') p++;
+                if (!*p) break;
+                const int vi = atoi(p);
+                if (vi >= 1 && vi <= F->nv) idx[k++] = vi - 1;
+                while (*p && *p != ' ' && *p != '\t') p++;
+            }
+            for (int f = 1; f + 1 < k && F->nt < RA_MESH_TMAX; f++) {
+                F->t[F->nt * 3 + 0] = (unsigned short)idx[0];
+                F->t[F->nt * 3 + 1] = (unsigned short)idx[f];
+                F->t[F->nt * 3 + 2] = (unsigned short)idx[f + 1];
+                F->nt++;
+            }
+        }
+        i = e;
+        while (i < size && (text[i] == '\n' || text[i] == '\r')) i++;
+    }
+    free(text);
+    if (F->nv == 0 || F->nt == 0) return NULL;
+
+    // Smooth normals: every face's area-weighted normal summed into its
+    // corners. Where a model wants a hard edge it has separate vertices.
+    F->n = (float*)calloc((size_t)F->nv * 3, sizeof(float));
+    if (F->n == NULL) return NULL;
+    for (int t = 0; t < F->nt; t++) {
+        const float* a = &F->v[F->t[t*3+0] * 3];
+        const float* b = &F->v[F->t[t*3+1] * 3];
+        const float* c = &F->v[F->t[t*3+2] * 3];
+        const float u[3] = { b[0]-a[0], b[1]-a[1], b[2]-a[2] };
+        const float w[3] = { c[0]-a[0], c[1]-a[1], c[2]-a[2] };
+        const float fn[3] = { u[1]*w[2] - u[2]*w[1], u[2]*w[0] - u[0]*w[2], u[0]*w[1] - u[1]*w[0] };
+        for (int e = 0; e < 3; e++)
+            for (int k = 0; k < 3; k++) F->n[F->t[t*3+e] * 3 + k] += fn[k];
+    }
+    for (int v = 0; v < F->nv; v++) {
+        float* q = &F->n[v * 3];
+        const float L = sqrtf(q[0]*q[0] + q[1]*q[1] + q[2]*q[2]);
+        if (L > 1e-6f) { q[0] /= L; q[1] /= L; q[2] /= L; } else { q[1] = -1.0f; }
+    }
+    F->state = 1;
+    return F;
+}
+
+// A model vertex into the world: scale, turn about Y the way a facing turns
+// (RotMatrixY), then move.
+static void RaMeshXform(const RaidMesh* M, const float* in, float* out)
+{
+    const float k = (float)M->scale / 100.0f;
+    const float a = (float)(M->yaw & 0xFFF) * (6.2831853f / 4096.0f);
+    const float c = cosf(a), sn = sinf(a);
+    const float x = in[0] * k, y = in[1] * k, z = in[2] * k;
+    out[0] = (float)M->x + c * x + sn * z;
+    out[1] = (float)M->y + y;
+    out[2] = (float)M->z - sn * x + c * z;
+}
+
+// This frame's bounds of every placed model, for RaBgOccluded.
+static void RaMeshPrepare(void)
+{
+    for (int m = 0; m < RAID_MAX_MESH; m++) s_meshLive[m] = 0;
+    for (int m = 0; m < g_raidLevel.nmesh && m < RAID_MAX_MESH; m++) {
+        const RaidMesh* M = &g_raidLevel.mesh[m];
+        const RaMeshFile* F = RaMeshGet(M->id);
+        if (F == NULL) continue;
+        float lo[3] = { 1e9f, 1e9f, 1e9f }, hi[3] = { -1e9f, -1e9f, -1e9f };
+        for (int v = 0; v < F->nv; v++) {
+            float w[3];
+            RaMeshXform(M, &F->v[v * 3], w);
+            for (int a = 0; a < 3; a++) { if (w[a] < lo[a]) lo[a] = w[a]; if (w[a] > hi[a]) hi[a] = w[a]; }
+        }
+        for (int a = 0; a < 3; a++) { s_meshLo[m][a] = lo[a]; s_meshHi[m][a] = hi[a]; }
+        s_meshLive[m] = 1;
+    }
+}
+
+// The backdrop that sees this triangle best - squarely, wholly in front of its
+// camera, unhidden - or -1. The same rule as a box cell, minus the viewer term:
+// a model is looked at from all round, never from a room camera's own eye.
+static int RaTriPick(const float* a, const float* b, const float* c, const float n[3], int self)
+{
+    const float ctr[3] = { (a[0]+b[0]+c[0]) / 3.0f, (a[1]+b[1]+c[1]) / 3.0f, (a[2]+b[2]+c[2]) / 3.0f };
+    int best = -1;
+    float bestScore = 0.0f;
+    for (int k = 0; k < g_raidLevel.nbgsrc && k < RAID_MAX_BGSRC; k++) {
+        const RaSrc* S = &s_src[k];
+        if (!S->ok) continue;
+        const float d[3] = { S->fx - ctr[0], S->fy - ctr[1], S->fz - ctr[2] };
+        const float L = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+        if (L < 1.0f) continue;
+        const float facing = (n[0]*d[0] + n[1]*d[1] + n[2]*d[2]) / L;
+        if (facing < 0.12f) continue;
+        float sx, sy;
+        if (!RaSrcProject(S, a[0], a[1], a[2], &sx, &sy) || !RaSrcProject(S, b[0], b[1], b[2], &sx, &sy)
+            || !RaSrcProject(S, c[0], c[1], c[2], &sx, &sy)) continue;
+        const float from[3] = { ctr[0] + n[0] * 20.0f, ctr[1] + n[1] * 20.0f, ctr[2] + n[2] * 20.0f };
+        const float eye[3]  = { S->fx, S->fy, S->fz };
+        if (RaBgOccluded(from, eye, self)) continue;
+        const float f = (RaFrameSoft(S, a[0], a[1], a[2]) + RaFrameSoft(S, b[0], b[1], b[2])
+                       + RaFrameSoft(S, c[0], c[1], c[2])) / 3.0f;
+        const float score = facing * f;
+        if (score > bestScore) { bestScore = score; best = k; }
+    }
+    return best;
+}
+
+static void RaTriNormal(const float* a, const float* b, const float* c, float n[3])
+{
+    const float u[3] = { b[0]-a[0], b[1]-a[1], b[2]-a[2] };
+    const float v[3] = { c[0]-a[0], c[1]-a[1], c[2]-a[2] };
+    n[0] = u[1]*v[2] - u[2]*v[1];
+    n[1] = u[2]*v[0] - u[0]*v[2];
+    n[2] = u[0]*v[1] - u[1]*v[0];
+    const float L = sqrtf(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+    if (L > 1e-6f) { n[0] /= L; n[1] /= L; n[2] /= L; }
+}
+
+// The model's own colour: the average of its triangles' centres as the
+// backdrops see them unhidden. Computed once per model and level.
+static void RaMeshColour(int m, const RaidMesh* M, const RaMeshFile* F)
+{
+    double sum[3] = { 0, 0, 0 };
+    int count = 0;
+    for (int t = 0; t < F->nt; t++) {
+        float a[3], b[3], c[3], n[3];
+        RaMeshXform(M, &F->v[F->t[t*3+0] * 3], a);
+        RaMeshXform(M, &F->v[F->t[t*3+1] * 3], b);
+        RaMeshXform(M, &F->v[F->t[t*3+2] * 3], c);
+        RaTriNormal(a, b, c, n);
+        const int k = RaTriPick(a, b, c, n, -2 - m);
+        if (k < 0 || s_bgPix[k] == NULL) continue;
+        float sx, sy;
+        if (!RaSrcProject(&s_src[k], (a[0]+b[0]+c[0]) / 3, (a[1]+b[1]+c[1]) / 3, (a[2]+b[2]+c[2]) / 3, &sx, &sy)) continue;
+        if (sx < 0 || sx >= RA_BG_W || sy < 0 || sy >= RA_BG_H) continue;
+        const unsigned int px = s_bgPix[k][(int)sy * RA_BG_W + (int)sx];
+        sum[0] += (px & 0xFF); sum[1] += ((px >> 8) & 0xFF); sum[2] += ((px >> 16) & 0xFF);
+        count++;
+    }
+    if (count > 0) {
+        for (int i = 0; i < 3; i++) s_meshCol[m][i] = (float)(sum[i] / count / 255.0);
+    } else {
+        s_meshCol[m][0] = s_meshCol[m][1] = s_meshCol[m][2] = 0.35f;
+    }
+    s_meshColValid[m] = 1;
+}
+
+static void RaDrawMeshes(const RaView& V)
+{
+    for (int m = 0; m < g_raidLevel.nmesh && m < RAID_MAX_MESH; m++) {
+        const RaidMesh* M = &g_raidLevel.mesh[m];
+        if ((M->flags & RAID_BOX_DRAW) == 0) continue;
+        const RaMeshFile* F = RaMeshGet(M->id);
+        if (F == NULL) continue;
+        if ((M->flags & RAID_BOX_PROJ) && !s_meshColValid[m]) RaMeshColour(m, M, F);
+
+        for (int t = 0; t < F->nt; t++) {
+            float w[3][3], n[3];
+            for (int e = 0; e < 3; e++) RaMeshXform(M, &F->v[F->t[t*3+e] * 3], w[e]);
+            RaTriNormal(w[0], w[1], w[2], n);
+            // Back faces away from the eye are skipped (the files are closed
+            // and wound outward).
+            const float ev[3] = { V.fromX - w[0][0], V.fromY - w[0][1], V.fromZ - w[0][2] };
+            if (n[0]*ev[0] + n[1]*ev[1] + n[2]*ev[2] <= 0.0f) continue;
+
+            RaVert q[3];
+            for (int e = 0; e < 3; e++) {
+                q[e].x = w[e][0]; q[e].y = w[e][1]; q[e].z = w[e][2];
+                q[e].cr = q[e].cg = q[e].cb = 1.0f;
+            }
+            if (M->tex > 0) {
+                // Each triangle takes the material on the two world axes its
+                // normal is NOT closest to - planar mapping by dominant axis,
+                // so a curved shape is never stretched along its own normal.
+                const float ax_ = fabsf(n[0]), ay_ = fabsf(n[1]), az_ = fabsf(n[2]);
+                int au, av;
+                if (ay_ >= ax_ && ay_ >= az_) { au = 0; av = 2; }
+                else if (ax_ >= az_)          { au = 2; av = 1; }
+                else                           { au = 0; av = 1; }
+                if (M->flags & RAID_MESH_GLOW) {
+                    // A lamp: its own light, only the fog over it.
+                    for (int e = 0; e < 3; e++) { q[e].cr = q[e].cg = q[e].cb = 1.0f; }
+                } else {
+                    const float a = (float)(M->yaw & 0xFFF) * (6.2831853f / 4096.0f);
+                    const float c = cosf(a), sn = sinf(a);
+                    for (int e = 0; e < 3; e++) {
+                        const float* vn = &F->n[F->t[t*3+e] * 3];
+                        const float wn[3] = { c * vn[0] + sn * vn[2], vn[1], -sn * vn[0] + c * vn[2] };
+                        RaShadeLit(V, q[e], wn, 1.0f);
+                    }
+                }
+                RaPolyMat(V, q, 3, M->tex, au, av, (float)M->tile, NULL);
+                continue;
+            }
+            const int k = (M->flags & RAID_BOX_PROJ) ? RaTriPick(w[0], w[1], w[2], n, -2 - m) : -1;
+            if (k >= 0) {
+                RaPolyTex(V, q, 3, k, -1, 0.0f, 0.0f);
+            } else {
+                const float shade = (n[1] < -0.5f) ? 1.0f : (n[1] > 0.5f ? 0.6f : 0.85f);
+                for (int e = 0; e < 3; e++) {
+                    q[e].cr = s_meshCol[m][0] * shade;
+                    q[e].cg = s_meshCol[m][1] * shade;
+                    q[e].cb = s_meshCol[m][2] * shade;
+                }
+                RaPoly(V, q, 3);
+            }
         }
     }
 }
@@ -436,6 +1748,58 @@ static void RaDrawNames(const RaView& V)
     }
 }
 
+// CUSTOM: the crosshair for RAID's L2 aim (RaidShoulderCam.cpp). It sits
+// where the gun line meets the screen, not at the screen centre: the camera is
+// over the shoulder, so the two are not the same point, and the gun follows
+// the arms when aiming up or down. It fades in with the camera swing and with
+// the arms coming up, so it never shows pointing at the floor.
+#define RA_XHAIR_DEPTH   690u      // over the nameplates, under the item icons
+#define RA_XHAIR_GAP     4.0f      // design px from the centre to each tick, at the closest
+#define RA_XHAIR_LEN     7.0f
+#define RA_XHAIR_THICK   2.0f
+
+static void RaDrawCrosshair(const RaView& V)
+{
+    if (UiAtlas_Ready() == 0) return;
+    const float amount = RaidShoulderCam_Amount();
+    if (amount <= 0.0f) return;
+
+    RaVert aim;
+    float raised;
+    if (!RaidShoulderCam_AimPoint(&aim.x, &aim.y, &aim.z, &raised)) return;
+
+    const float a = amount * raised;
+    if (a <= 0.02f) return;
+
+    const float vz = RaDepth(V, aim);
+    if (vz < 96.0f) return;
+    float cx, cy;
+    RaProject(V, aim, vz, &cx, &cy);
+
+    const float k = UiAtlas_Scale();
+    // The ticks sit ON the spread cone: a shot fired now can land anywhere
+    // inside them and nowhere outside. V.f is the projection's focal length
+    // in backbuffer pixels, so a cone of half-angle a is f * tan(a) pixels
+    // across at any distance. They close in as the reticle focuses, to the
+    // closed gap when it is spent; never inside that, or the dot is lost.
+    float g = V.f * tanf(RaidShoulderCam_Spread());
+    if (g < RA_XHAIR_GAP * k) g = RA_XHAIR_GAP * k;
+    const float l = RA_XHAIR_LEN * k, t = RA_XHAIR_THICK * k;
+    const unsigned int ink  = ((unsigned int)(a * 230.0f) << 24) | 0x00F2F2F2u;
+    const unsigned int edge = ((unsigned int)(a * 140.0f) << 24);   // dark outline
+
+    // An outline under each mark first, so it reads over a light wall too.
+    for (int pass = 0; pass < 2; pass++) {
+        const float o = pass == 0 ? k : 0.0f;
+        const unsigned int c = pass == 0 ? edge : ink;
+        UiAtlas_FillPushed(cx - t * 0.5f - o, cy - g - l - o, t + 2 * o, l + 2 * o, c, RA_XHAIR_DEPTH);
+        UiAtlas_FillPushed(cx - t * 0.5f - o, cy + g - o,     t + 2 * o, l + 2 * o, c, RA_XHAIR_DEPTH);
+        UiAtlas_FillPushed(cx - g - l - o, cy - t * 0.5f - o, l + 2 * o, t + 2 * o, c, RA_XHAIR_DEPTH);
+        UiAtlas_FillPushed(cx + g - o,     cy - t * 0.5f - o, l + 2 * o, t + 2 * o, c, RA_XHAIR_DEPTH);
+        UiAtlas_FillPushed(cx - t * 0.5f - o, cy - t * 0.5f - o, t + 2 * o, t + 2 * o, c, RA_XHAIR_DEPTH);
+    }
+}
+
 static void RaDrawItems(const RaView& V)
 {
     s_itemPhase++;
@@ -488,11 +1852,21 @@ static void RaDrawItems(const RaView& V)
     }
 }
 
+static void RaDrawBoxes(const RaView& V);
+static void RaDrawMirror(const RaView& V);
+static void RaDrawGlass(const RaView& V);
+
+// This frame's view, kept for RaidArena_DrawLate - the mirror's glass goes
+// over the reflected characters, and they are drawn after this function.
+static RaView s_lateView;
+static int    s_lateValid = 0;
+
 // ===========================================================================
 // RaidArena_Draw - once per frame, from the render flush, before the models.
 // ===========================================================================
 void RaidArena_Draw(void)
 {
+    s_lateValid = 0;
     if (g_raidMode == 0) return;
     if (g_RdtPointer == NULL) return;
 
@@ -501,6 +1875,8 @@ void RaidArena_Draw(void)
     // file that turns out to be broken leaves the level that is already up.
     if (g_raidReloadRequest) {
         g_raidReloadRequest = 0;
+        RaMeshForget();     // CUSTOM: F7 re-reads the model and material files too
+        RaMatForget();
         if (RaidLevel_Load()) {
             RaidLevel_Apply();
             Room_SetupCamera();     // just the matrix and the FOV, no room reload
@@ -524,7 +1900,37 @@ void RaidArena_Draw(void)
     s_cursor   = 0;
 
     RaBounds();
+    RaBgPrepare();      // CUSTOM: backdrop textures and their source cameras
 
+    RaDrawBoxes(V);
+    RaDrawMeshes(V);      // CUSTOM: the furniture models
+    RaDrawMirror(V);      // CUSTOM: the room again, as the mirror shows it
+
+    RaDrawItems(V);
+
+    RaFlush();
+    for (int k = 0; k < RAID_MAX_BGSRC; k++) RaTexFlush(k);   // CUSTOM: backdrops
+    for (int k = 0; k < RAID_MAX_BGSRC; k++) RaOverFlush(k);  // ...then their blended second pictures
+    RaMatFlush();                                             // CUSTOM: the last material batch
+    s_lateView = V;                                           // CUSTOM: the glass waits for the models
+    s_lateValid = 1;
+
+    RaDrawNames(V);   // CUSTOM: co-op nameplates, after the batch, before the models
+    RaDrawCrosshair(V);   // CUSTOM: RAID's L2 aim
+
+    // The pickups' real models. AFTER the flush, because these do not go
+    // through this file's own triangle batch at all - they are TMD objects,
+    // queued into the renderer's model pass the same way a character is, and
+    // that pass runs later in the frame.
+    RaidItemModels_Sync();
+    RaidItemModels_Draw();
+}
+
+// ---------------------------------------------------------------------------
+// The level's boxes.
+// ---------------------------------------------------------------------------
+static void RaDrawBoxes(const RaView& V)
+{
     // ---- the level ---------------------------------------------------------
     // Every box, six faces, each subdivided into cells. The subdivision is not
     // decoration: the fog and the light pool are evaluated PER VERTEX, so a
@@ -539,6 +1945,14 @@ void RaidArena_Draw(void)
     for (int i = 0; i < g_raidLevel.nbox; i++) {
         const RaidBox* B = &g_raidLevel.box[i];
         if ((B->flags & RAID_BOX_DRAW) == 0) continue;
+        if (B->flags & RAID_BOX_TEX) {                   // CUSTOM: a material surface
+            RaMatBox(V, B);
+            continue;
+        }
+        if (B->flags & RAID_BOX_PROJ) {                  // CUSTOM: a backdrop surface
+            RaProjBox(V, i, B);
+            continue;
+        }
 
         const float x0 = (float)B->x0, x1 = (float)B->x1;
         const float y0 = (float)B->y0, y1 = (float)B->y1;
@@ -555,6 +1969,7 @@ void RaidArena_Draw(void)
         // A plate (no thickness) is one face and is always drawn: it has no
         // outside, and a floor seen edge-on is still a floor.
         if (dy == 0.0f) {
+            if (RaCeilingHidden(V, y0)) continue;
             RaGrid(V, x0, y0, z0,  dx, 0, 0,  0, 0, dz,  B->shade, tr, tg, tb, chk);
             continue;
         }
@@ -572,17 +1987,104 @@ void RaidArena_Draw(void)
         if (RaFacing(V,  1.0f, 2, (x0+x1)*0.5f, (y0+y1)*0.5f, z1))
             RaGrid(V, x0, y0, z1,  dx, 0, 0,  0, dy, 0,  B->shade * 0.55f, tr, tg, tb, 0);
     }
+}
 
-    RaDrawItems(V);
+// ---------------------------------------------------------------------------
+// CUSTOM: the mirror (`mirror` line).
+//
+// The characters' reflection is the game's own: with the pass armed
+// (RaidMirror_Arm), update_player_anim and update_entities submit each body a
+// second time through the room camera reflected about the plane
+// (entity_draw_mirror_reflection). A story room needs nothing else - its
+// mirror is painted into the background. The arena has no background, so it
+// draws the reflected ROOM here the same way: every box and model again,
+// through the reflected eye, clipped to the room side of the glass.
+//
+// Reflecting the view is reflecting the eye and the basis about the plane - one
+// component negated in each - and the projection that comes out IS the mirror
+// image, handedness and all, with depths that are the true length of the path
+// through the glass. So the reflection lands BEHIND the wall the mirror hangs
+// on, and the depth test hides it everywhere except where the level has left
+// a hole for the glass.
+// ---------------------------------------------------------------------------
+static void RaDrawMirror(const RaView& V)
+{
+    const RaidMirror* M = &g_raidLevel.mirror;
+    if (!M->on) return;
 
-    RaFlush();
+    const int a = M->axis ? 0 : 2;
+    const float k = (float)M->plane;
+    const float eye = a == 0 ? V.fromX : V.fromZ;
+    if (fabsf(eye - k) < 1.0f) return;
 
-    RaDrawNames(V);   // CUSTOM: co-op nameplates, after the batch, before the models
+    // The whole room again costs as much as the room: skip it when the glass
+    // is not in front of the eye at all. (Off to one side still draws - the
+    // depth test then throws it away - which is cheap next to getting this
+    // wrong at the screen's edge.)
+    int ahead = 0;
+    for (int i = 0; i < 4; i++) {
+        RaVert c;
+        const float cc = (float)((i & 1) ? M->max : M->min);
+        c.y = (float)((i & 2) ? M->ybot : M->ytop);
+        if (M->axis) { c.x = k; c.z = cc; } else { c.z = k; c.x = cc; }
+        if (RaDepth(V, c) > RA_NEAR) ahead = 1;
+    }
+    if (!ahead) return;
 
-    // The pickups' real models. AFTER the flush, because these do not go
-    // through this file's own triangle batch at all - they are TMD objects,
-    // queued into the renderer's model pass the same way a character is, and
-    // that pass runs later in the frame.
-    RaidItemModels_Sync();
-    RaidItemModels_Draw();
+    RaView R = V;
+    if (a == 0) R.fromX = 2.0f * k - V.fromX;
+    else        R.fromZ = 2.0f * k - V.fromZ;
+    R.n[a] = -V.n[a];
+    R.r[a] = -V.r[a];
+    R.u[a] = -V.u[a];
+
+    s_clipAxis = a;
+    s_clipK    = k;
+    s_clipSide = eye > k ? 1.0f : -1.0f;      // the side the eye, and so the room, is on
+    RaDrawBoxes(R);
+    RaDrawMeshes(R);
+    s_clipAxis = -1;
+}
+
+// The glass: a faint blue-grey film over the hole, blended and depth-tested
+// but not depth-writing. Drawn after the model pass (RaidArena_DrawLate), so
+// it tints the reflected characters as it tints the reflected room - and the
+// depth test keeps it off anyone standing in FRONT of the mirror.
+static void RaDrawGlass(const RaView& V)
+{
+    const RaidMirror* M = &g_raidLevel.mirror;
+    if (!M->on || s_dx == NULL) return;
+
+    const float k = (float)M->plane;
+    const float c0 = (float)M->min, c1 = (float)M->max;
+    const float y0 = (float)M->ytop, y1 = (float)M->ybot;
+    RaVert q[4];
+    for (int i = 0; i < 4; i++) {
+        const float c = (i == 1 || i == 2) ? c1 : c0;
+        const float y = (i >= 2) ? y1 : y0;
+        if (M->axis) { q[i].x = k; q[i].z = c; }
+        else         { q[i].z = k; q[i].x = c; }
+        q[i].y = y;
+        q[i].cr = 0.52f; q[i].cg = 0.64f; q[i].cb = 0.72f;
+    }
+
+    // Through the ordinary batch, then flushed blended instead of opaque.
+    s_triCount = 0;
+    s_cursor   = 0;
+    RaPoly(V, q, 4);
+    if (s_triCount > 0) {
+        for (int t = 0; t < s_triCount * 3; t++) s_tris[t * RA_FLOATS + 9] = 0.24f;
+        s_dx->DrawTriangles3D(s_tris, s_triCount, MARNI_NULL_HANDLE,
+                              MARNI_SAMPLER_POINT, MARNI_BLEND_ALPHA, false);
+    }
+    s_triCount = 0;
+    s_cursor   = 0;
+}
+
+void RaidArena_DrawLate(void)
+{
+    if (!s_lateValid || g_raidMode == 0 || !g_raidLevel.loaded) return;
+    s_lateValid = 0;
+    s_dx = Marni_DX();
+    RaDrawGlass(s_lateView);
 }

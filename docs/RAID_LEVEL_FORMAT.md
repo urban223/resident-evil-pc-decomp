@@ -44,7 +44,27 @@ box     <x0> <y0> <z0> <x1> <y1> <z1> <flags> <shade> <r> <g> <b>
 item    <x> <z> <angle> <type> <amount>      a pickup lying in the room
 give    <type> <amount>                      one slot of the starting inventory
 enemy   <x> <z> <angle> <type>
+bgsrc   <stage> <room> <cam> <fx> <fy> <fz> <tx> <ty> <tz> <fov>
+mesh    <id> <x> <y> <z> <yaw> <scale> <flags> <tex> <tile>
+tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>
+mirror  <axis> <plane> <min> <max> <ytop> <ybot>
 ```
+
+- `tbox` is a box covered with a material, `Data/raidtex/t<tex>.bin`, repeating
+  every `tile` world units, laid from the box's own low corner - or from the
+  world origin with flag `64`, so the pieces of one wall cut round a hole line
+  up.
+- `mesh` places `Data/raidmesh/m<id>.obj` (game units, Y negative up) at
+  (x, y, z), turned by `yaw` (4096 to the turn) and scaled by `scale` percent,
+  in material `tex` (0: the model's own colour). Flag `32` makes it a lamp that
+  shows its own light. A mesh never collides - boxes do that.
+- `bgsrc` names one of the game's pre-rendered backgrounds and the camera it
+  was rendered from; boxes and meshes with flag `8` are textured by projecting
+  it back out of that camera.
+- `mirror` arms the game's own planar reflection (SCD opcode 0x0F's) - axis
+  `1` is the plane X = `plane`, `0` the plane Z = `plane` - over a glass
+  spanning `min..max` along the other floor axis and `ytop..ybot` up the wall.
+  The level must leave a hole in the wall there. See `docs/RAID_BATHROOM.md`.
 
 `box` flags: `1` draw, `2` collide, `4` checkerboard. `shade` is brightness in
 hundredths (72 = 0.72), so the whole file stays integers and an editor never has
@@ -52,7 +72,7 @@ to think about locales and decimal points. `type` on `item` and `give` is an
 `ITEM_*` id from `Types.h`.
 
 Limits, from `RaidLevel.h`: 128 boxes, 8 cameras, 32 zones, 3 lights, 32
-enemies, 32 pickups, 8 `give` slots. A bad line is skipped rather than fatal — a
+enemies, 32 pickups, 8 `give` slots, 4 `bgsrc`, 32 meshes, one mirror. A bad line is skipped rather than fatal — a
 level that loses one wall is a better failure than a level that crashes. A file
 with no camera or no box is rejected outright and the level already loaded is
 kept.

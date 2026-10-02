@@ -1213,7 +1213,9 @@ void JointApplyColorTint(JointStruct* joint, int param2, int param3, void* data)
     g_playerDisplacement = *(int*)(joint->anim_slot_ptr + 0x14) * 2;
     JointSetColorTint((int)joint->anim_object, (unsigned int)param2);
 
-    if ((g_main_state_flags & MSF_MIRROR_ENABLE) != 0) {
+    // CUSTOM: only bodies that have the reflected copy - RAID can build one
+    // after the pass is armed. In the original every body has it.
+    if ((g_main_state_flags & MSF_MIRROR_ENABLE) != 0 && ENTITY->weaponJointsPtr != 0) {
         int offset = ENTITY->weaponJointsPtr - (int)ENTITY->jointsStructs;
         JointStruct* weaponJoint = (JointStruct*)((unsigned char*)joint + offset);
         g_tempVar = weaponJoint;

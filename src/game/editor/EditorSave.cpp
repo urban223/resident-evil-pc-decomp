@@ -50,8 +50,13 @@ static const char* const ED_HEADER =
 "#   item    <x> <z> <angle> <type> <amount>      a pickup lying in the room\n"
 "#   give    <type> <amount>                      one slot of the starting inventory\n"
 "#   enemy   <x> <z> <angle> <type>\n"
+"#   bgsrc   <stage> <room> <cam> <fx> <fy> <fz> <tx> <ty> <tz> <fov>\n"
+"#   mesh    <id> <x> <y> <z> <yaw> <scale> <flags> <tex> <tile>\n"
+"#   tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>\n"
+"#   mirror  <axis> <plane> <min> <max> <ytop> <ybot>\n"
 "#\n"
-"# box flags: 1 draw, 2 collide, 4 checkerboard.   shade is in hundredths.\n"
+"# box flags: 1 draw, 2 collide, 4 checkerboard, 8 projected from the bgsrc\n"
+"# backdrops.   shade is in hundredths.\n"
 "# ---------------------------------------------------------------------------\n";
 
 // ---------------------------------------------------------------------------
@@ -93,10 +98,38 @@ static size_t ed_serialize(char* out, size_t cap)
     }
     if (L->nzone) ED_PUT("\n");
 
+    for (int i = 0; i < L->nbgsrc; i++) {
+        const RaidBgSrc* s = &L->bgsrc[i];
+        ED_PUT("bgsrc %d %d %d  %6d %6d %6d  %6d %6d %6d  %d\n",
+               s->stage, s->room, s->cam, s->view.fx, s->view.fy, s->view.fz,
+               s->view.tx, s->view.ty, s->view.tz, s->view.fov);
+    }
+    if (L->nbgsrc) ED_PUT("\n");
+
+    for (int i = 0; i < L->nmesh; i++) {
+        const RaidMesh* m = &L->mesh[i];
+        ED_PUT("mesh %d  %6d %6d %6d  %5d %3d %d  %d %d\n",
+               m->id, m->x, m->y, m->z, m->yaw, m->scale, m->flags, m->tex, m->tile);
+    }
+    if (L->nmesh) ED_PUT("\n");
+
+    if (L->mirror.on) {
+        ED_PUT("mirror %d %6d  %6d %6d  %6d %6d\n\n", L->mirror.axis, L->mirror.plane,
+               L->mirror.min, L->mirror.max, L->mirror.ytop, L->mirror.ybot);
+    }
+
     ED_PUT("spawn %d %d %d\n\n", L->spawnX, L->spawnZ, L->spawnAngle);
 
     for (int i = 0; i < L->nbox; i++) {
         const RaidBox* b = &L->box[i];
+        if (b->flags & RAID_BOX_TEX) {
+            // A material box goes back out as the tbox line it came from.
+            ED_PUT("tbox %6d %6d %6d  %6d %6d %6d  %d %d %d %d\n",
+                   b->x0, b->y0, b->z0, b->x1, b->y1, b->z1,
+                   b->flags & ~RAID_BOX_TEX, b->tex, b->tile,
+                   (int)(b->shade * 100.0f + 0.5f));
+            continue;
+        }
         ED_PUT("box %6d %6d %6d  %6d %6d %6d  %d %d %d %d %d\n",
                b->x0, b->y0, b->z0, b->x1, b->y1, b->z1,
                b->flags, (int)(b->shade * 100.0f + 0.5f), b->tr, b->tg, b->tb);

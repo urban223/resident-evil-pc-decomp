@@ -19,12 +19,19 @@
 #define RAID_MAX_LIGHT    3
 #define RAID_MAX_ITEM    32
 #define RAID_MAX_GIVE     8   // Jill's whole inventory; there is nowhere to put a ninth
+#define RAID_MAX_BGSRC    4   // backdrop images a level can project
+#define RAID_MAX_MESH    32   // placed models (Data/raidmesh/m<id>.obj)
 
 // Box flags. A box can be any combination: scenery that is walked through,
 // an invisible wall, or the usual both.
 #define RAID_BOX_DRAW     0x01
 #define RAID_BOX_SOLID    0x02
 #define RAID_BOX_CHECKER  0x04   // alternate the two shades cell by cell
+#define RAID_BOX_PROJ     0x08   // textured by projecting the level's backdrops (bgsrc)
+#define RAID_BOX_TEX      0x10   // textured by a tiled material (a `tbox` line): tex, tile
+#define RAID_MESH_GLOW    0x20   // a `mesh` that gives light rather than takes it: a lamp
+#define RAID_BOX_WORLDUV  0x40   // a tbox whose material is laid from the world origin, not
+                                 // its own corner - pieces of one wall then line up
 
 struct RaidBox {
     short x0, y0, z0;
@@ -32,6 +39,8 @@ struct RaidBox {
     unsigned short flags;
     float shade;                 // base brightness, 0..1
     unsigned char tr, tg, tb;    // tint, 0..255
+    unsigned char tex;           // RAID_BOX_TEX: Data/raidtex/t<tex>.bin
+    short tile;                  // ...repeating every `tile` world units
 };
 
 struct RaidCam {
@@ -69,15 +78,54 @@ struct RaidEnemy {
     unsigned char type;
 };
 
+// A backdrop: one of the game's own pre-rendered room backgrounds, and the
+// camera it was rendered from. Boxes flagged RAID_BOX_PROJ are textured by
+// projecting it back out of that camera onto them (RaidArena.cpp). The view
+// is the ORIGINAL camera, kept here rather than read from the room: the live
+// camera record is rewritten by the editor and the shoulder camera, and a
+// projection from a moving camera would slide.
+struct RaidBgSrc {
+    unsigned char stage;         // 1-based, as in the file name: Stage4\RC4070.pak
+    unsigned char room;          // the room id, 0x07 there
+    unsigned char cam;           // the camera, 0 there
+    RaidCam       view;          // from that room's RDT camera record
+};
+
+// A placed model: Data/raidmesh/m<id>.obj, scaled by scale/100, turned by yaw
+// (4096 to the turn, the facing convention) and moved to (x, y, z). Only drawn;
+// what stops the player is still the boxes. With RAID_BOX_PROJ in flags it is
+// textured by the backdrops, like a projected box.
+struct RaidMesh {
+    unsigned char id;
+    int   x, y, z;
+    short yaw;
+    short scale;                 // percent
+    unsigned short flags;
+    unsigned char tex;           // 0 = untextured, else Data/raidtex/t<tex>.bin
+    short tile;                  // world units per repeat
+};
+
 struct RaidLight {
     int x, y, z;
     unsigned char r, g, b;
     short radius;
 };
 
+// A mirror (`mirror` line): the game's own planar reflection, the one the story
+// rooms arm with SCD opcode 0x0F (cmd_mirror_set) - same plane, same extent.
+// The arena adds what a pre-rendered room got for free: the reflected room
+// itself, seen through a hole the level leaves in the wall.
+struct RaidMirror {
+    unsigned char on;
+    unsigned char axis;          // 0: the plane is Z = plane, 1: X = plane (the opcode's bit 1)
+    int plane;                   // the glass
+    int min, max;                // its extent along the other floor axis
+    int ytop, ybot;              // and up the wall (Y negative up: ytop < ybot)
+};
+
 struct RaidLevel {
     int  loaded;
-    int  nbox, ncam, nzone, nlight, nenemy, nitem, ngive;
+    int  nbox, ncam, nzone, nlight, nenemy, nitem, ngive, nbgsrc, nmesh;
     short ambR, ambG, ambB;
     int  spawnX, spawnZ, spawnAngle;
     RaidBox   box[RAID_MAX_BOX];
@@ -87,6 +135,9 @@ struct RaidLevel {
     RaidEnemy enemy[RAID_MAX_ENEMY];
     RaidItem  item[RAID_MAX_ITEM];
     RaidGive  give[RAID_MAX_GIVE];
+    RaidBgSrc bgsrc[RAID_MAX_BGSRC];
+    RaidMesh  mesh[RAID_MAX_MESH];
+    RaidMirror mirror;
 };
 
 extern RaidLevel g_raidLevel;
@@ -94,6 +145,7 @@ extern int g_raidReloadRequest;   // set by the reload key, consumed at draw tim
 
 int  RaidLevel_Load(void);        // read the file; 1 on success, level untouched on failure
 void RaidLevel_Apply(void);       // push camera, lights and collision into the loaded RDT
+void RaidMirror_Arm(void);        // once per room entry, after every body is set up
 
 // RaidItems.cpp - the pickups lying in the room.
 void RaidItems_Reset(void);       // a (re)loaded level has taken nothing

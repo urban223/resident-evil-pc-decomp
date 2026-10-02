@@ -218,6 +218,12 @@ static void ApplySampler(MarniSampler sampler)
     GLint filter = (sampler == MARNI_SAMPLER_POINT) ? GL_NEAREST : GL_LINEAR;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    // CUSTOM: MARNI_SAMPLER_LINEAR_WRAP repeats. Set every time, both ways:
+    // the parameters live on the texture object, so a texture drawn wrapped
+    // once would otherwise stay wrapped for every later clamped draw.
+    const GLint wrap = (sampler == MARNI_SAMPLER_LINEAR_WRAP) ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
 }
 
 static void DrawBatch(MarniDX::Impl* p, const float* verts, int vertexCount,

@@ -21,37 +21,145 @@
 # ---------------------------------------------------------------------------
 ver 1
 
-ambient 880 850 920
+# ---------------------------------------------------------------------------
+# The guardhouse bathroom (Stage 4, ROOM4070), MODELLED in 3D after its two
+# backgrounds (RC4070 / RC4071). The previous arena is raid1_arena.lvl.
+#
+# Everything here is MEASURED off those pictures: rays cast through the
+# room's own two cameras (the RDT's camera records, which project the
+# pictures to the pixel) onto the floor, the walls and the rims' planes. The
+# walls stand on the room's collision records (RDT +0x4C), which agree.
+#
+# Materials (tbox / mesh tex ids):
+#   cut out of the pictures by tools/build_raid_textures.py (not tracked):
+#     t1 wall boards  t2 floor tiles  t3 enamel  t4 dark wood  t5 the door
+#     t6 the rack's towel  t10 the bath mat  t15 the mat by the pan
+#     t16 green plaster  t17 skirting  t18 the bath's outside  t19 the
+#     cistern  t20 the pan's lid  t21 the bath towel
+#   painted by tools/build_raid_materials.py (tracked):
+#     t7 brass  t9 towel cloth  t11 porcelain  t13 iron  t14 soap  t23 nickel
+#     t24 the bottle
+# ---------------------------------------------------------------------------
 
-light 4000 -2000 4000 210 205 195 9000
-light 8000 -2000 8000 150 155 175 9000
-light 6000 -2600 3000 120 118 130 7000
+ambient 600 580 620
 
-# Inside the box, high in the low-X/low-Z corner, looking across it. Outside
-# would put a wall between the lens and the room; from in here the two near
-# walls fall behind the near plane and the two far ones frame the shot.
-cam 2600 -4200 2600  6400 -600 6600  207
+# The light, over the mat and the bath where the pictures have their pool of
+# it; a second over the basin corner, which the pictures show lit too; and a
+# dim fill for the bounce.
+light 3900 -3000 8300 255 226 180 8500
+light 7300 -2400 9600  80  84  96 6500
+light 7500 -2700 6500 200 190 170 6000
 
-spawn 6000 6000 512
+# The room's own camera 0, high over the door.
+cam  4914 -7812  9936   5094  -936  7866  230
 
-# The floor. A plate - y0 == y1 - so it is one horizontal face, and checkered,
-# which is most of what sells a flat plane as a floor.
-box 2000 0 2000  10000 0 10000  5 72 255 247 224
+spawn 6000 8000 2048
 
-# The four walls. They are solid slabs OUTSIDE the play area, not a hollow
-# frame: the collision pushes the player OUT of a box, so a wall has to be a
-# box she is never inside.
-box     0 -3600     0   2000 0 12000  3 46 209 219 255
-box 10000 -3600     0  12000 0 12000  3 46 209 219 255
-box     0 -3600     0  12000 0  2000  3 46 209 219 255
-box     0 -3600 10000  12000 0 12000  3 46 209 219 255
+# Floor and ceiling (a plate above the floor is seen from below only).
+tbox  1872     0  5454   8298     0 10818   1 2 1600 100
+tbox  1572 -4000  5154   8598 -4000 11118   1 1 1600 35
 
-# Pickups. A clip by the near wall, a spray in the far corner, and a second
-# pistol out in the open - the marker's colour comes from the item's category,
-# so ammunition is brass, healing is green and a weapon is steel.
-item  3200  3200 0 11 30      # CLIP
-item  9200  9200 0 65 1       # F.-AID SPRAY
-item  3200  9200 0 113 4      # FREEZE PISTOL
+# Walls: boards, on the collision records' inner faces.
+tbox  1572 -4000  5154   1872     0 11118   1 1 1600 100   # low X
+# high X (basin side), cut round the mirror's glass (flag 64: the four pieces
+# take their boards from the world origin, so they still line up)
+tbox  8298 -4000  5154   8598     0  6140  65 1 1600 100
+tbox  8298 -4000  6980   8598     0 11118  65 1 1600 100
+tbox  8298 -4000  6140   8598 -3130  6980  65 1 1600 100
+tbox  8298 -2080  6140   8598     0  6980  65 1 1600 100
+tbox  1872 -4000  5154   8298     0  5454   1 1 1600 100   # far (door)
+tbox  1872 -4000 10818   3690     0 11118   1 1 1600 100   # near, bath side
+tbox  3690 -4000 10728   8298     0 11118   1 1 1600 100   # near, pan side
+
+# Round every wall, from the floor up (measured on the far wall):
+#   skirting 0..470, stained green plaster to 1150, the rail's boards to
+#   1780 and its cap to 1915, which stands 115 off the wall.
+# skirting
+tbox  1872  -470  5454   2310     0  5494  1 17 2200 100
+tbox  3680  -470  5454   8298     0  5494  1 17 2200 100
+tbox  1872  -470 10778   3690     0 10818  1 17 2200 100
+tbox  3690  -470 10688   8298     0 10728  1 17 2200 100
+tbox  1872  -470  5494   1912     0 10778  1 17 2200 100
+tbox  8258  -470  5494   8298     0 10688  1 17 2200 100
+# plaster
+tbox  1872 -1150  5454   2310  -470  5462  1 16 2200 100
+tbox  3680 -1150  5454   8298  -470  5462  1 16 2200 100
+tbox  1872 -1150 10810   3690  -470 10818  1 16 2200 100
+tbox  3690 -1150 10720   8298  -470 10728  1 16 2200 100
+tbox  1872 -1150  5462   1880  -470 10810  1 16 2200 100
+tbox  8290 -1150  5462   8298  -470 10720  1 16 2200 100
+# rail
+tbox  1872 -1780  5454   2310 -1150  5524  1 4 1300 100
+tbox  3680 -1780  5454   8298 -1150  5524  1 4 1300 100
+tbox  1872 -1780 10748   3690 -1150 10818  1 4 1300 100
+tbox  3690 -1780 10658   8298 -1150 10728  1 4 1300 100
+tbox  1872 -1780  5524   1942 -1150 10748  1 4 1300 100
+tbox  8228 -1780  5524   8298 -1150 10658  1 4 1300 100
+# rail cap
+tbox  1872 -1915  5454   2310 -1780  5569  1 4 1300 110
+tbox  3680 -1915  5454   8298 -1780  5569  1 4 1300 110
+tbox  1872 -1915 10703   3690 -1780 10818  1 4 1300 110
+tbox  3690 -1915 10613   8298 -1780 10728  1 4 1300 110
+tbox  1872 -1915  5569   1987 -1780 10703  1 4 1300 110
+tbox  8183 -1915  5569   8298 -1780 10613  1 4 1300 110
+
+# The door: 1180 x 3195 (x 2407..3586) - it was guessed 1450 x 2392 before,
+# which is what skewed its picture - in a dark frame.
+tbox  2407 -3195  5454   3586     0  5500   1 5 1180 100
+mesh 24  3462 -1243  5500     0 100 1   7  200   # its knob, on the brass plate in t5
+tbox  2310 -3320  5454   2407     0  5540   1 4 1300 90
+tbox  3586 -3320  5454   3680     0  5540   1 4 1300 90
+tbox  2310 -3320  5454   3680 -3195  5540   1 4 1300 90
+
+# The mirror over the basin: a real one. The glass is the hole above; the
+# game reflects the characters in it (its own mirror pass, armed as SCD
+# opcode 0x0F arms it) and the arena reflects the room.
+mirror 1 8290  6140 6980  -3130 -2080
+mesh 27  8298     0  6560     0 100 1   4  500   # its wooden frame
+
+# The low cistern box behind the pan.
+tbox  6680 -1800 10160   7880  -900 10728   1 19 1200 100
+
+# The two worn mats.
+tbox  2410    -8  7370   4790     0  8540   1 10 2380 100
+tbox  6766    -8  8524   7767     0  9711   1 15  950 100
+
+# The fittings: id x y z yaw scale flags tex tile (tools/build_raid_meshes.py).
+mesh 1   3765     0  9840     0 100 1  18  900   # the bath, outside
+mesh 11  3765     0  9840     0 100 1   3 1200   # ... its rim and hollow
+mesh 16  4050     0  9015     0 100 1  21  600   # the towel over its rim
+mesh 9   2320     0 10000     0 100 1   7  300   # its mixer: two valves and a short spout
+mesh 25  2320     0 10000     0 100 1  23  400   # ... the hand shower, into the bath
+mesh 26  2320     0 10000     0 100 1  13  300   # ... and its hose
+mesh 13  3265     0 10590     0 100 1   3  900   # the trough over it
+mesh 14  2913 -2010 10686     0 100 1  20  200   # ... a soap in it
+mesh 18  3429 -2010 10700     0 100 1   7  300   # ... and a brass-capped bottle
+mesh 15  1991     0  9870     0 100 1   3  700   # the tray at its head
+mesh 17  2000 -2100  9551     0 100 1  11  300   # ... a sponge on it
+mesh 2   7400     0  9530     0 100 1   3  900   # the pan
+mesh 3   7400     0  9530     0 100 1  20  900   # its lid
+mesh 4   7280     0 10445     0 100 1   7  300   # the cistern's lever and pipe
+mesh 19  8298 -1400  9570  1024 100 1  23  300   # the paper holder
+mesh 20  8298 -1400  9570  1024 100 1   9  300   # ... and its roll
+mesh 5   7840     0  6470     0 100 1   3  900   # the basin
+mesh 10  8298     0  6470     0 100 1  23  400   # its taps and waste
+mesh 6   8148     0  6560     0 100 1   3  700   # the shelf, centred under the mirror
+mesh 12  8160 -1976  6207     0 100 1  24  400   # ... a bottle on it
+mesh 7   6675     0  5700     0 100 1   4  600   # the towel rack
+mesh 8   6675     0  5700     0 100 1   6  600   # ... and its towel
+
+# What STOPS you: ROOM4070's own collision records (RDT +0x4C), exactly, and
+# invisible (flag 2 only). Walls and fixtures alike.
+box    36 -4000  4032   1872     0 11772   2 40 0 0 0
+box  3690 -4000 10728   8676     0 11862   2 40 0 0 0
+box     0 -4000  4086   9468     0  5454   2 40 0 0 0
+box  8298 -4000  4086   9540     0 11844   2 40 0 0 0
+box     0 -4000 10818   9594     0 12672   2 40 0 0 0
+box     0  -750  9072   5202     0 11124   2 40 0 0 0
+box  7542 -1000  4086   9468     0  6984   2 40 0 0 0
+box  6660  -900  9072   9522     0 11736   2 40 0 0 0
+
+# No pickups and no enemies: the room is for the two players.
 
 # The starting inventory. Remove every `give` line and the mode falls back to
 # its built-in loadout instead of starting her empty-handed.
@@ -59,8 +167,5 @@ give 1 0        # COMBAT KNIFE
 give 2 15       # BERETTA
 give 11 60      # CLIP
 give 113 4      # FREEZE PISTOL
+give 5 6        # COLT PYTHON, magnum rounds - six in the cylinder
 give 65 1       # F.-AID SPRAY
-
-# One zombie, to stand in the arena. `type` is the entity id: 0 is the white-coat
-# zombie, and its model is EMD table entry type + 4.
-enemy  6000  3000 1024 0

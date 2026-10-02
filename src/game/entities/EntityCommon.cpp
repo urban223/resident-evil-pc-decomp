@@ -886,7 +886,9 @@ void joint_setup_attack_effect(int joint, unsigned char effectType, unsigned sho
     *(unsigned short*)(joint + 0x72) = frameMatch;
 
     // Also apply to weapon-part joint if active
-    if ((g_main_state_flags & MSF_MIRROR_ENABLE) != 0) {
+    // CUSTOM: only bodies that have the reflected copy - RAID can build one
+    // after the pass is armed. In the original every body has it.
+    if ((g_main_state_flags & MSF_MIRROR_ENABLE) != 0 && ENTITY->weaponJointsPtr != 0) {
         int weaponJoint = (*(int*)((char*)ENTITY + 0xAC) - *(int*)&ENTITY->jointsStructs) + joint;
         joint_enable_special_effect(weaponJoint, sizeB, sizeVal, sizeC);
         *(unsigned char*)(weaponJoint + 3) = effectType;
@@ -1660,6 +1662,11 @@ void entity_draw_mirror_reflection(void)
 {
     MATRIX mirrorCam;
 
+    // CUSTOM: a body built after the pass was armed has no reflected joints
+    // (RAID spawns enemies at run time); drawing it would hand render_entity a
+    // null joint array. In the original every body has them, so this never fires.
+    if (ENTITY->weaponJointsPtr == 0) return;
+
     entity_build_mirror_joints();
 
     // 0x0048bdaa-0x0048bdcd: swap in the mirrored joints.
@@ -1841,6 +1848,7 @@ void update_entities(void)
                 }
 
                 g_pCurPlayer = coopPrev;   // CUSTOM
+
             }
 
             // 0x0048f131-0x0048f197: the mirror pass. Bit 0 of g_main_state_flags

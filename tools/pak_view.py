@@ -65,14 +65,13 @@ class PakDecoder:
                 if code == 0x101:
                     self.code_size += 1
                     continue
-                # KwKwK case: decode previous string + its first char
+                # KwKwK case: decode previous string + its first char. The
+                # first char goes at the END - unpack_pakfile_ puts it in
+                # g_pakStringBuf[0], which its reversed output loop emits
+                # last (FileLoader.cpp). Putting it first, as this did,
+                # corrupted every such run: the "speckles" in the PNGs.
                 special = self.next_code <= code
-                if special:
-                    string = [prev_first]
-                    lookup = prev_code
-                else:
-                    string = []
-                    lookup = code
+                lookup = prev_code if special else code
                 # decode_string (0x00425bc0): walk prefix chain (reversed)
                 chars = []
                 c = lookup
@@ -81,7 +80,9 @@ class PakDecoder:
                     chars.append(ch)
                     c = prefix
                 chars.append(c)
-                string.extend(reversed(chars))
+                string = list(reversed(chars))
+                if special:
+                    string.append(prev_first)
                 first = string[0]
                 prev_first = first
                 self.out.extend(string)

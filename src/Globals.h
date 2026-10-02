@@ -1156,6 +1156,7 @@ extern BOOL g_bShowCollisionDebug;
 extern int  g_iCollisionDebugY;   // world Y of the overlay plane (0 = room floor)
 void CollisionDebug_Draw(void);
 void RaidArena_Draw(void);                        // RaidArena.cpp - the RAID mode's 3D room
+void RaidArena_DrawLate(void);                    // RaidArena.cpp - over the models: the mirror's glass
 void WeaponSlide_Update(void);                    // WeaponSlide.cpp - the Beretta's slide
 void RaidItems_Update(void);                      // RaidItems.cpp - the arena's pickups
 extern int g_raidReloadRequest;                   // RaidLevel.cpp - F7, re-read the arena file

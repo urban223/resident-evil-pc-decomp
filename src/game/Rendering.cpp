@@ -566,6 +566,10 @@ void FrameRateGovernor(void)
             // Render queued 3D TMD objects (entities, options-menu character)
             FlushTmdObjects();
 
+            // CUSTOM: the RAID mirror's glass, over the reflected characters
+            // the model pass has just drawn. Inert outside RAID.
+            RaidArena_DrawLate();
+
             // Render command buffer sprites (game objects, title text, etc.).
             // The >= 0x10000 half already drew before the TMD pass.
             //

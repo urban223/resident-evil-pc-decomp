@@ -473,6 +473,10 @@ static void Raid_EnterRoom(void)
     // zombie, while the arena allocator is still where the spawn left it.
     Coop_ReserveZombies();
 
+    // CUSTOM: a level with a mirror arms the game's own reflection pass - after
+    // every body above exists, because each one needs its reflected joints.
+    RaidMirror_Arm();
+
     // Re-cut the camera now that she is actually somewhere. The arena has one
     // camera and its switch table terminates on the first record, so this does
     // not pick a different one - what it is here for is the cut_set() at the
