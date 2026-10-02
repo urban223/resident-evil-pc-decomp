@@ -28,6 +28,7 @@
 // have Y negated by PSXObject_Store (PS1 +Y is down, D3D +Y is up).
 #include "TmdRenderer.h"
 #include "SpriteRenderer.h"
+#include "RaidLevel.h"      // CUSTOM: g_raidLevel - the arena projects with square pixels
 #include "../Globals.h"
 #include "../marni/MarniDX.h"
 #include "../marni/MarniSystem.h"
@@ -216,6 +217,7 @@ void TmdQueueObject(void* objData, int depth)
         { g_itemSharedTmdSlot,  sizeof(g_itemSharedTmdSlot)  },  // item viewer, shared transparent
         { g_tmdObjectBuffer,    sizeof(g_tmdObjectBuffer)    },  // entities, room objects
         { g_raidItemTmdSlots,   sizeof(g_raidItemTmdSlots)   },  // CUSTOM: RAID pickups
+        { g_raidDoorTmdSlots,   sizeof(g_raidDoorTmdSlots)   },  // CUSTOM: RAID doors
     };
 
     BYTE* slotBase = NULL;
@@ -398,6 +400,15 @@ void FlushTmdObjects(void)
         // fullscreen backbuffer (models render ~1.33x too tall, i.e. "closer
         // to the camera"). The pre-rendered backgrounds stretch anisotropically,
         // so the models must too.
+        //
+        // CUSTOM: except in the RAID arena. There the room is not a stretched
+        // picture but geometry, projected with square pixels (RaidArena.cpp's
+        // RaProject: the fov times scaleX on both axes) - and a model
+        // stretched the backgrounds' way stood a quarter short of it on 16:9
+        // and drifted toward the screen's centre line: a door that stopped
+        // short of its lintel and floated off the floor, feet off their
+        // shadows. So there the models take the arena's scale on Y as well.
+        if (g_raidMode != 0 && g_raidLevel.loaded) scaleY = scaleX;
         float fg = (float)g_sceneRenderParam;
 
         // Near plane. The original marks a vertex clipped when its view-space Z

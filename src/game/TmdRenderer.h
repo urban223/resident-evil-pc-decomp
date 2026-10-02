@@ -85,6 +85,11 @@ extern unsigned char g_itemSharedTmdSlot[TMD_SLOT_STRIDE];                      
 #define TMD_RAID_ITEM_SLOT_COUNT 8
 extern unsigned char g_raidItemTmdSlots[TMD_RAID_ITEM_SLOT_COUNT * TMD_SLOT_STRIDE]; // RaidItemModels.cpp
 
+// CUSTOM: the RAID doors' models - four doors, a leaf and up to three handles
+// each (RaidDoorModels.cpp).
+#define TMD_RAID_DOOR_SLOT_COUNT 16
+extern unsigned char g_raidDoorTmdSlots[TMD_RAID_DOOR_SLOT_COUNT * TMD_SLOT_STRIDE]; // RaidDoorModels.cpp
+
 // CUSTOM: draw a slot you own yourself, at a world transform of your choosing.
 //
 // This is the tail of FUN_00483080 - the part that turns a GTE matrix into the

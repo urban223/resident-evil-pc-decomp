@@ -147,9 +147,30 @@ crosses the glass - stand in front of it to see yourself.
 
 ## The door, and room 003 behind it
 
-The bathroom door is a model (`m30` leaf, `m31` brass) on a `door` line, and
-opens the way Resident Evil 2 (2019) does: no cut to a loading screen, the
-next room is simply there.
+The bathroom door is the game's own: room 003's door to the bathroom is type
+33 (`door15.dor`) with handle 1, and a `doormodel 33 1 3195` line under the
+`door` line draws that leaf and its two round knobs - the model the story's
+opening animation shows on black - standing in the doorway and swung by the
+door's angle. It opens the way Resident Evil 2 (2019) does: no cut to a
+loading screen, the next room is simply there. (It was `m30` leaf and `m31`
+brass before; both files are still there.)
+
+- Which parts are the leaf and the knobs, and where a knob sits, is said by
+  the .dor's own scripts (ORDER_SETUP / POS / ROT under the record's byte
+  tests); `RaidDoorModels.cpp` runs just those over them. The scene is built
+  for a close-up (DOOR15's leaf is 3600 x 6600), so the vertices are scaled to
+  the doorway at load - 1400 x 3195, 70 thick, the knobs by the width's factor.
+- It is lit by the level lights nearest the door, not the three nearest
+  player 1 that light the characters; with those it darkened as she walked
+  away.
+- Every model in RAID (characters, pickups, this door) is projected with the
+  arena's square pixels (`TmdRenderer.cpp`). Stretched like the 4:3
+  backgrounds of the story rooms, they stood a quarter short on 16:9 and
+  drifted toward the screen's centre line: the leaf stopped short of its
+  lintel and hung off the floor. Furniture sized by eye before that may now
+  look small next to the characters (the toilet does:
+  `docs/images/raid_bathroom_scale_low_toilet.jpg`, a local shot - images
+  are not tracked).
 
 - Walk into it (inside 700) and she pushes it open with her left hand, away
   from her, without stopping; until her hand is on it the leaf stays shut, and
@@ -169,10 +190,9 @@ next room is simply there.
   rounds of "it barely opens" taught that).
 - Its doorway is a solid box the loader makes (`RAID_BOX_DOOR`), clear once the
   leaf has turned past ~55 degrees. Every mesh placed exactly at the hinge
-  swings with it; the leaf's picture is laid in model space (mesh flag `512`)
-  so it turns with the leaf instead of sliding over it. The picture's painted
-  knob is painted out - the model's is the only one - and the leaf is widened
-  to 1400 from the picture's 1180.
+  swings with it. The leaf is 1400 wide, wider than the backdrop's 1180:
+  doors stay big - the game's convention - while other furniture should keep
+  true proportions.
 
 Behind it is room 003 (`ROOM4060`), as in the story: in its own coordinates
 the bathroom is the notch of its L, and its RDT's door to the bathroom sits on

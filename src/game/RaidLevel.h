@@ -142,6 +142,9 @@ struct RaidDoor {
     int   idle;                  // shut by hand: it will not open by itself until she steps back
     int   closeIn;               // shut by hand: frames until the leaf starts back (her hand reaching the knob)
     int   openIdle;              // frames it has stood open with nobody in its way
+    int   model;                 // `doormodel`: 1 + the game's door file (DoorSystem's table); 0 none
+    int   knob;                  // its handle, as a door record's +0x0B & 0x3F
+    int   height;                // the leaf's height, floor up
 };
 
 struct RaidLevel {

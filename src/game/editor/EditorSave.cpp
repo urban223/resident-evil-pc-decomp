@@ -55,6 +55,7 @@ static const char* const ED_HEADER =
 "#   tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>\n"
 "#   mirror  <axis> <plane> <min> <max> <ytop> <ybot>\n"
 "#   door    <hx> <hz> <width> <depth>\n"
+"#   doormodel <file> <knob> <height>       the door above, drawn as the game's own\n"
 "#\n"
 "# box flags: 1 draw, 2 collide, 4 checkerboard, 8 projected from the bgsrc\n"
 "# backdrops.   shade is in hundredths.\n"
@@ -124,6 +125,7 @@ static size_t ed_serialize(char* out, size_t cap)
     for (int i = 0; i < L->ndoor; i++) {
         const RaidDoor* d = &L->door[i];
         ED_PUT("door %6d %6d  %d %d\n", d->hx, d->hz, d->width, d->depth);
+        if (d->model > 0) ED_PUT("doormodel %d %d %d\n", d->model - 1, d->knob, d->height);
     }
     if (L->ndoor) ED_PUT("\n");
 

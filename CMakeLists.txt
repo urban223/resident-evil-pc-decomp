@@ -74,6 +74,7 @@ set(RE1_SOURCES
     src/game/RaidArena.cpp
     src/game/RaidEnemies.cpp
     src/game/RaidItemModels.cpp
+    src/game/RaidDoorModels.cpp
     src/game/RaidItems.cpp
     src/game/RaidLevel.cpp
     src/game/RaidShoulderCam.cpp

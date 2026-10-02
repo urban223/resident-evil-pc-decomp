@@ -119,11 +119,11 @@ tbox  8183 -1800  5569   8298 -1650 10613  1 27 975 100
 # (x 2407..3807), in a dark frame.
 # The door itself swings (`door`): walk into it and it opens away from you,
 # and room 003 is just there behind it - no cut, no loading. The meshes at its
-# hinge swing with it: the leaf (flag 512: its picture turns with it) and its
-# brass.
+# hinge swing with it. The leaf is the game's own: room 003's door to the
+# bathroom is type 33 (door15.dor) with handle 1, the model its opening
+# animation shows on black - here standing in the doorway, 3195 tall.
 door  2407  5477  1400 300
-mesh 30  2407     0  5477     0 100 513  5 1400   # the leaf
-mesh 31  2407     0  5477     0 100 1    7  300   # its knobs, plates and hinges
+doormodel 33 1 3195
 tbox  2310 -3320  5454   2407         0  5540   1 4 1300 90
 tbox  3807 -3320  5454   3901         0  5540   1 4 1300 90
 tbox  2310 -3320  5454   3901 -3195  5540   1 4 1300 90

@@ -49,6 +49,7 @@ mesh    <id> <x> <y> <z> <yaw> <scale> <flags> <tex> <tile>
 tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>
 mirror  <axis> <plane> <min> <max> <ytop> <ybot>
 door    <hx> <hz> <width> <depth>
+doormodel <file> <knob> <height>
 ```
 
 - `tbox` is a box covered with a material, `Data/raidtex/t<tex>.bin`, repeating
@@ -73,6 +74,11 @@ door    <hx> <hz> <width> <depth>
   (`hx`, `hz`), `width` along +X when shut, its doorway `depth` thick. The
   loader makes the doorway's box; every `mesh` placed at the hinge swings with
   it. Mesh flag `512` lays a mesh's material in model space, so it moves with it.
+- `doormodel` draws the `door` line above it with the game's own door model -
+  the one its full-screen opening animation shows on black: `file` indexes the
+  door-file table as a door record's `+0x0A` does (33 = `door15.dor`), `knob`
+  picks the handle as its `+0x0B & 0x3F` does, `height` is the leaf's, floor
+  up. The leaf is scaled to `width` x `height` (`RaidDoorModels.cpp`).
 
 `box` flags: `1` draw, `2` collide, `4` checkerboard. `shade` is brightness in
 hundredths (72 = 0.72), so the whole file stays integers and an editor never has

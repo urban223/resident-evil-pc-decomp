@@ -39,6 +39,7 @@
 #include "Entities.h"
 #include "RaidLevel.h"       // g_raidLevel, and the pickups' state
 #include "RaidItemModels.h"  // the pickups' real models
+#include "RaidDoorModels.h"  // CUSTOM: the game's own door models
 #include "SpriteRenderer.h"   // g_SubpixelOffsetX/Y - the screen centre
 #include "TmdRenderer.h"      // TmdViewZToNdc - the model pass's depth mapping
 #include "../marni/MarniDX.h"
@@ -2210,6 +2211,8 @@ void RaidArena_Draw(void)
     // that pass runs later in the frame.
     RaidItemModels_Sync();
     RaidItemModels_Draw();
+    RaidDoorModels_Sync();      // CUSTOM: the game's own doors, swung in the room
+    RaidDoorModels_Draw();
 }
 
 // ---------------------------------------------------------------------------

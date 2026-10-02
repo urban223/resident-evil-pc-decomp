@@ -153,6 +153,7 @@
     <ClCompile Include="src\game\RaidArena.cpp" />
     <ClCompile Include="src\game\RaidEnemies.cpp" />
     <ClCompile Include="src\game\RaidItemModels.cpp" />
+    <ClCompile Include="src\game\RaidDoorModels.cpp" />
     <ClCompile Include="src\game\RaidItems.cpp" />
     <ClCompile Include="src\game\RaidLevel.cpp" />
     <ClCompile Include="src\game\RaidShoulderCam.cpp" />

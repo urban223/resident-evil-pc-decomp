@@ -24,6 +24,7 @@
 //   tbox    <x0> <y0> <z0> <x1> <y1> <z1> <flags> <tex> <tile> <shade>
 //   mirror  <axis> <plane> <min> <max> <ytop> <ybot>
 //   door    <hx> <hz> <width> <depth>
+//   doormodel <file> <knob> <height>
 //
 // `bgsrc` names one of the game's pre-rendered backgrounds (StageS\RCSRRC.pak,
 // stage 1-based, room and camera as in the file name) and the camera it was
@@ -75,6 +76,7 @@
 #include "Entities.h"
 #include "RaidLevel.h"
 #include "RaidItemModels.h"
+#include "RaidDoorModels.h"   // CUSTOM: and the doors' models
 #include "CoopPlayer.h"
 #include "FileLoader.h"
 #include "../system/AssetPath.h"
@@ -291,6 +293,19 @@ static void raid_door(RaidLevel* lv, const int* v)
     lv->ndoor++;
 }
 
+// `doormodel` draws the `door` line above it with the game's own door: <file>
+// indexes the door-file table as a door record's +0x0A does (33 = door15.dor,
+// room 003's), <knob> picks the handle as its +0x0B & 0x3F does, and <height>
+// is the leaf's, floor up (RaidDoorModels.cpp).
+static void raid_doormodel(RaidLevel* lv, const int* v)
+{
+    if (lv->ndoor <= 0 || v[0] < 0 || v[0] >= 0x22) return;
+    RaidDoor* D = &lv->door[lv->ndoor - 1];
+    D->model  = v[0] + 1;
+    D->knob   = v[1] & 0x3F;
+    D->height = v[2] > 0 ? v[2] : 3195;
+}
+
 // "ver" is not in here, and neither is anything unknown: both are ignored on
 // purpose, so an older build reads a newer file instead of refusing it.
 static const RaidDirective kRaidDirectives[] = {
@@ -308,6 +323,7 @@ static const RaidDirective kRaidDirectives[] = {
     { "tbox",    10, raid_tbox },
     { "mirror",   6, raid_mirror },
     { "door",     4, raid_door },
+    { "doormodel", 3, raid_doormodel },
 };
 
 static const RaidDirective* raid_directive(const char* key)
@@ -367,6 +383,7 @@ int RaidLevel_Load(void)
     g_raidLevel = lv;
     RaidItems_Reset();      // a reloaded level has taken nothing: the items moved
     RaidItemModels_Reset(); // and may hold different kinds of them
+    RaidDoorModels_Reset(); // and different doors
     return 1;
 }
 

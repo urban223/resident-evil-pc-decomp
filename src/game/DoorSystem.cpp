@@ -95,6 +95,13 @@ static const char* const g_doorFileNameTable[0x22] = {
     GAME_DATA_ROOT "item_m1\\door15.dor",
 };
 
+// CUSTOM: the RAID doors draw these same models standing in the room
+// (RaidDoorModels.cpp), so the table is read from there too.
+const char* Door_FileName(unsigned int type)
+{
+    return type < 0x22 ? g_doorFileNameTable[type] : NULL;
+}
+
 // ============================================================================
 // Door-type -> animation-sequence map (0x004d2ce0, 256 bytes). The door record
 // byte +0x0A indexes this; the value selects the 12-dword phase sequence used
