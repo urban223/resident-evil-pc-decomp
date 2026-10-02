@@ -971,6 +971,9 @@ void update_room_objects(void)
 
         // ---- 1. enemies get pushed out of the object ----
         {
+            // CUSTOM: bounded to the array too - see update_entities' note on
+            // "slot 30" (EntityCommon.cpp). ChkEntitySlide can MOVE what it
+            // is given, and past the array lie g_enemy_count and ENTITY.
             Entity*      em      = g_EnemiesList;
             unsigned int emCount = (unsigned int)g_enemy_count;
             if (emCount != 0) {
@@ -980,7 +983,7 @@ void update_room_objects(void)
                         ChkEntitySlide((unsigned char*)em, obj, 0);
                     }
                     em++;
-                } while ((int)emCount > 0);
+                } while ((int)emCount > 0 && em < g_EnemiesList + 30);
             }
         }
 
@@ -1054,7 +1057,7 @@ void update_room_objects(void)
                             }
                         }
                         em++;
-                    } while ((int)emCount > 0);
+                    } while ((int)emCount > 0 && em < g_EnemiesList + 30);   // CUSTOM: as above
                 }
 
                 // So does another object in the way - and that one aborts the

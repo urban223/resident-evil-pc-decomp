@@ -1773,6 +1773,26 @@ void update_entities(void)
             return;
         }
 
+        // CUSTOM: and stop at the end of the ARRAY, which the original never
+        // does. Its loop counts ACTIVE entities against g_enemy_count and
+        // advances a slot at a time, so whenever the count is higher than the
+        // number of active slots it walks off the end of g_EnemiesList. In the
+        // original that read the save block's g_savedEnemyStates and nothing
+        // came of it. Here g_enemy_count and then ENTITY itself follow the
+        // array, so "slot 30" is those two globals: g_enemy_count's low byte
+        // read as status_flags (odd: active) and its next byte as id (0: a
+        // zombie). That phantom zombie went to zombie_init, whose Sca_info
+        // store at +4 IS the global ENTITY - which then held zombie_sca_info,
+        // a const record - and the very next store faulted:
+        //   zombie_init, Zombie.cpp:321, ENTITY == &zombie_sca_info
+        // twice, once in co-op and once solo. RAID makes the count outrun the
+        // active slots routinely (a reserved co-op zombie sits inactive inside
+        // it; enemies die). The draw loop in GameLoop already carries the same
+        // bound for the same reason.
+        if (ENTITY >= g_EnemiesList + 30) {
+            return;
+        }
+
         // 0x0048f114-0x0048f12b: Only update active entities (status_flags bit 0)
         if ((ENTITY->status_flags & 0x01) != 0) {
             // CUSTOM: the freeze pistol. This dispatch is the ONE place every

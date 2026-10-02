@@ -4270,7 +4270,10 @@ static unsigned int player_reticle_enemy(void)
     unsigned char nearestIdx = 0, lowIdx = 0, standingIdx = 0;
     unsigned int nearestDist = 0x7fffffff, lowDist = 0x7fffffff, standingDist = 0x7fffffff;
 
-    while (count != 0) {
+    // CUSTOM: bounded to the array as well as by the count - the same walk-off
+    // update_entities had (EntityCommon.cpp, its note on "slot 30"): the count
+    // only falls on ACTIVE slots, and past slot 29 lie g_enemy_count and ENTITY.
+    while (count != 0 && cVar3 < 30) {
         if ((ent->status_flags & 1) != 0) {
             if (ent->has_enter_switch_zone != 0 && -1 < ent->health
                 && (ent->behavior_flags & 0xc0) == 0 && ent->id < 0x13) {
