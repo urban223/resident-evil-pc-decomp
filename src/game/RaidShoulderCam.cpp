@@ -537,6 +537,8 @@ void RaidShoulderCam_NoteStick(int x, int y)
     s_stickY = y;
 }
 static int           s_pitchPosed;      // the arms carry a pitch from us
+static int           s_shouldersPitched; // this draw: PoseArms turned the shoulders (9, 12)
+static int           s_torsoRebuilt;     // this draw: PoseArms put the torso and hips (0, 2) back first
 static unsigned char s_savedReticle;
 static int           s_reticleSaved;
 
@@ -1054,6 +1056,8 @@ static void sc_raise(sc_m3 o, float up)
 
 void RaidShoulderCam_PoseArms(int i)
 {
+    s_shouldersPitched = 0;
+    s_torsoRebuilt = 0;
     if (i != 0) return;
 
     PlayerEntity* p = &g_players[0];
@@ -1066,6 +1070,7 @@ void RaidShoulderCam_PoseArms(int i)
     // translation too: it is the rest offset (ResetJointTransforms), which
     // nothing but this rewrites.
     static const int kJoint[4] = { 0, 2, 9, 12 };
+    s_torsoRebuilt = touch;
     if (touch) {
         for (int k = 0; k < 4; k++) {
             JointStruct* J = &j[kJoint[k]];
@@ -1137,7 +1142,83 @@ void RaidShoulderCam_PoseArms(int i)
         sc_mul(R, M, R);
         sc_to(&J->transform, R);
     }
+    s_shouldersPitched = 1;
     (void)Pt;
+}
+
+// One arm reaching out in front of her by `up` radians at the shoulder, for
+// the current player (g_playerEntity) - a door pushed open, a door pulled
+// shut. After RaidShoulderCam_PoseArms. Turned about the body's side axis
+// exactly as the aim's pitch turns the arms (see the note above it), so from
+// hanging at her side the arm swings forward and up.
+//
+// The shoulder is first put back to what Joint_move posed, unless the aim has
+// just turned it: Joint_move does not rewrite a holding frame, and the reach
+// must not pile onto last frame's. So the caller also calls this with up = 0
+// on the frame after a reach ends, to take it off.
+void RaidShoulderCam_PoseReach(int shoulder, float up)
+{
+    JointStruct* j = g_playerEntity.jointsStructs;
+    if (j == 0 || g_playerEntity.jointCount != 15) return;
+    if (shoulder != 9 && shoulder != 12) return;
+    JointStruct* J = &j[shoulder];
+    if (J->flags & 0x10) return;                    // not posed by Joint_move
+    if (!s_shouldersPitched)
+        RotMatrix(&J->rotation, &J->transform);     // keeps transform.t
+    if (up == 0.0f) return;
+
+    // R' = R0^T P R0 R: the turn built in the body frame, carried into the
+    // torso's.
+    sc_m3 R0, R0t, P, M, R;
+    sc_from(R0, &j[0].transform);
+    sc_tr(R0t, R0);
+    sc_raise(P, up);
+    sc_mul(M, P, R0);
+    sc_mul(M, R0t, M);
+    sc_from(R, &J->transform);
+    sc_mul(R, M, R);
+    sc_to(&J->transform, R);
+}
+
+// The current player leaning in toward what is in front of her by `fwd`
+// radians, bent at the waist with the legs left where they stand - the aim's
+// torso pitch (RaidShoulderCam_PoseArms) the other way: T0' = [P R0 | t0],
+// T2' = T0'^-1 T0 T2. Before RaidShoulderCam_PoseReach. The same contract as
+// it: the torso and hips are put back to Joint_move's first unless the aim
+// already did, and fwd = 0 on the frame after takes the lean off.
+void RaidShoulderCam_PoseLean(float fwd)
+{
+    JointStruct* j = g_playerEntity.jointsStructs;
+    if (j == 0 || g_playerEntity.jointCount != 15) return;
+    if ((j[0].flags & 0x10) || (j[2].flags & 0x10)) return;
+    if (!s_torsoRebuilt) {
+        RotMatrix(&j[0].rotation, &j[0].transform);
+        RotMatrix(&j[2].rotation, &j[2].transform);
+        if (g_playerEntity.animHeader != 0) {
+            const short* rest = (const short*)(g_playerEntity.animHeader + 8);
+            j[2].transform.t[0] = rest[2 * 3 + 0];
+            j[2].transform.t[1] = rest[2 * 3 + 1];
+            j[2].transform.t[2] = rest[2 * 3 + 2];
+        }
+    }
+    if (fwd == 0.0f) return;
+
+    sc_m3 R0, R0n, R0nt, P, M, R2;
+    sc_from(R0, &j[0].transform);
+    sc_raise(P, -fwd);                             // forward is down: the aim's raise reversed
+    sc_mul(R0n, P, R0);
+    sc_to(&j[0].transform, R0n);
+    sc_tr(R0nt, R0n);
+    sc_mul(M, R0nt, R0);                           // R0'^T R0
+    sc_from(R2, &j[2].transform);
+    sc_mul(R2, M, R2);
+    sc_to(&j[2].transform, R2);
+    const float x = (float)j[2].transform.t[0];
+    const float y = (float)j[2].transform.t[1];
+    const float z = (float)j[2].transform.t[2];
+    j[2].transform.t[0] = (int)(M[0][0] * x + M[0][1] * y + M[0][2] * z);
+    j[2].transform.t[1] = (int)(M[1][0] * x + M[1][1] * y + M[1][2] * z);
+    j[2].transform.t[2] = (int)(M[2][0] * x + M[2][1] * y + M[2][2] * z);
 }
 
 // A shot down the gun line against one enemy. Same contract as the

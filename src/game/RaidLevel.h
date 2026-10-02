@@ -140,6 +140,8 @@ struct RaidDoor {
     float angle;                 // now, radians: + opens toward -Z, - toward +Z
     float target;
     int   idle;                  // shut by hand: it will not open by itself until she steps back
+    int   closeIn;               // shut by hand: frames until the leaf starts back (her hand reaching the knob)
+    int   openIdle;              // frames it has stood open with nobody in its way
 };
 
 struct RaidLevel {
@@ -168,6 +170,7 @@ void RaidLevel_Apply(void);       // push camera, lights and collision into the 
 void RaidMirror_Arm(void);        // once per room entry, after every body is set up
 void RaidLevel_RebuildCollision(void);      // after a door opened or shut
 void RaidDoors_Player(int i);              // RaidArena.cpp: player i walks into / works a door
+void RaidDoors_PoseArm(int i);             // RaidArena.cpp: and reaches out to it (the draw)
 void RaidLevel_LightsNear(int x, int z);    // the RDT's 3 light slots <- the nearest level lights
 
 // RaidItems.cpp - the pickups lying in the room.

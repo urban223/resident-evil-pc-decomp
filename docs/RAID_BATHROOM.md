@@ -151,13 +151,21 @@ The bathroom door is a model (`m30` leaf, `m31` brass) on a `door` line, and
 opens the way Resident Evil 2 (2019) does: no cut to a loading screen, the
 next room is simply there.
 
-- Come up to it and it opens away from you: walking at it from about 1100 off
-  sets it ajar, against it (700) it opens all the way. The action button within
-  reach opens it, or, open, shuts it (not while aiming: then it fires) - and a
-  door shut by hand stays shut until
-  you step back. Doors never shut on their own, nor on somebody in the doorway.
-- Neither which way she faces nor whether she moved is asked: a shut doorway is
-  exactly what stops her moving, and a facing test made it hard to open (two
+- Walk into it (inside 700) and she pushes it open with her left hand, away
+  from her, without stopping; until her hand is on it the leaf stays shut, and
+  standing at it opens nothing - as the RE2 (2019) recording shows. The action
+  button within reach opens it the same way, or, open, she pulls it shut by the
+  knob with her right hand (not while aiming: then it fires); standing, she
+  also leans in to it at the waist. A door shut by hand stays shut until you
+  step back.
+- Left open with nobody in the doorway or in the leaf's way for 1.5 s, it
+  swings shut by itself. It never shuts on somebody in its way - only the
+  doorway and the leaf's sweep count, not standing in front of it, or every
+  door she pulled shut stopped half way.
+- Opening is quick, then settles (45 degrees in 0.2 s, done by 0.8 s);
+  shutting is even, about a second once her hand is on the knob (0.15 s after
+  the press). Measured from the recording at 6 frames a second.
+- Which way she faces is not asked: a facing test made it hard to open (two
   rounds of "it barely opens" taught that).
 - Its doorway is a solid box the loader makes (`RAID_BOX_DOOR`), clear once the
   leaf has turned past ~55 degrees. Every mesh placed exactly at the hinge

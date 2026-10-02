@@ -50,6 +50,12 @@ void RaidShoulderCam_AfterPlayer(int i);
 
 // game_loop's player draw, before his world matrices are composed.
 void RaidShoulderCam_PoseArms(int i);
+// And after it: the current player's shoulder (9 left, 12 right) reaching
+// forward by `up` radians - 0 takes a reach off again (see the .cpp).
+void RaidShoulderCam_PoseReach(int shoulder, float up);
+// And before the reach: leaning in by `fwd` radians at the waist, legs where
+// they stand - 0 takes it off again.
+void RaidShoulderCam_PoseLean(float fwd);
 
 // apply_weapon_damage's per-enemy test while free aim is on.
 struct Entity;

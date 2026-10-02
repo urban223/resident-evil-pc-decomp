@@ -2469,15 +2469,23 @@ static void RaDrawModelShadows(const RaView& V)
 // CUSTOM: doors, the way Resident Evil 2 (2019) does them (`door` lines) -
 // no cut to a loading screen, the next room is simply there behind the leaf.
 //
-//   - Come up to a shut door and it opens away from you: walking at it from
-//     a little way off sets it ajar, and right up against it it opens all the
-//     way. Nothing asks which way she faces or whether she moved: a shut door
-//     is exactly what stops her moving, and a facing test only made it hard
-//     to open.
-//   - The action button, within reach and not aiming, opens it all the way - or,
-//     open, shuts it. Doors stay as you leave them.
+//   - Walk into a shut door and she pushes it open with her left hand, away
+//     from her, without breaking stride. Until her hand is on it the leaf
+//     stays shut - nothing opens ajar on the way up (in the recording the leaf
+//     does not move before she touches it). Nothing asks which way she faces:
+//     a facing test only made it hard to open. Standing at it opens nothing.
+//   - The action button, within reach and not aiming, opens it all the way the
+//     same way - or, open, she takes the knob in her right hand and pulls it
+//     shut. Standing, she also leans in to it at the waist.
+//   - Left open, it swings shut by itself once nobody has been in the doorway
+//     or in its way for RA_DOOR_AUTO frames (the recording, 122-124 s: she
+//     stepped aside and it shut). Shut that way, walking into it opens it again.
 //   - Its doorway stops you only while the leaf is still across it, and it
 //     never shuts on somebody standing in it.
+//   - Timing, from the RE2 (2019) recording (6 frames a second): opening, 45
+//     degrees in 0.2 s and settled by 0.8 s, quick at first; shutting, her
+//     hand on the knob 0.15 s after the press and the leaf home about a
+//     second later, evenly.
 //
 // RaidDoors_Player runs inside game_loop's per-player block (the pad and the
 // facing are that player's there); RaDoorsUpdate, from the draw, swings the
@@ -2486,22 +2494,59 @@ static void RaDrawModelShadows(const RaView& V)
 // about its own origin, which is the hinge.
 // ---------------------------------------------------------------------------
 #define RA_DOOR_REACH     1300.0f   // from the doorway: the action button
-#define RA_DOOR_AJAR      1100.0f   // walking at it from inside this: it opens ajar
-#define RA_DOOR_BUMP       700.0f   // and inside this: all the way
+#define RA_DOOR_CLEAR     1100.0f   // shut by hand, it waits until everybody is further off than this
+#define RA_DOOR_BUMP       700.0f   // walking at it from inside this: her hand is on it
 #define RA_DOOR_FULL      1.75f     // radians: wide open (a right angle and a little)
-#define RA_DOOR_HALF      0.70f     // ajar
 #define RA_DOOR_PASS      0.95f     // the doorway is clear past this
-#define RA_DOOR_SPEED     0.14f     // radians a frame, opening
-#define RA_DOOR_SHUT      0.10f     // and shutting
+#define RA_DOOR_EASE      0.12f     // opening: this much of the way left, a frame
+#define RA_DOOR_EASE_MIN  0.02f     // radians a frame, at the least
+#define RA_DOOR_SHUT      0.055f    // radians a frame, shutting: wide open to shut in ~1 s
+#define RA_DOOR_GRAB      5         // frames from the press to her hand on the knob
+#define RA_DOOR_AUTO      45        // frames open with nobody in its way (~1.5 s): it shuts itself
+// Her arm reaching to the door: up in RA_ARM_IN frames, held, down in
+// RA_ARM_OUT, RA_ARM_LEN frames in all; turned forward this far at the shoulder.
+#define RA_ARM_IN         5
+#define RA_ARM_OUT        6
+#define RA_ARM_LEN        17
+#define RA_ARM_UP         0.70f     // radians (~40 degrees): a hand out to the leaf, not raised to it
+#define RA_LEAN           0.20f     // radians (~11 degrees): standing, she leans in to it
 #define RA_DOOR_BUTTON   0x80       // the action button, as the pickups read it (RaidItems.cpp)
 #define RA_DOOR_WALK     0x00FF     // any direction on the pad (PlayerPad_Update's remap)
 
+// Each player's reach: which shoulder (9 left, pushing open; 12 right,
+// pulling shut; 0 none), how many frames in, and what the last draw posed.
+static int s_armJoint[RAID_PLAYERS];
+static int s_armT[RAID_PLAYERS];
+static int s_armPosed[RAID_PLAYERS];
+static int s_armLean[RAID_PLAYERS];      // standing when it began: she leans in
+static int s_leanPosed[RAID_PLAYERS];
+
+static void RaDoorReach(int i, int shoulder, int standing)
+{
+    if (s_armJoint[i] == shoulder && s_armT[i] < RA_ARM_LEN - RA_ARM_OUT) return;   // already on it
+    s_armJoint[i] = shoulder;
+    s_armT[i] = 0;
+    s_armLean[i] = standing;
+}
+
+// Somebody the leaf would hit, swinging shut: in the doorway itself, or on
+// the side it stands open toward within its sweep. Not merely near it - she
+// pulls a door shut standing right in front of it, on the other side from
+// where the leaf comes back, and a band either side of the wall (as this
+// once was) stopped every door she shut by hand half way.
+#define RA_DOOR_BODY      200       // a body's half-width
 static int RaDoorOccupied(const RaidDoor* D)
 {
+    const int half = D->depth / 2;
     for (int i = 0; i < Coop_PlayerCount(); i++) {
         const int* t = g_players[i].scaMatrixData.localMatrix.t;
-        if (t[0] > D->hx - 250 && t[0] < D->hx + D->width + 250
-            && t[2] > D->hz - D->depth && t[2] < D->hz + D->depth) return 1;
+        const int dx = t[0] - D->hx, dz = t[2] - D->hz;
+        if (dx > -RA_DOOR_BODY && dx < D->width + RA_DOOR_BODY
+            && dz > -half - 100 && dz < half + 100) return 1;   // shy of where the shut leaf stops her
+        if (D->angle != 0.0f && (D->angle > 0.0f ? dz < 0 : dz > 0)) {   // + opens toward -Z
+            const float r = (float)(D->width + RA_DOOR_BODY);
+            if ((float)dx * dx + (float)dz * dz < r * r) return 1;
+        }
     }
     return 0;
 }
@@ -2509,6 +2554,7 @@ static int RaDoorOccupied(const RaidDoor* D)
 void RaidDoors_Player(int i)
 {
     if (g_raidMode == 0 || !g_raidLevel.loaded || i < 0 || i >= RAID_PLAYERS) return;
+    if (s_armJoint[i] != 0 && ++s_armT[i] >= RA_ARM_LEN) s_armJoint[i] = 0;
     const int* t = g_playerEntity.scaMatrixData.localMatrix.t;
     const float px = (float)t[0], pz = (float)t[2];
     const float a = (float)(g_playerEntity.directionAngle & 0xFFF) * (6.2831853f / 4096.0f);
@@ -2529,19 +2575,24 @@ void RaidDoors_Player(int i)
         (void)fx; (void)fz;    // facing is not asked: it made the door hard to open
         const float away = pz > (float)D->hz ? 1.0f : -1.0f;   // from +Z it swings toward -Z
 
+        const int shut = fabsf(D->target) < 0.05f && D->closeIn == 0;
         if (act) {
-            if (fabsf(D->target) < 0.05f) D->target = away * RA_DOOR_FULL;
-            else if (!RaDoorOccupied(D)) { D->target = 0.0f; D->idle = 1; }   // shut by hand:
-            continue;                                    // it stays shut until she steps back
+            if (shut) {
+                D->target = away * RA_DOOR_FULL;
+                D->idle = 0;
+                RaDoorReach(i, 9, !walk);
+            } else if (D->closeIn == 0 && !RaDoorOccupied(D)) {
+                D->closeIn = RA_DOOR_GRAB;               // shut by hand: it stays shut
+                D->idle = 1;                             // until she steps back
+                RaDoorReach(i, 12, !walk);
+            }
+            continue;
         }
         if (D->idle) continue;
-        if (dist < RA_DOOR_BUMP) {
-            // Up against it: open, whatever the pad says - standing at a shut
-            // door is asking for it to open.
-            if (fabsf(D->target) < RA_DOOR_FULL - 0.01f)
-                D->target = (fabsf(D->target) > 0.05f ? (D->target > 0.0f ? 1.0f : -1.0f) : away) * RA_DOOR_FULL;
-        } else if (walk && dist < RA_DOOR_AJAR && fabsf(D->target) < 0.05f) {
-            D->target = away * RA_DOOR_HALF;
+        if (walk && dist < RA_DOOR_BUMP && shut) {
+            // Walking into it: her hand is on it, and it swings open.
+            D->target = away * RA_DOOR_FULL;
+            if (!aiming) RaDoorReach(i, 9, 0);
         }
     }
 }
@@ -2558,14 +2609,28 @@ static void RaDoorsUpdate(void)
                 const float x0 = (float)D->hx, x1 = (float)(D->hx + D->width);
                 const float px = (float)t[0], nx = px < x0 ? x0 : (px > x1 ? x1 : px);
                 const float dx = nx - px, dz = (float)D->hz - (float)t[2];
-                if (dx * dx + dz * dz < RA_DOOR_AJAR * RA_DOOR_AJAR) near_ = 1;
+                if (dx * dx + dz * dz < RA_DOOR_CLEAR * RA_DOOR_CLEAR) near_ = 1;
             }
-            if (!near_) D->idle = 0;
+            if (!near_ && D->closeIn == 0) D->idle = 0;
+        }
+        if (D->closeIn > 0 && --D->closeIn == 0) {       // her hand is on the knob
+            if (RaDoorOccupied(D)) D->idle = 0;          // somebody stepped in meanwhile
+            else D->target = 0.0f;
+        }
+        // Left open with nobody in its way, it shuts by itself.
+        if (D->target != 0.0f && D->closeIn == 0 && D->angle == D->target && !RaDoorOccupied(D)) {
+            if (++D->openIdle >= RA_DOOR_AUTO) { D->target = 0.0f; D->openIdle = 0; }
+        } else {
+            D->openIdle = 0;
         }
         if (D->target == 0.0f && D->angle != 0.0f && RaDoorOccupied(D)) {
             D->target = D->angle;                        // never shut on somebody
         }
-        const float step = (fabsf(D->target) > fabsf(D->angle)) ? RA_DOOR_SPEED : RA_DOOR_SHUT;
+        float step = RA_DOOR_SHUT;
+        if (fabsf(D->target) > fabsf(D->angle)) {        // opening: quick, then settling
+            step = fabsf(D->target - D->angle) * RA_DOOR_EASE;
+            if (step < RA_DOOR_EASE_MIN) step = RA_DOOR_EASE_MIN;
+        }
         if (D->angle < D->target) { D->angle += step; if (D->angle > D->target) D->angle = D->target; }
         else if (D->angle > D->target) { D->angle -= step; if (D->angle < D->target) D->angle = D->target; }
 
@@ -2589,6 +2654,31 @@ static void RaDoorsUpdate(void)
         }
     }
     if (collisionDirty) RaidLevel_RebuildCollision();
+}
+
+// The draw, per player, after the aim has posed the arms: the arm reaching to
+// the door, eased up, held and eased back down.
+void RaidDoors_PoseArm(int i)
+{
+    if (i < 0 || i >= RAID_PLAYERS) return;
+    if (g_raidMode == 0 || !g_raidLevel.loaded) s_armJoint[i] = 0;
+    const int sh = s_armJoint[i];
+    const int lean = sh != 0 && s_armLean[i];
+    if (s_leanPosed[i] && !lean) RaidShoulderCam_PoseLean(0.0f);   // take the last lean off
+    s_leanPosed[i] = 0;
+    if (s_armPosed[i] != 0 && s_armPosed[i] != sh)
+        RaidShoulderCam_PoseReach(s_armPosed[i], 0.0f);   // and the last reach
+    s_armPosed[i] = 0;
+    if (sh == 0) return;
+
+    const int t = s_armT[i];
+    float w = 1.0f;
+    if (t < RA_ARM_IN) w = (float)(t + 1) / (float)RA_ARM_IN;
+    else if (t >= RA_ARM_LEN - RA_ARM_OUT) w = (float)(RA_ARM_LEN - t) / (float)(RA_ARM_OUT + 1);
+    w = w * w * (3.0f - 2.0f * w);
+    if (lean) { RaidShoulderCam_PoseLean(RA_LEAN * w); s_leanPosed[i] = 1; }
+    RaidShoulderCam_PoseReach(sh, RA_ARM_UP * w);
+    s_armPosed[i] = sh;
 }
 
 void RaidArena_DrawLate(void)

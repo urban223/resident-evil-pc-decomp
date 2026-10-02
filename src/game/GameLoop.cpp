@@ -416,6 +416,7 @@ LAB_00480e89:
                         if (Coop_IsZombie(coopP)) continue;   // CUSTOM: drawn by the entity loop
                         Coop_BeginPlayer(coopP);
                         RaidShoulderCam_PoseArms(coopP);   // CUSTOM: RAID free-aim pitch
+                        RaidDoors_PoseArm(coopP);          // CUSTOM: RAID doors: the hand on the door
                         EntityComputeJointWorldMatrices(g_playerEntity.unk_ca);
                         EntityApplyLookAtRotation();
                         if (g_dwEntityRenderEnabled != 0) {
