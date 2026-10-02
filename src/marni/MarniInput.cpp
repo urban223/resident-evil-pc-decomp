@@ -241,6 +241,47 @@ bool MarniPadIsConnected(void)
     return g_pMasterInputState.joysticks[0].enabled != 0;
 }
 
+static unsigned short s_joyMid0 = 0;    // CUSTOM: slot 0's manufacturer id (InitJoysticks)
+
+int MarniPadRightStickX(void)
+{
+    if (s_xinputOwnsSlot0) {
+        return MarniXInput::RightStickX();
+    }
+    const JoystickEntry* j = &g_pMasterInputState.joysticks[0];
+    if (!j->enabled) return 0;
+    DWORD v;
+    if (s_joyMid0 == 0x054C) {                          // Sony: right X on Z
+        if ((j->povFlags & JOYCAPS_HASZ) == 0) return 0;
+        v = j->info.dwZpos;
+    } else if (j->povFlags & JOYCAPS_HASU) {            // Xbox-style: on U
+        v = j->info.dwUpos;
+    } else if (j->povFlags & JOYCAPS_HASZ) {
+        v = j->info.dwZpos;
+    } else {
+        return 0;
+    }
+    int x = (int)v - 32767;                              // WinMM: 0 left, 65535 right
+    if (x < -32768) x = -32768;
+    if (x >  32767) x =  32767;
+    return x;
+}
+
+int MarniPadRightStickY(void)
+{
+    if (s_xinputOwnsSlot0) {
+        return MarniXInput::RightStickY();
+    }
+    const JoystickEntry* j = &g_pMasterInputState.joysticks[0];
+    if (!j->enabled || (j->povFlags & JOYCAPS_HASR) == 0) {
+        return 0;
+    }
+    int y = 32767 - (int)j->info.dwRpos;     // WinMM: 0 is up, 65535 down
+    if (y < -32768) y = -32768;
+    if (y >  32767) y =  32767;
+    return y;
+}
+
 // ============================================================================
 // InitJoysticks (0x00420770)
 // Enumerates all joystick devices via WinMM, validates each with
@@ -299,6 +340,7 @@ void CMarniDirectInput::InitJoysticks(MasterInputState* pState)
         // zero - so the D-pad of every WinMM pad (a DualShock plugged straight
         // in reports its D-pad as a POV hat) produced no input at all.
         pJoy->povFlags = joyCaps.wCaps;
+        if (i == 0) s_joyMid0 = joyCaps.wMid;   // CUSTOM: MarniPadRightStickX
 
         // 0x004207dd-0x004207ed: Clear JOYINFOEX and set up for validation
         memset(&pJoy->info, 0, sizeof(JOYINFOEX));

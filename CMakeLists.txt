@@ -76,6 +76,7 @@ set(RE1_SOURCES
     src/game/RaidItemModels.cpp
     src/game/RaidItems.cpp
     src/game/RaidLevel.cpp
+    src/game/RaidShoulderCam.cpp
     src/game/WeaponSlide.cpp
     src/game/DebugSaveLoad.cpp
     src/game/DebugScreens.cpp

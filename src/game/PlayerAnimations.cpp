@@ -7,6 +7,7 @@
 #include "../platform/platform.h"
 #include "../DebugPrint.h"
 #include "entities/EntityCommon.h"
+#include "RaidShoulderCam.h"   // CUSTOM: RAID walk with the gun up
 
 // ============================================================================
 // Player animation function stubs (populated into g_playerAnimFunctions by set_player_animations_functions)
@@ -6796,6 +6797,10 @@ void update_player_anim(void)
         }
         EntityUpdateLookAtAngles();
     }
+
+    // CUSTOM: RAID - walking with the gun up over the shoulder. After the
+    // state machine (whose foot lock would undo the step), before collision.
+    RaidShoulderCam_Walk();
 
     SetEntityScaHitData((Entity*)&g_playerEntity);
 

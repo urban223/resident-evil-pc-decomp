@@ -8,6 +8,7 @@
 #include <cstring>
 #include "editor/Editor.h"   // CUSTOM: the in-game editor
 #include "CoopPlayer.h"       // CUSTOM: RAID co-op
+#include "RaidShoulderCam.h"   // CUSTOM: RAID L2 aim + shoulder camera
 
 // ============================================================================
 // Pad default bindings (port addition)
@@ -131,6 +132,48 @@ DWORD JoyToPSX(DWORD pcMask, int player)
 }
 
 // ============================================================================
+// CUSTOM: JoyToPSX with RAID's L2. The left trigger (pad mask bit 18 on
+// XInput; button 7, DualShock L2, through WinMM) or Q on the keyboard holds
+// raw PSX L2 - aim with the camera over the shoulder, see RaidShoulderCam.cpp.
+// The button is taken out of the mask first, because outside RAID the default
+// tables bind the trigger to run, and run and aim at once is not a stance.
+//
+// While L2 is held the RIGHT trigger fires (raw 0x80, the action button that
+// fires a raised gun), the way it does in Resident Evil 2 (2019); otherwise
+// it keeps its default, aim. And the right stick's vertical axis is handed
+// to the aim pitch - from the XInput pad, which is player 1's (joystick 0).
+//
+// Outside RAID this is JoyToPSX exactly.
+// ============================================================================
+static DWORD PadToPSX(DWORD pcMask, int table)
+{
+	if (!g_raidMode) return JoyToPSX(pcMask, table);
+
+	DWORD l2 = 0, fire = 0;
+	if (table == 0) {
+		l2 = (plat_key_state('Q') & 0x8000) != 0;
+		if (g_coopPadSource <= 0) RaidShoulderCam_NoteStick(0, 0);   // read first; a pad overrides
+	} else {
+		const int xi = MarniXInput::IsConnected();
+		const DWORD bit  = xi ? MARNI_XI_BTN_LTRIGGER : (1u << 14);   // L2
+		const DWORD bitR = xi ? MARNI_XI_BTN_RTRIGGER : (1u << 15);   // R2
+		l2 = (pcMask & bit) != 0;
+		pcMask &= ~bit;
+		if (l2 && (pcMask & bitR) != 0) {
+			fire = 1;
+			pcMask &= ~bitR;
+		}
+		if (g_coopPadSource <= 0) {
+			RaidShoulderCam_NoteStick(MarniPadRightStickX(), MarniPadRightStickY());
+		}
+	}
+	DWORD r = JoyToPSX(pcMask, table);
+	if (l2)   r |= RAID_RAW_L2;
+	if (fire) r |= 0x0080;
+	return r;
+}
+
+// ============================================================================
 // ReadPadBoth - Read both controllers and combine into PSX button word (0x00497ba0)
 //
 // Original code reads from g_pMasterInputState:
@@ -156,24 +199,26 @@ DWORD ReadPadBoth(void)
 		const int wantPad  = (g_coopPadSource == 0) ? 0 : 1;
 
 		if (wantPad < padCount && g_pMasterInputState.joysticks[wantPad].enabled != 0) {
-			g_PadBtnWord = JoyToPSX(g_pMasterInputState.joysticks[wantPad].currPress, 1);
+			g_PadBtnWord = PadToPSX(g_pMasterInputState.joysticks[wantPad].currPress, 1);
 		} else if (g_coopPadSource == 0 && padCount > 0
 		           && g_pMasterInputState.joysticks[0].enabled != 0) {
-			g_PadBtnWord = JoyToPSX(g_pMasterInputState.joysticks[0].currPress, 1);
+			g_PadBtnWord = PadToPSX(g_pMasterInputState.joysticks[0].currPress, 1);
 		} else {
 			g_PadBtnWord = (g_pMasterInputState.frameFlag != 0)
-			             ? JoyToPSX(g_pMasterInputState.keyboardPrev, 0) : 0;
+			             ? PadToPSX(g_pMasterInputState.keyboardPrev, 0) : 0;
 		}
+		RaidShoulderCam_NoteRaw(g_DisablePad != 0 ? 0 : g_PadBtnWord);
 		return g_DisablePad != 0 ? 0 : g_PadBtnWord;
 	}
 
 	if (g_pMasterInputState.frameFlag != 0) {
-		g_PadBtnWord = JoyToPSX(g_pMasterInputState.keyboardPrev, 0);
+		g_PadBtnWord = PadToPSX(g_pMasterInputState.keyboardPrev, 0);
 	}
 	if ((1 < g_NumControllers) && (g_pMasterInputState.joysticks[0].enabled != 0)) {
-		tmp = JoyToPSX(g_pMasterInputState.joysticks[0].currPress, 1);
+		tmp = PadToPSX(g_pMasterInputState.joysticks[0].currPress, 1);
 		g_PadBtnWord |= tmp;
 	}
+	RaidShoulderCam_NoteRaw(g_DisablePad != 0 ? 0 : g_PadBtnWord);
 	if (g_DisablePad != 0) {
 		return 0;
 	}
@@ -291,6 +336,8 @@ DWORD PlayerPad_Update(void)
 	if ((prevDpadState & 2) != 0) {
 		prevDpadState &= 0xFFF7;
 	}
+	// CUSTOM: RAID's L2 holds aim; see RaidShoulderCam.cpp.
+	prevDpadState = RaidShoulderCam_AddAim(prevDpadState, g_button_pressed_id);
 
 	// Part 2: Save previous states
 	// Save the PREVIOUS raw held (0x00bf0a04) to pressed, not the edge-detected
@@ -343,6 +390,8 @@ DWORD PlayerPad_Update(void)
 	if ((g_PlayerDpadHeld & 2) != 0) {
 		g_PlayerDpadHeld &= 0xFFF7;
 	}
+	// CUSTOM: RAID's L2 holds aim; see RaidShoulderCam.cpp.
+	g_PlayerDpadHeld = RaidShoulderCam_AddAim(g_PlayerDpadHeld, g_button_pressed_id);
 
 	// Part 6: Edge detect on DPad
 	g_PlayerDpadPressed = ~prevDpadState & g_PlayerDpadHeld;

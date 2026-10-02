@@ -2,6 +2,7 @@
 // See CoopNet.h for why this is snapshots and not lockstep.
 #include "CoopNet.h"
 #include "CoopPlayer.h"
+#include "RaidShoulderCam.h"   // CUSTOM: the over-the-shoulder aim pose
 #include "Entities.h"
 #include "entities/EntityCommon.h"
 #include "../platform/platform.h"
@@ -55,6 +56,18 @@ typedef struct {
     unsigned char flags;        // aim bits and the rest of PlayerEntity.flags
     unsigned char isZombie;     // playing as a zombie: his body is an entity
     unsigned char zombieSlot;   // which enemy slot that body is; 0xFF if none
+    // RAID's over-the-shoulder aim (RaidShoulderCam.cpp) poses on TOP of the
+    // animation: the body leans into the aim pitch and the legs step through
+    // the walk cycle while the gun is up. None of that is an animation frame,
+    // so none of the fields above carry it; without these a client saw the
+    // aiming player stand level and slide.
+    short         aimPitch;     // + up, 4096 to the turn
+    signed char   aimWalk;      // walk cycle on the legs: +1 forward, -1 back, 0 none
+    unsigned char aimWalkFrame; // its frame
+    unsigned char aimLegBlend;  // how far the legs are into it
+    unsigned char aimPad;
+    short         aimHipYaw;    // the hips turned toward a strafe, 4096 to the turn
+    short         aimPad2;
 } CoopNetPlayer;
 
 typedef struct {
@@ -269,6 +282,10 @@ static void snap_build(CoopNetSnapshot* s)
         w->isZombie    = (unsigned char)Coop_IsZombie(i);
         w->zombieSlot  = (g_coopZombieSlot[i] >= 0)
                        ? (unsigned char)g_coopZombieSlot[i] : 0xFF;
+        RaidShoulderCam_GetPose(i, &w->aimPitch, &w->aimWalk,
+                                &w->aimWalkFrame, &w->aimLegBlend, &w->aimHipYaw);
+        w->aimPad = 0;
+        w->aimPad2 = 0;
     }
 
     for (int e = 0; e < COOP_NET_ENEMIES; e++) {
@@ -368,6 +385,8 @@ static void snap_apply(const CoopNetSnapshot* s)
         // body frozen on the last frame of the animation that killed him, while
         // the host had already stood a zombie up in his place.
         g_coopZombieSlot[i] = w->isZombie ? (int)w->zombieSlot : -1;
+        RaidShoulderCam_SetPose(i, w->aimPitch, w->aimWalk,
+                                w->aimWalkFrame, w->aimLegBlend, w->aimHipYaw);
     }
 
     for (int e = 0; e < COOP_NET_ENEMIES; e++) {

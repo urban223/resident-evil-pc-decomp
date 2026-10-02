@@ -93,8 +93,14 @@ void Init()
 // ---------------------------------------------------------------------------
 // BuildMask - XINPUT_GAMEPAD to the Marni joystick bitmask.
 // ---------------------------------------------------------------------------
+static int s_rightY = 0;     // CUSTOM: see RightStickY
+static int s_rightX = 0;     // CUSTOM: see RightStickX
+
 static DWORD BuildMask(const XINPUT_GAMEPAD* pad)
 {
+    s_rightY = pad->sThumbRY;   // XInput's Y is already up-positive
+    s_rightX = pad->sThumbRX;   // and X right-positive
+
     DWORD mask = 0;
 
     // --- Directions: D-pad and left stick both drive the AXIS bits (0-3) ---
@@ -139,8 +145,20 @@ static DWORD BuildMask(const XINPUT_GAMEPAD* pad)
 // ---------------------------------------------------------------------------
 // Poll - called once per frame from UpdateAllInputStates.
 // ---------------------------------------------------------------------------
+int RightStickY()
+{
+    return s_rightY;
+}
+
+int RightStickX()
+{
+    return s_rightX;
+}
+
 DWORD Poll()
 {
+    s_rightY = 0;               // until a pad is actually read this frame
+    s_rightX = 0;
     if (!s_enabled) {
         return 0;
     }

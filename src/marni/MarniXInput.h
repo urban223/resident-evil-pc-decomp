@@ -71,4 +71,14 @@ bool IsConnected();
 // inside the 33 ms frame budget.
 DWORD Poll();
 
+// CUSTOM: the right stick's vertical deflection from the last Poll(),
+// -32768..32767 with UP POSITIVE, 0 when there is no pad. No deadzone is
+// applied - the one consumer (RAID's over-the-shoulder aim pitch) applies
+// its own. The mask above has no room for an analogue axis, hence a side
+// channel rather than more bits.
+int RightStickY();
+
+// CUSTOM: the same for the horizontal axis, RIGHT POSITIVE.
+int RightStickX();
+
 } // namespace MarniXInput

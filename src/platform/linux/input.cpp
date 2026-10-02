@@ -50,9 +50,21 @@ static void TryOpenPad(void)
 }
 
 // SDL controller -> Marni mask. Mirrors MarniXInput::BuildMask bit for bit.
+static int s_rightY = 0;     // CUSTOM: MarniXInput::RightStickY
+static int s_rightX = 0;     // CUSTOM: MarniXInput::RightStickX
+
 static DWORD BuildPadMask(void)
 {
+    s_rightY = 0;
+    s_rightX = 0;
     if (s_pad == NULL) return 0;
+    s_rightX = SDL_GameControllerGetAxis(s_pad, SDL_CONTROLLER_AXIS_RIGHTX);   // right-positive already
+
+    // SDL's Y is positive DOWNWARDS; the interface is up-positive.
+    {
+        const int ry = SDL_GameControllerGetAxis(s_pad, SDL_CONTROLLER_AXIS_RIGHTY);
+        s_rightY = (ry <= -32767) ? 32767 : -ry;
+    }
 
     DWORD mask = 0;
 
@@ -154,4 +166,16 @@ bool MarniPadIsConnected(void)
 
 namespace MarniXInput {
 bool IsConnected() { return s_pad != NULL; }
+int  RightStickY() { return s_rightY; }
+int  RightStickX() { return s_rightX; }
+}
+
+int MarniPadRightStickY(void)
+{
+    return s_rightY;
+}
+
+int MarniPadRightStickX(void)
+{
+    return s_rightX;
 }

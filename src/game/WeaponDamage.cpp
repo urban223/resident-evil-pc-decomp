@@ -9,6 +9,7 @@
 #include <cstdlib>                   // rand() - MSVC got this via <windows.h>
 #include "entities/EntityCommon.h"   // ENEMY_* / NPC_* type ids
 #include "Achievements.h"             // CUSTOM: kill-count achievements
+#include "RaidShoulderCam.h"          // CUSTOM: RAID over-the-shoulder free aim
 
 // ---- Global scratch variable (set by apply_weapon_damage before hit detection) ----
 extern int g_scaled_down_dist;  // holds weapon_id - 1 during hit detection
@@ -973,17 +974,25 @@ unsigned char apply_weapon_damage(unsigned int weapon_id)
 
     Entity* enemy = NULL;
 
+    // CUSTOM: RAID's over-the-shoulder free aim (RaidShoulderCam.cpp), for the
+    // four firearms the strip test serves. The shot is a ray down the gun
+    // line, so the height-bucket gate below - which only says whether the
+    // pose the player picked matches the enemy's - does not apply; the ray
+    // test picks the bucket from where it hits instead.
+    const int freeAim = RaidShoulderCam_FreeAim() && weaponAdj >= 1 && weaponAdj <= 4;
+
     // Second pass: check each active enemy for weapon hit
     unsigned char idx = enemyCount;
     while (idx != 0) {
         idx--;
         Entity* candidate = &g_EnemiesList[activeIdx[0]];
 
-        if ((candidate->status_flags & g_playerEntityPointer.flags & 0xE0) != 0
+        if ((freeAim || (candidate->status_flags & g_playerEntityPointer.flags & 0xE0) != 0)
             && candidate->hit_state == 0)
         {
             typedef unsigned char (*hitDetectFn)(short range, Entity* ent);
-            hitDetectFn detector = (hitDetectFn)PTR_weapons_hit_detection_functions[weaponAdj];
+            hitDetectFn detector = freeAim ? RaidShoulderCam_HitTest
+                : (hitDetectFn)PTR_weapons_hit_detection_functions[weaponAdj];
             if (detector((short)wpnRange, candidate) != 0) {
                 enemy = candidate;
             }
@@ -1041,6 +1050,10 @@ unsigned char apply_weapon_damage(unsigned int weapon_id)
         hitState = g_weaponHitRecordsSecondRun[tableIdx].hit;  // second-playthrough hit-state @ +4
         damage = g_weaponHitRecordsSecondRun[tableIdx].dmg;    // second-playthrough damage @ +0
     }
+
+    // CUSTOM: RAID free aim - a shot fired at a fully closed reticle hits
+    // harder (RaidShoulderCam.cpp, "focus").
+    if (freeAim) damage = RaidShoulderCam_ScaleDamage(damage);
 
     enemy->health -= damage;
 

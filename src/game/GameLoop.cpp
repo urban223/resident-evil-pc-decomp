@@ -17,6 +17,7 @@
 #include "CoopPlayer.h"   // CUSTOM: RAID co-op
 #include "CoopNet.h"      // CUSTOM: RAID co-op transport
 #include "editor/Editor.h"   // CUSTOM: the in-game level editor
+#include "RaidShoulderCam.h" // CUSTOM: RAID L2 aim + shoulder camera
 #include "../marni/MarniInput.h"
 #include <cstdio>
 #include <cstdlib>
@@ -333,13 +334,21 @@ LAB_00480e89:
                         g_PlayerDpadPressed &= 0xC000;
                     }
 
+                    RaidShoulderCam_BeforePlayer(coopP);   // CUSTOM: RAID free aim
+
                     // 0x00480ebd-0x00480ecf: Player animation and position update
                     update_player_anim();
                     g_main_state_flags2 &= ~MSF2_EFFECT_ZONE;
                     update_player_position(&g_playerEntity, 1);
 
+                    RaidShoulderCam_AfterPlayer(coopP);    // CUSTOM: RAID free aim
+
                     Coop_EndPlayer();
                 }
+
+                // CUSTOM: RAID's L2 shoulder camera - after the players have
+                // moved, before anything is drawn from the camera record.
+                RaidShoulderCam_Update();
 
                 // 0x00480ecf-0x00480f70: Screen effects, room objects, entity
                 // and player rendering, 2D effects and room sprites.
@@ -395,6 +404,7 @@ LAB_00480e89:
                     for (int coopP = 0; coopP < Coop_PlayerCount(); coopP++) {
                         if (Coop_IsZombie(coopP)) continue;   // CUSTOM: drawn by the entity loop
                         Coop_BeginPlayer(coopP);
+                        RaidShoulderCam_PoseArms(coopP);   // CUSTOM: RAID free-aim pitch
                         EntityComputeJointWorldMatrices(g_playerEntity.unk_ca);
                         EntityApplyLookAtRotation();
                         if (g_dwEntityRenderEnabled != 0) {

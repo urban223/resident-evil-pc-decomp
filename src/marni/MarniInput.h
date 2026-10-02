@@ -89,3 +89,18 @@ public:
 // Slot 0 is the only entry the game reads (ReadPadBoth, read_sidewinder_pad),
 // so this is exactly "can a pad drive the game right now".
 bool MarniPadIsConnected(void);
+
+// CUSTOM: joystick slot 0's right-stick vertical axis, -32768..32767 with UP
+// POSITIVE, 0 when there is none. From XInput's sThumbRY when XInput owns the
+// slot, otherwise from the WinMM R axis (dwRpos) - the right stick's Y on a
+// DualShock and on most pads seen through WinMM - but only when the device
+// reports having an R axis, since WinMM returns 0 for a missing one and that
+// would read as the stick held hard up.
+int MarniPadRightStickY(void);
+
+// CUSTOM: the horizontal axis, RIGHT POSITIVE. Through WinMM there is no one
+// axis for it: a Sony pad (DualShock, manufacturer 0x054C) puts the right
+// stick's X on Z and its triggers on U/V, while an Xbox-style pad puts its
+// triggers on Z and the right stick's X on U. So the axis is chosen by the
+// manufacturer the device reported at start-up.
+int MarniPadRightStickX(void);
