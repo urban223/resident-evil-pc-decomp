@@ -124,6 +124,9 @@ from the wall.
   on any entity are guarded for such a body. The copies are paid out of the
   load arena, so the bill is added up first and checked against
   `g_DataBuffer`.
+  A co-op client runs neither of those two functions, so `game_loop`
+  (GameLoop.cpp) does the same `mirror_point_visible` probe and
+  `entity_draw_mirror_reflection` pass itself, right after drawing each body.
 - **The room** is reflected by the arena (`RaDrawMirror`): every box and model
   again through the reflected eye, clipped to the room side of the glass. That
   projection is the mirror image, with depths that are the true path length

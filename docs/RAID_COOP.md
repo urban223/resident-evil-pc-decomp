@@ -438,9 +438,6 @@ compare across those two.
   the room loads; see the note in `CoopNet.cpp`.
 - A client does not run `update_player_anim`, so poses come off the wire as a
   frame id and nothing advances the skeleton locally.
-- A client shows the RAID mirror's reflected room but not the reflected
-  characters: the mirror pass lives in `update_player_anim` and
-  `update_entities`, neither of which a client runs (`docs/RAID_BATHROOM.md`).
 - The zombie's attack button has not been tried in game yet. The interesting
   case is the one that does nothing: with the other player out of reach the
   fire button must not start a grab, or it will drag him across the room.

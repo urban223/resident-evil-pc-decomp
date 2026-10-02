@@ -33,7 +33,7 @@ whether or not she aims - the way Resident Evil 2 (2019) explores:
 | Input | In the L1 view, not aiming |
 |---|---|
 | right stick | swings the camera round her and tips it; it stays where it is put |
-| left stick | moves her relative to the CAMERA, exactly where it points (analogue, any angle): her body turns fully for forward, only ~23 degrees for sideways, and not at all pulled back - she steps back toward the camera with her back to it |
+| left stick | moves her relative to the CAMERA, exactly where it points (analogue, any angle): her body turns fully for forward, only ~23 degrees for sideways, and not at all pulled back - she steps back toward the camera with her back to it. The tilt sets the pace: a light push creeps (0.22 of the walk's step), full tilt (0.97 and over) walks, squared so most of the stick's travel is the slow end; the run is not scaled |
 | L2 | raises the gun where the camera looks (she turns to it); the aim is as above |
 
 The view sits further back and higher than the aim (3000 behind, the RE2
@@ -47,7 +47,9 @@ through WinMM at 60), and each frame read against both sticks. The game's own
 walk and back-step animate her; the step they make is sent along the stick's
 direction (RaidShoulderCam_Walk) before collision, so walls still stop her.
 The left stick reaches the game as an angle (MarniPadLeftStickX/Y: XInput,
-WinMM, SDL) as well as the eight D-pad directions.
+WinMM, SDL) as well as the eight D-pad directions. The tilt scales the same
+redirected step (`s_moveScale`, SC_TILT_SLOW / SC_TILT_FULL); a step longer
+than the walk's 0x5D a frame is the run's and keeps its length.
 
 ## The crosshair
 
