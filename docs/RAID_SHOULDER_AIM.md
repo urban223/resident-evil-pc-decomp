@@ -33,14 +33,28 @@ whether or not she aims - the way Resident Evil 2 (2019) explores:
 | Input | In the L1 view, not aiming |
 |---|---|
 | right stick | swings the camera round her and tips it; it stays where it is put |
-| left stick | moves her relative to the CAMERA: up away from it, down toward it, left and right across it; she turns briskly to where she goes, on the game's own walk and run |
+| left stick | moves her relative to the CAMERA, exactly where it points (analogue, any angle): her body turns fully for forward, about half way for sideways, and not at all pulled back - she steps back toward the camera with her back to it |
 | L2 | raises the gun where the camera looks (she turns to it); the aim is as above |
 
 The view sits further back and higher than the aim (3000 behind, the RE2
 framing: her whole figure left of centre) and follows her with a little lag;
-aiming pulls it in close with no lag, so the crosshair stays put. The left
-stick reaches the game as the eight D-pad directions, so the headings are
-eight, not analogue.
+aiming pulls it in close with no lag. It does not swing back behind her by
+itself - that was tried and was worse.
+
+All of this was measured, not guessed: RE2 (2019) was played with the screen
+and the pad recorded on one clock (frames at 6 a second, the DualShock read
+through WinMM at 60), and each frame read against both sticks. The game's own
+walk and back-step animate her; the step they make is sent along the stick's
+direction (RaidShoulderCam_Walk) before collision, so walls still stop her.
+The left stick reaches the game as an angle (MarniPadLeftStickX/Y: XInput,
+WinMM, SDL) as well as the eight D-pad directions.
+
+## The crosshair
+
+As the recording shows it: always at the screen centre - the shot goes from the
+camera through it - four ticks that open while she moves or fires and close in
+about 0.6 s when she holds still, a dot in the middle once they have. Turning
+the view does not open it.
 
 ## The camera and the walls
 
@@ -64,17 +78,17 @@ instead of jumping.
   player 1 only, as the room camera always has in co-op.
 - **Free aim, no auto-aim.** While aiming, `apply_weapon_damage` swaps the
   weapon's hit strip for `RaidShoulderCam_HitTest`: a ray from the CAMERA
-  through the crosshair (the camera is off the gun line, so a ray from the gun
-  would miss what the crosshair covers), tested against each enemy's SCA
-  volumes. The ray's height picks the hit bucket the three fixed poses used to
+  through the screen centre, where the crosshair is (the camera is off the gun
+  line, so a ray from the gun would miss what the crosshair covers), tested
+  against each enemy's SCA volumes. The ray's height picks the hit bucket the three fixed poses used to
   (high 0x80, middle 0x40, low 0x20). An unfocused shot spreads by up to the
   drawn reticle; holding still closes it over 1.5 s.
 - **The body.** `RaidShoulderCam_PoseArms` bends the torso by half the pitch
   and gives the arms the rest; `RaidShoulderCam_Walk` runs the walk cycle on
   the legs under the aim stance, before collision, and turns the hips toward a
   strafe.
-- **Crosshair.** `RaidArena.cpp`, `RaDrawCrosshair`: where the gun line meets
-  the screen, not the screen centre; it fades in with the camera swing.
+- **Crosshair.** `RaidArena.cpp`, `RaDrawCrosshair`: at the screen centre (see
+  below); it fades in with the camera swing.
 - **Co-op.** The snapshot carries the aim pitch, the leg cycle and the hip yaw
   (`CoopNet.cpp`), so a client sees the aiming player lean and step instead of
   standing level and sliding.

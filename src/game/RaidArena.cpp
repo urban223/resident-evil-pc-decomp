@@ -209,6 +209,113 @@ static int RaClipMirror(const RaVert* in, int n, RaVert* out)
 }
 
 // ---------------------------------------------------------------------------
+// CUSTOM: the mirror's hole, in the normal pass. The glass is a hole in the
+// wall, and since a room was added BEHIND that wall (room 003), what lies
+// beyond the glass is real geometry - and it hid the reflection, which is
+// drawn behind the wall too, at its true depth. So in the normal pass every
+// polygon loses the part of it that is both beyond the mirror's plane and
+// inside the pyramid from the eye through the glass: through the hole you
+// see only the reflection. Seen from anywhere else - the corridor beyond, the
+// bedroom - room 003 is drawn whole.
+// ---------------------------------------------------------------------------
+static int   s_holeCull = 0;          // on for this frame's normal pass
+static float s_holeSide[4][4];        // the pyramid's side planes: n.p + d >= 0 inside
+static int   s_holeAxis;              // the mirror plane: axis, coordinate, and the
+static float s_holeK, s_holeFar;      // sign of its far side
+static int   s_inHoleCut = 0;
+
+static int RaClipKeep(const RaVert* in, int n, RaVert* out, const float* pl, float sign)
+{
+    // keep (n.p + d) * sign >= 0
+    int m = 0;
+    for (int i = 0; i < n && m < 12; i++) {
+        const RaVert& a = in[i];
+        const RaVert& b = in[(i + 1) % n];
+        const float da = (pl[0] * a.x + pl[1] * a.y + pl[2] * a.z + pl[3]) * sign;
+        const float db = (pl[0] * b.x + pl[1] * b.y + pl[2] * b.z + pl[3]) * sign;
+        if (da >= 0.0f) out[m++] = a;
+        if ((da >= 0.0f) != (db >= 0.0f) && m < 12) {
+            const float t = da / (da - db);
+            RaVert c;
+            c.x  = a.x  + (b.x  - a.x)  * t;
+            c.y  = a.y  + (b.y  - a.y)  * t;
+            c.z  = a.z  + (b.z  - a.z)  * t;
+            c.cr = a.cr + (b.cr - a.cr) * t;
+            c.cg = a.cg + (b.cg - a.cg) * t;
+            c.cb = a.cb + (b.cb - a.cb) * t;
+            out[m++] = c;
+        }
+    }
+    return m;
+}
+
+// Splits `in` into the convex pieces that survive the hole: up to five. Each
+// is handed to `emit`. Returns 0 when nothing was cut (the caller draws `in`).
+template <typename F>
+static int RaHoleCut(const RaVert* in, int n, F emit)
+{
+    // Quick out: nothing beyond the mirror's plane, nothing to cut.
+    int beyond = 0;
+    for (int i = 0; i < n; i++) if (((&in[i].x)[s_holeAxis] - s_holeK) * s_holeFar > 0.0f) { beyond = 1; break; }
+    if (!beyond) return 0;
+    RaVert cur[12], piece[12], next[12];
+    int cn = n < 12 ? n : 12;
+    for (int i = 0; i < cn; i++) cur[i] = in[i];
+    for (int s_ = 0; s_ < 4 && cn >= 3; s_++) {
+        const int pn = RaClipKeep(cur, cn, piece, s_holeSide[s_], -1.0f);   // outside this side: kept
+        if (pn >= 3) emit(piece, pn);
+        cn = RaClipKeep(cur, cn, next, s_holeSide[s_], 1.0f);               // inside: on to the next
+        for (int i = 0; i < cn; i++) cur[i] = next[i];
+    }
+    if (cn >= 3) {
+        const float farPlane[4] = { s_holeAxis == 0 ? 1.0f : 0.0f, 0.0f, s_holeAxis == 2 ? 1.0f : 0.0f, -s_holeK };
+        const int pn = RaClipKeep(cur, cn, piece, farPlane, -s_holeFar);          // the near side of the glass
+        if (pn >= 3) emit(piece, pn);
+    }
+    return 1;
+}
+
+static void RaHoleSetup(const RaView& V)
+{
+    s_holeCull = 0;
+    const RaidMirror* M = &g_raidLevel.mirror;
+    if (!M->on) return;
+    const int a = M->axis ? 0 : 2;
+    const float k = (float)M->plane;
+    const float eye = a == 0 ? V.fromX : V.fromZ;
+    // The room is on the side the mirror faces; from the far side there is no
+    // reflection to protect. The room side is the one the level's spawn is on.
+    const float roomSide = ((a == 0 ? (float)g_raidLevel.spawnX : (float)g_raidLevel.spawnZ) - k) >= 0.0f ? 1.0f : -1.0f;
+    if ((eye - k) * roomSide <= 0.0f) return;
+    const float E[3] = { V.fromX, V.fromY, V.fromZ };
+    float G[4][3];
+    for (int i = 0; i < 4; i++) {
+        const float c = (float)((i == 1 || i == 2) ? M->max : M->min);
+        const float y = (float)(i >= 2 ? M->ybot : M->ytop);
+        G[i][1] = y;
+        if (a == 0) { G[i][0] = k; G[i][2] = c; } else { G[i][2] = k; G[i][0] = c; }
+    }
+    float C[3] = { 0, 0, 0 };
+    for (int i = 0; i < 4; i++) for (int j = 0; j < 3; j++) C[j] += G[i][j] * 0.25f;
+    for (int i = 0; i < 4; i++) {
+        const float* g0 = G[i];
+        const float* g1 = G[(i + 1) % 4];
+        const float u[3] = { g0[0] - E[0], g0[1] - E[1], g0[2] - E[2] };
+        const float v[3] = { g1[0] - E[0], g1[1] - E[1], g1[2] - E[2] };
+        float n[3] = { u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
+        float d = -(n[0] * E[0] + n[1] * E[1] + n[2] * E[2]);
+        // a little beyond the glass's centre must be inside
+        const float P[3] = { C[0] + (C[0] - E[0]) * 0.5f, C[1] + (C[1] - E[1]) * 0.5f, C[2] + (C[2] - E[2]) * 0.5f };
+        if (n[0] * P[0] + n[1] * P[1] + n[2] * P[2] + d < 0.0f) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; d = -d; }
+        s_holeSide[i][0] = n[0]; s_holeSide[i][1] = n[1]; s_holeSide[i][2] = n[2]; s_holeSide[i][3] = d;
+    }
+    s_holeAxis = a;
+    s_holeK = k;
+    s_holeFar = -roomSide;
+    s_holeCull = 1;
+}
+
+// ---------------------------------------------------------------------------
 // One convex polygon, clipped to the near plane and fanned.
 //
 // Clipping in WORLD space rather than dropping whole faces matters here for the
@@ -218,6 +325,12 @@ static int RaClipMirror(const RaVert* in, int n, RaVert* out)
 // ---------------------------------------------------------------------------
 static void RaPoly(const RaView& V, const RaVert* in, int n)
 {
+    if (s_holeCull && s_clipAxis < 0 && !s_inHoleCut) {          // CUSTOM: the mirror's hole
+        s_inHoleCut = 1;
+        const int cut = RaHoleCut(in, n, [&](const RaVert* p, int pn) { RaPoly(V, p, pn); });
+        s_inHoleCut = 0;
+        if (cut) return;
+    }
     RaVert out[8];
     float  vz[8];
     int    m = 0;
@@ -1278,6 +1391,13 @@ static void RaMatFlush(void)
 static void RaPolyMat(const RaView& V, const RaVert* in, int n, int tex,
                       int au, int av, float tile, const float* origin)
 {
+    if (s_holeCull && s_clipAxis < 0 && !s_inHoleCut) {          // CUSTOM: the mirror's hole
+        s_inHoleCut = 1;
+        const int cut = RaHoleCut(in, n, [&](const RaVert* p, int pn) {
+            RaPolyMat(V, p, pn, tex, au, av, tile, origin); });
+        s_inHoleCut = 0;
+        if (cut) return;
+    }
     if (RaMatGet(tex) == MARNI_NULL_HANDLE) { RaPoly(V, in, n); return; }
     if (tex != s_mcur) { RaMatFlush(); s_mcur = tex; }
 
@@ -1906,10 +2026,10 @@ static void RaDrawNames(const RaView& V)
     }
 }
 
-// CUSTOM: the crosshair for RAID's L2 aim (RaidShoulderCam.cpp). It sits
-// where the gun line meets the screen, not at the screen centre: the camera is
-// over the shoulder, so the two are not the same point, and the gun follows
-// the arms when aiming up or down. It fades in with the camera swing and with
+// CUSTOM: the crosshair for RAID's L2 aim (RaidShoulderCam.cpp), at the screen
+// centre as in Resident Evil 2 (2019): four ticks that open while she moves
+// or fires and close in about 0.6 s when she holds still, a dot in the middle
+// once they have. It fades in with the camera swing and with
 // the arms coming up, so it never shows pointing at the floor.
 #define RA_XHAIR_DEPTH   690u      // over the nameplates, under the item icons
 #define RA_XHAIR_GAP     4.0f      // design px from the centre to each tick, at the closest
@@ -1929,10 +2049,9 @@ static void RaDrawCrosshair(const RaView& V)
     const float a = amount * raised;
     if (a <= 0.02f) return;
 
-    const float vz = RaDepth(V, aim);
-    if (vz < 96.0f) return;
-    float cx, cy;
-    RaProject(V, aim, vz, &cx, &cy);
+    // At the screen's centre, always - the shot goes from the camera through
+    // it (RaidShoulderCam_HitTest), as in Resident Evil 2 (2019).
+    const float cx = V.cx, cy = V.cy;
 
     const float k = UiAtlas_Scale();
     // The ticks sit ON the spread cone: a shot fired now can land anywhere
@@ -1954,7 +2073,9 @@ static void RaDrawCrosshair(const RaView& V)
         UiAtlas_FillPushed(cx - t * 0.5f - o, cy + g - o,     t + 2 * o, l + 2 * o, c, RA_XHAIR_DEPTH);
         UiAtlas_FillPushed(cx - g - l - o, cy - t * 0.5f - o, l + 2 * o, t + 2 * o, c, RA_XHAIR_DEPTH);
         UiAtlas_FillPushed(cx + g - o,     cy - t * 0.5f - o, l + 2 * o, t + 2 * o, c, RA_XHAIR_DEPTH);
-        UiAtlas_FillPushed(cx - t * 0.5f - o, cy - t * 0.5f - o, t + 2 * o, t + 2 * o, c, RA_XHAIR_DEPTH);
+        // The centre dot only once it has (nearly) closed, as RE2's does.
+        if (RaidShoulderCam_Focus() > 0.6f)
+            UiAtlas_FillPushed(cx - t * 0.5f - o, cy - t * 0.5f - o, t + 2 * o, t + 2 * o, c, RA_XHAIR_DEPTH);
     }
 }
 
@@ -2065,8 +2186,10 @@ void RaidArena_Draw(void)
     RaBounds();
     RaBgPrepare();      // CUSTOM: backdrop textures and their source cameras
 
+    RaHoleSetup(V);       // CUSTOM: through the mirror's glass, only the reflection
     RaDrawBoxes(V);
     RaDrawMeshes(V);      // CUSTOM: the furniture models
+    s_holeCull = 0;
     RaDrawMirror(V);      // CUSTOM: the room again, as the mirror shows it
 
     RaDrawItems(V);
@@ -2351,7 +2474,7 @@ static void RaDrawModelShadows(const RaView& V)
 //     way. Nothing asks which way she faces or whether she moved: a shut door
 //     is exactly what stops her moving, and a facing test only made it hard
 //     to open.
-//   - The action button, within reach, opens it all the way - or,
+//   - The action button, within reach and not aiming, opens it all the way - or,
 //     open, shuts it. Doors stay as you leave them.
 //   - Its doorway stops you only while the leaf is still across it, and it
 //     never shuts on somebody standing in it.
@@ -2390,7 +2513,9 @@ void RaidDoors_Player(int i)
     const float px = (float)t[0], pz = (float)t[2];
     const float a = (float)(g_playerEntity.directionAngle & 0xFFF) * (6.2831853f / 4096.0f);
     const float fx = cosf(a), fz = sinf(a);
-    const int act  = (g_PlayerDpadPressed & RA_DOOR_BUTTON) != 0;
+    // With the gun up the action button fires: it must not also work a door.
+    const int aiming = (g_PlayerDpadHeld & RAID_DPAD_AIM) != 0;
+    const int act  = !aiming && (g_PlayerDpadPressed & RA_DOOR_BUTTON) != 0;
     const int walk = (g_PlayerDpadHeld & RA_DOOR_WALK) != 0;
 
     for (int d = 0; d < g_raidLevel.ndoor && d < RAID_MAX_DOOR; d++) {

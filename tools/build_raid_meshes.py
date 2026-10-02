@@ -532,21 +532,28 @@ def bath_towel():
 
 
 def jug():
-    """What lies in the tray at the bath's head: the RE-ENHANCE repaint shows a
-    crumpled white rubber glove (camera 1's tall silhouette is it standing
-    half up against the wall). A crumpled palm and four fingers and a thumb."""
+    """What stands in the tray at the bath's head. Neither picture says for
+    certain: camera 1 sees a white bell ~300 tall with deep vertical folds and
+    a short neck sticking out of its top; the repaint, from above, a knob with
+    folds fanning out from it. Both fit a white cloth hung over a bottle - so
+    that is what this is: the bottle's neck, and the cloth falling from it in
+    folds to the tray."""
     m = Mesh()
-    palm = [ring(m, 0.0, z, a, b, y, 14, 2.0) for a, b, y, z in
-            ((95, 140, 0, 0), (110, 155, -45, 10), (90, 130, -95, 30), (55, 90, -125, 40))]
-    for r0, r1 in zip(palm, palm[1:]):
-        band(m, r0, r1, (0.0, -60.0, 20.0))
-    cap(m, palm[0], (0.0, 0.0, 0.0), (0.0, -10.0, 0.0))
-    cap(m, palm[-1], (0.0, -125.0, 40.0), (0.0, -100.0, 40.0))
-    for k, (dx, dz, up) in enumerate(((-60, -150, 40), (-20, -175, 70), (25, -170, 55), (65, -140, 30))):
-        tube(m, (dx * 0.6, -60, -60), (dx, -60 - up, dz), 22, 18, 6)            # the fingers, curled
-        tube(m, (dx, -60 - up, dz), (dx * 1.1, -40 - up * 0.5, dz - 50), 18, 14, 6)
-    tube(m, (90, -40, 40), (170, -90, -20), 22, 18, 6)                         # the thumb
-    tube(m, (0, -110, 120), (0, -250, 260), 70, 60, 10)                        # the cuff, rolled up the wall
+    n = 24
+    prof = [(130, 0), (128, -60), (118, -140), (96, -210), (62, -255), (34, -275)]
+    rings = []
+    for rr, y in prof:
+        r = []
+        for i in range(n):
+            t = 2 * math.pi * i / n
+            fold = 1.0 + 0.18 * math.cos(5 * t) * (y / -275.0 * 0.4 + 0.6)   # the folds, deepest low down
+            r.append(m.vert(rr * fold * math.cos(t), y, rr * fold * math.sin(t)))
+        rings.append(r)
+    for r0, r1 in zip(rings, rings[1:]):
+        band(m, r0, r1, (0.0, -140.0, 0.0))
+    cap(m, rings[0], (0.0, 0.0, 0.0), (0.0, -10.0, 0.0))
+    cap(m, rings[-1], (0.0, -275.0, 0.0), (0.0, -265.0, 0.0))
+    tube(m, (0, -270, 0), (0, -330, 0), 22, 20, 10)                   # the bottle's neck, out of the top
     m.save("m17.obj")
 
 

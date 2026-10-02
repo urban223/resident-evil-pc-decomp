@@ -67,9 +67,9 @@ extern int g_scaled_down_dist;   // 0x00be0de8 - apply_weapon_damage: the shot's
 // thrown off its line by up to SC_SPREAD at an open reticle and not at all at
 // a closed one, and a fully closed reticle's shot does SC_FOCUS_BONUS more
 // damage - RE2's own reward for waiting, there as better odds of a critical.
-#define SC_FOCUS_FRAMES     45     // to close fully: a second and a half
+#define SC_FOCUS_FRAMES     10     // to close fully: about 0.6 s (RE2 2019, from footage)
                                    // (s_focus counts half-frames: up to 2x this)
-#define SC_SPREAD         0.030f   // radians at an open reticle: about 1.7 degrees.
+#define SC_SPREAD         0.045f   // radians at an open reticle: about 1.7 degrees.
                                    // The crosshair's ticks are drawn ON this cone
                                    // (RaDrawCrosshair), so a shot can land anywhere
                                    // inside them and never outside.
@@ -94,8 +94,9 @@ static int           s_stickX;          // ...and right positive
 //     PLAYER's: the right stick swings it round her and tips it up and down,
 //     and it stays where it is put - it does not follow her turning;
 //   - the left stick moves her RELATIVE TO THE CAMERA: up walks away from it,
-//     down toward it, left and right across it, and she turns briskly to face
-//     where she is going (the game's own walk and run carry her);
+//     left and right across it - she turns briskly to face where she goes -
+//     and down steps her back toward it, still facing away (the game's own
+//     walk, run and back-step carry her);
 //   - L2 raises the gun where the camera looks: she turns to it, and the aim
 //     is exactly as before.
 // Off, the room's fixed camera and the original tank controls.
@@ -104,6 +105,9 @@ static int         s_l1Key, s_l1Pad, s_l1Was;
 static float       s_camYaw;       // the view's own yaw, in directionAngle's sense, radians
 static float       s_orbitPitch;   // and up (+) or down
 #define SC_TURN_TO_MOVE      0xA0      // directionAngle a frame, turning to face the way she goes
+#define SC_BODY_MAX          0.80f     // radians: how far off the camera's line her body turns, walking sideways
+static float s_moveYaw;                // the L1 view's travel direction this frame (directionAngle's sense)
+static int   s_moveRedirect;           // set: RaidShoulderCam_Walk sends the step along it
 // The L1 view sits further back and a little higher than the aim - the RE2
 // (2019) exploration framing, her whole figure in the left of the frame - and
 // it follows her with a little lag rather than being nailed to her back.
@@ -149,6 +153,15 @@ static int sc_allowed(void)
     if (Coop_IsZombie(0) || p->health <= 0) return 0;
     if ((p->zoneFlags & 0x20) != 0 || (g_message_flags & 0x100) == 0) return 0;
     return 1;
+}
+
+static int s_leftX, s_leftY;       // player 1's left stick, up and right positive
+#define SC_LEFT_DEADZONE   7849   // XInput's own left-stick deadzone
+
+void RaidShoulderCam_NoteLeftStick(int x, int y)
+{
+    s_leftX = x;
+    s_leftY = y;
 }
 
 void RaidShoulderCam_NoteL1(int held, int pad)
@@ -555,22 +568,42 @@ void RaidShoulderCam_BeforePlayer(int i)
     // with the run button) carries her forward along it. Left, right and back
     // are taken off the pad so the state machine sees only "forward" - no
     // tank turning, no backing up.
+    s_moveRedirect = 0;
     if (s_viewMode && !RaidShoulderCam_FreeAim() && sc_allowed()) {
         const unsigned short UP = 0x01 | 0x10, DOWN = 0x04 | 0x20, RIGHT = 0x02, LEFT = 0x08;
         const unsigned short held = g_PlayerDpadHeld;
         const int f = (held & UP) ? 1 : ((held & DOWN) ? -1 : 0);
         const int r = (held & RIGHT) ? 1 : ((held & LEFT) ? -1 : 0);
         if (f != 0 || r != 0) {
-            // In directionAngle's sense: 0 ahead, + to the right.
-            const float rel = atan2f((float)r, (float)f);
-            const int want = (int)((s_camYaw + rel) * (4096.0f / 6.2831853f)) & 0xFFF;
+            // In directionAngle's sense: 0 ahead, + to the right. From the
+            // stick's own angle when it is pushed - any direction, not eight -
+            // and from the D-pad / keys otherwise.
+            const int lx = s_leftX, ly = s_leftY;
+            const int pushed = lx * lx + ly * ly > SC_LEFT_DEADZONE * SC_LEFT_DEADZONE;
+            const float rel = pushed ? atan2f((float)lx, (float)ly) : atan2f((float)r, (float)f);
+            // What recorded RE2 (2019) play shows, frame by frame against the
+            // stick: she travels exactly where the stick points (relative to
+            // the camera), but her BODY turns only part of the way - straight
+            // ahead fully, sideways by about half, and pulled back not at all:
+            // she steps back toward the camera with her back still to it. So
+            // the facing is the travel turned at most SC_BODY_MAX off the
+            // camera's line, the game's own walk (or back-step, for a stick
+            // pulled back) animates her, and RaidShoulderCam_Walk sends the
+            // step it made along the stick's direction instead.
+            const int back = rel > 2.2f || rel < -2.2f;
+            float body = back ? rel + (rel > 0.0f ? -3.14159265f : 3.14159265f) : rel;
+            if (body >  SC_BODY_MAX) body =  SC_BODY_MAX;
+            if (body < -SC_BODY_MAX) body = -SC_BODY_MAX;
+            s_moveYaw = s_camYaw + rel;
+            s_moveRedirect = 1;
+            const int want = (int)((s_camYaw + body) * (4096.0f / 6.2831853f)) & 0xFFF;
             int diff = (want - g_playerEntity.directionAngle) & 0xFFF;
             if (diff >= 0x800) diff -= 0x1000;
             if (diff >  SC_TURN_TO_MOVE) diff =  SC_TURN_TO_MOVE;
             if (diff < -SC_TURN_TO_MOVE) diff = -SC_TURN_TO_MOVE;
             g_playerEntity.directionAngle = (short)(g_playerEntity.directionAngle + diff);
             const unsigned short keep = (unsigned short)~(UP | DOWN | RIGHT | LEFT);
-            g_PlayerDpadHeld    = (unsigned short)((g_PlayerDpadHeld & keep) | 0x01);
+            g_PlayerDpadHeld    = (unsigned short)((g_PlayerDpadHeld & keep) | (back ? 0x04 : 0x01));
             g_PlayerDpadPressed = (unsigned short)(g_PlayerDpadPressed & keep);
         }
     }
@@ -652,10 +685,13 @@ void RaidShoulderCam_BeforePlayer(int i)
         const int turning  = (s_stickX > dz || s_stickX < -dz)
                           || (g_PlayerDpadHeld & (0x02 | 0x08)) != 0;   // (a strafe: moving)
         const int tilting  = (s_stickY > dz || s_stickY < -dz);
-        if (s_walkDir != 0 || turning || ab == 0x14) {
-            s_focus = 0;                       // moving, turning or firing
+        // Moving or firing opens it; turning the view does not - in RE2 (2019)
+        // the reticle stays closed while the stick sweeps the camera round.
+        (void)turning; (void)tilting;
+        if (s_walkDir != 0 || s_walkSide != 0 || ab == 0x14) {
+            s_focus = 0;                       // moving or firing
         } else if (ab == 0x13) {               // gun up and holding
-            s_focus += tilting ? 1 : 2;        // fine adjustment only slows it
+            s_focus += 2;
             if (s_focus > SC_FOCUS_FRAMES * 2) s_focus = SC_FOCUS_FRAMES * 2;
         }
     }
@@ -816,6 +852,19 @@ static void sc_ease_hips(int target)
 void RaidShoulderCam_Walk(void)
 {
     if (g_pCurPlayer != &g_players[0]) return;
+
+    // The L1 view: whatever step the game's walk made this frame, sent along
+    // the stick's direction (see BeforePlayer). Before collision, so walls
+    // still stop her.
+    if (s_moveRedirect && !RaidShoulderCam_FreeAim() && g_playerEntity.animationId == 1) {
+        int* t = g_playerEntity.scaMatrixData.localMatrix.t;
+        const float dx = (float)(t[0] - s_preX), dz = (float)(t[2] - s_preZ);
+        const float L = sqrtf(dx * dx + dz * dz);
+        if (L > 0.5f && L < 400.0f) {
+            t[0] = s_preX + (int)(cosf(s_moveYaw) * L);       // facing (cos a, -sin a)
+            t[2] = s_preZ - (int)(sinf(s_moveYaw) * L);
+        }
+    }
     if ((s_walkDir == 0 && s_walkSide == 0) || !RaidShoulderCam_FreeAim()
         || g_playerEntity.animationId != 1) {           // 1 = player in control
         // Stopping: s_walkShown and s_walkFrame are left as they were, so the
@@ -1105,10 +1154,13 @@ unsigned char RaidShoulderCam_HitTest(short range, Entity* e)
     {
         RDT_Camera* cams = sc_cameras();
         if (cams != NULL && s_active) {
+            // Through the SCREEN CENTRE, where the crosshair is drawn - the
+            // way Resident Evil 2 (2019) has it (from footage: the reticle
+            // never leaves the centre; the camera turns and tips with the aim).
             const RDT_Camera* C = &cams[g_roomCameraId];
-            const float px = o[0] + d[0] * SC_AIM_REACH;
-            const float py = o[1] + d[1] * SC_AIM_REACH;
-            const float pz = o[2] + d[2] * SC_AIM_REACH;
+            const float px = (float)C->cam_to_x;
+            const float py = (float)C->cam_to_y;
+            const float pz = (float)C->cam_to_z;
             const float ex = (float)C->cam_from_x, ey = (float)C->cam_from_y, ez = (float)C->cam_from_z;
             float vx = px - ex, vy = py - ey, vz = pz - ez;
             const float L = sqrtf(vx * vx + vy * vy + vz * vz);

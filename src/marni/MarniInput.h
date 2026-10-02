@@ -104,3 +104,8 @@ int MarniPadRightStickY(void);
 // triggers on Z and the right stick's X on U. So the axis is chosen by the
 // manufacturer the device reported at start-up.
 int MarniPadRightStickX(void);
+
+// CUSTOM: player 1's LEFT stick, -32768..32767, up and right positive, no
+// deadzone (RAID's over-the-shoulder view applies its own). 0 with no pad.
+int MarniPadLeftStickX(void);
+int MarniPadLeftStickY(void);

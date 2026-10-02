@@ -81,4 +81,9 @@ int RightStickY();
 // CUSTOM: the same for the horizontal axis, RIGHT POSITIVE.
 int RightStickX();
 
+// CUSTOM: the LEFT stick, the same way (up and right positive) - for RAID's
+// over-the-shoulder view, which walks her in the stick's exact direction.
+int LeftStickX();
+int LeftStickY();
+
 } // namespace MarniXInput

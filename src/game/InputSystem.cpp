@@ -154,6 +154,7 @@ static DWORD PadToPSX(DWORD pcMask, int table)
 		l2 = (plat_key_state('Q') & 0x8000) != 0;
 		if (g_coopPadSource <= 0) {
 			RaidShoulderCam_NoteStick(0, 0);   // read first; a pad overrides
+			RaidShoulderCam_NoteLeftStick(0, 0);
 			RaidShoulderCam_NoteL1((plat_key_state('E') & 0x8000) != 0, 0);   // E: the shoulder view
 		}
 	} else {
@@ -171,6 +172,7 @@ static DWORD PadToPSX(DWORD pcMask, int table)
 		}
 		if (g_coopPadSource <= 0) {
 			RaidShoulderCam_NoteStick(MarniPadRightStickX(), MarniPadRightStickY());
+			RaidShoulderCam_NoteLeftStick(MarniPadLeftStickX(), MarniPadLeftStickY());
 		}
 	}
 	DWORD r = JoyToPSX(pcMask, table);

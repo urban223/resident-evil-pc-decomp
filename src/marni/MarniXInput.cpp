@@ -95,11 +95,15 @@ void Init()
 // ---------------------------------------------------------------------------
 static int s_rightY = 0;     // CUSTOM: see RightStickY
 static int s_rightX = 0;     // CUSTOM: see RightStickX
+static int s_leftX = 0;      // CUSTOM: see LeftStickX
+static int s_leftY = 0;
 
 static DWORD BuildMask(const XINPUT_GAMEPAD* pad)
 {
     s_rightY = pad->sThumbRY;   // XInput's Y is already up-positive
     s_rightX = pad->sThumbRX;   // and X right-positive
+    s_leftX  = pad->sThumbLX;
+    s_leftY  = pad->sThumbLY;
 
     DWORD mask = 0;
 
@@ -155,9 +159,21 @@ int RightStickX()
     return s_rightX;
 }
 
+int LeftStickX()
+{
+    return s_leftX;
+}
+
+int LeftStickY()
+{
+    return s_leftY;
+}
+
 DWORD Poll()
 {
     s_rightY = 0;               // until a pad is actually read this frame
+    s_leftX = 0;
+    s_leftY = 0;
     s_rightX = 0;
     if (!s_enabled) {
         return 0;

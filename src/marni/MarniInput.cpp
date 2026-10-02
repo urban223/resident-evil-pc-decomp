@@ -267,6 +267,28 @@ int MarniPadRightStickX(void)
     return x;
 }
 
+int MarniPadLeftStickX(void)
+{
+    if (s_xinputOwnsSlot0) return MarniXInput::LeftStickX();
+    const JoystickEntry* j = &g_pMasterInputState.joysticks[0];
+    if (!j->enabled) return 0;
+    int x = (int)j->info.dwXpos - 32767;                 // WinMM: 0 left, 65535 right
+    if (x < -32768) x = -32768;
+    if (x >  32767) x =  32767;
+    return x;
+}
+
+int MarniPadLeftStickY(void)
+{
+    if (s_xinputOwnsSlot0) return MarniXInput::LeftStickY();
+    const JoystickEntry* j = &g_pMasterInputState.joysticks[0];
+    if (!j->enabled) return 0;
+    int y = 32767 - (int)j->info.dwYpos;                 // WinMM: 0 up, 65535 down
+    if (y < -32768) y = -32768;
+    if (y >  32767) y =  32767;
+    return y;
+}
+
 int MarniPadRightStickY(void)
 {
     if (s_xinputOwnsSlot0) {

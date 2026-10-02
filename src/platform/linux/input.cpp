@@ -52,11 +52,15 @@ static void TryOpenPad(void)
 // SDL controller -> Marni mask. Mirrors MarniXInput::BuildMask bit for bit.
 static int s_rightY = 0;     // CUSTOM: MarniXInput::RightStickY
 static int s_rightX = 0;     // CUSTOM: MarniXInput::RightStickX
+static int s_leftX = 0;      // CUSTOM: MarniXInput::LeftStickX
+static int s_leftY = 0;
 
 static DWORD BuildPadMask(void)
 {
     s_rightY = 0;
     s_rightX = 0;
+    s_leftX = 0;
+    s_leftY = 0;
     if (s_pad == NULL) return 0;
     s_rightX = SDL_GameControllerGetAxis(s_pad, SDL_CONTROLLER_AXIS_RIGHTX);   // right-positive already
 
@@ -70,6 +74,8 @@ static DWORD BuildPadMask(void)
 
     Sint16 lx = SDL_GameControllerGetAxis(s_pad, SDL_CONTROLLER_AXIS_LEFTX);
     Sint16 ly = SDL_GameControllerGetAxis(s_pad, SDL_CONTROLLER_AXIS_LEFTY);
+    s_leftX = lx;
+    s_leftY = (ly <= -32767) ? 32767 : -ly;   // up-positive
 
     // D-pad and left stick both drive the AXIS bits. SDL's Y axis is positive
     // downwards, the opposite of XInput's sThumbLY, hence the sign flip.
@@ -168,6 +174,8 @@ namespace MarniXInput {
 bool IsConnected() { return s_pad != NULL; }
 int  RightStickY() { return s_rightY; }
 int  RightStickX() { return s_rightX; }
+int  LeftStickX()  { return s_leftX; }
+int  LeftStickY()  { return s_leftY; }
 }
 
 int MarniPadRightStickY(void)
@@ -178,4 +186,14 @@ int MarniPadRightStickY(void)
 int MarniPadRightStickX(void)
 {
     return s_rightX;
+}
+
+int MarniPadLeftStickX(void)
+{
+    return s_leftX;
+}
+
+int MarniPadLeftStickY(void)
+{
+    return s_leftY;
 }

@@ -130,6 +130,11 @@ from the wall.
   through the glass, so it lands behind the wall and shows only through the
   hole the level leaves for the glass (the high-X wall is four `tbox` pieces,
   flag 64 so their boards still line up).
+- **Room 003 behind the mirror's wall** would hide the reflection, which is
+  drawn at its true depth behind that wall. So in the normal pass every polygon
+  loses the part of it beyond the mirror's plane AND inside the pyramid from the
+  eye through the glass (`RaHoleCut`): through the hole there is only the
+  reflection; from the corridor or the bedroom, room 003 is whole.
 - **The glass**: a faint blue-grey film, blended and not depth-writing, drawn
   after the model pass (`RaidArena_DrawLate`) so it tints the reflected
   characters as well as the reflected room.
@@ -145,7 +150,8 @@ next room is simply there.
 
 - Come up to it and it opens away from you: walking at it from about 1100 off
   sets it ajar, against it (700) it opens all the way. The action button within
-  reach opens it, or, open, shuts it - and a door shut by hand stays shut until
+  reach opens it, or, open, shuts it (not while aiming: then it fires) - and a
+  door shut by hand stays shut until
   you step back. Doors never shut on their own, nor on somebody in the doorway.
 - Neither which way she faces nor whether she moved is asked: a shut doorway is
   exactly what stops her moving, and a facing test made it hard to open (two

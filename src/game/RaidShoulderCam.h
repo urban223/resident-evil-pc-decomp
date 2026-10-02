@@ -19,6 +19,8 @@ void RaidShoulderCam_NoteStick(int x, int y);
 // L1 (the left bumper, or E): held this frame - it toggles the shoulder
 // camera on and off. `pad` 1 from the joystick path, 0 from the keyboard.
 void RaidShoulderCam_NoteL1(int held, int pad);
+// Player 1's left stick, for the L1 view's walking (up and right positive).
+void RaidShoulderCam_NoteLeftStick(int x, int y);
 
 // ReadPadBoth, on its way out: remember whose L2 this was.
 void RaidShoulderCam_NoteRaw(unsigned int raw);
